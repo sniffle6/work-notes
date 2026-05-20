@@ -1,7 +1,10 @@
+pub mod app_state;
+pub mod commands;
 pub mod db;
 pub mod domain;
 pub mod parser;
 pub mod repositories;
+pub mod services;
 pub mod windowing;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
