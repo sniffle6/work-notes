@@ -1,3 +1,9 @@
+pub mod db;
+pub mod domain;
+pub mod parser;
+pub mod repositories;
+pub mod windowing;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
