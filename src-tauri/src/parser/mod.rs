@@ -1,13 +1,22 @@
+pub mod codex_provider;
 pub mod fake_provider;
+pub mod prompt;
 pub mod result_applier;
 pub mod types;
+pub mod validate;
 
+pub use codex_provider::{
+    CodexCommandBuilder, CodexCommandSpec, CodexParserError, CodexParserProvider,
+    DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH, DEFAULT_TIMEOUT,
+};
 pub use fake_provider::FakeParserProvider;
+pub use prompt::build_parse_prompt;
 pub use result_applier::{
     ActionItemApplication, ParserResultApplier, ParserResultSink, TagApplication, AI_TAG_SOURCE,
     NEEDS_REVIEW_STATUS, SUGGESTED_ACTION_STATUS,
 };
 pub use types::{ParsedActionItem, ParsedTag, ParserError, ParserProvider, ParserResult, TagKind};
+pub use validate::validate_parser_json;
 
 #[cfg(test)]
 mod tests {

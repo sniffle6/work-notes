@@ -1,24 +1,88 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
+  import type { NoteListItem, ParseStatus, ReviewStatus } from "$lib/types";
+
   import StatusBadge from "./StatusBadge.svelte";
 
-  type InboxStatusTone = "neutral" | "accent" | "hot" | "success" | "warning" | "error";
-
-  type InboxItem = {
-    id: string;
-    source: string;
-    title: string;
-    body: string;
-    capturedAt: string;
-    statusLabel: string;
-    statusTone?: InboxStatusTone;
-  };
+  type BadgeTone = "neutral" | "accent" | "hot" | "success" | "warning" | "error";
 
   type Props = {
-    items: InboxItem[];
+    items: NoteListItem[];
     selectedId?: string;
+    loading?: boolean;
   };
 
-  let { items, selectedId }: Props = $props();
+  let { items, selectedId, loading = false }: Props = $props();
+
+  const dispatch = createEventDispatcher<{
+    select: string;
+  }>();
+
+  function parseLabel(status: ParseStatus): string {
+    switch (status) {
+      case "queued":
+        return "Queued";
+      case "parsing":
+        return "Parsing";
+      case "parsed":
+        return "Parsed";
+      case "failed":
+        return "Failed";
+    }
+  }
+
+  function parseTone(status: ParseStatus): BadgeTone {
+    switch (status) {
+      case "queued":
+        return "neutral";
+      case "parsing":
+        return "accent";
+      case "parsed":
+        return "success";
+      case "failed":
+        return "error";
+    }
+  }
+
+  function reviewLabel(status: ReviewStatus): string {
+    switch (status) {
+      case "none":
+        return "No review";
+      case "needs_review":
+        return "Review";
+      case "reviewed":
+        return "Reviewed";
+    }
+  }
+
+  function reviewTone(status: ReviewStatus): BadgeTone {
+    switch (status) {
+      case "none":
+        return "neutral";
+      case "needs_review":
+        return "warning";
+      case "reviewed":
+        return "success";
+    }
+  }
+
+  function previewText(item: NoteListItem): string {
+    return item.summary ?? item.cleanedText ?? item.rawText;
+  }
+
+  function formatCapturedAt(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
 </script>
 
 <section class="inbox-list" aria-label="Inbox notes">
@@ -27,22 +91,34 @@
       <p class="eyebrow">Inbox</p>
       <h2>Drive-by captures</h2>
     </div>
-    <StatusBadge label={`${items.length} open`} tone="accent" />
+    <StatusBadge label={loading ? "Loading" : `${items.length} open`} tone="accent" />
   </div>
 
   <div class="items">
+    {#if items.length === 0}
+      <p class="empty-state">No notes</p>
+    {/if}
+
     {#each items as item}
-      <article class:selected={item.id === selectedId} class="inbox-item">
+      <button
+        class:selected={item.id === selectedId}
+        class="inbox-item"
+        type="button"
+        onclick={() => dispatch("select", item.id)}
+      >
         <div class="item-topline">
-          <span class="source">{item.source}</span>
-          <span class="captured-at">{item.capturedAt}</span>
+          <span class="source">{item.captureSource}</span>
+          <span class="captured-at">{formatCapturedAt(item.createdAt)}</span>
         </div>
         <div class="item-title-row">
           <h3>{item.title}</h3>
-          <StatusBadge label={item.statusLabel} tone={item.statusTone ?? "neutral"} />
+          <div class="badges" aria-label="Note statuses">
+            <StatusBadge label={parseLabel(item.parseStatus)} tone={parseTone(item.parseStatus)} />
+            <StatusBadge label={reviewLabel(item.reviewStatus)} tone={reviewTone(item.reviewStatus)} />
+          </div>
         </div>
-        <p>{item.body}</p>
-      </article>
+        <p>{previewText(item)}</p>
+      </button>
     {/each}
   </div>
 </section>
@@ -101,12 +177,20 @@
   .inbox-item {
     display: grid;
     gap: 7px;
+    width: 100%;
     padding: 12px 14px;
+    border: 0;
     background: var(--color-surface-1);
     border-left: 3px solid transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
 
-  .inbox-item.selected {
+  .inbox-item.selected,
+  .inbox-item:hover,
+  .inbox-item:focus-visible {
     border-left-color: var(--color-accent-primary);
     background: color-mix(in srgb, var(--color-surface-2) 78%, var(--color-accent-primary));
   }
@@ -118,6 +202,14 @@
     justify-content: space-between;
     gap: 12px;
     min-width: 0;
+  }
+
+  .badges {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    flex-wrap: wrap;
   }
 
   .source {
@@ -146,6 +238,14 @@
     color: var(--color-text-muted);
     font-size: 12px;
     line-height: 1.35;
+  }
+
+  .empty-state {
+    margin: 0;
+    padding: 16px 14px;
+    color: var(--color-text-muted);
+    background: var(--color-surface-1);
+    font-size: 12px;
   }
 
   @media (max-width: 720px) {
