@@ -6,7 +6,7 @@
 
 **Architecture:** Tauri v2 owns the Windows shell, tray, global hotkey, background worker, SQLite persistence, and Codex CLI process execution. Svelte/TypeScript owns the quick-capture, inbox, note detail, review, settings, and tokenized dark compact UI. Capture writes raw notes immediately; automatic background parsing enriches notes through local `codex exec` without OpenAI API billing.
 
-**Tech Stack:** Tauri v2, Svelte, TypeScript, Vite, Rust, rusqlite with SQLite FTS5, Vitest, Cargo tests, local Codex CLI.
+**Tech Stack:** Tauri v2, SvelteKit/Svelte, TypeScript, Vite, Rust, rusqlite with SQLite FTS5, Vitest, Cargo tests, local Codex CLI.
 
 ---
 
@@ -30,13 +30,13 @@ Expected before starting implementation:
 Create an implementation branch:
 
 ```powershell
-git switch -c feature/work-notes-v1
+git switch -c work-notes-v1
 ```
 
 Expected:
 
 ```text
-Switched to a new branch 'feature/work-notes-v1'
+Switched to a new branch 'work-notes-v1'
 ```
 
 Agent team rules:
@@ -49,6 +49,7 @@ Agent team rules:
 - The controller resolves integration conflicts and owns shared registration files unless a task packet grants ownership.
 - Use fake parser tests before invoking the real Codex CLI.
 - Do not add OpenAI API integration or API-key settings.
+- On this Windows machine, run Rust tests with `scripts\cargo-test.cmd` from the repo root. Plain `cargo test` can fail because normal PowerShell does not populate the Visual Studio MSVC `LIB`/`INCLUDE` environment.
 
 ## Dependency Graph
 
@@ -77,7 +78,8 @@ Controller owns shared registration files unless a task says otherwise:
 - `src-tauri/tauri.conf.json`
 - `src-tauri/capabilities/default.json`
 - `package.json`
-- `vite.config.ts`
+- `svelte.config.js`
+- `vite.config.js`
 - `tsconfig.json`
 
 Task-specific ownership:
@@ -85,10 +87,10 @@ Task-specific ownership:
 - Task 0 owns scaffold files and baseline config.
 - Task 1 owns `src-tauri/src/db/**`, `src-tauri/src/domain.rs`, `src-tauri/src/repositories/**`, database migrations.
 - Task 2 owns `src-tauri/src/parser/types.rs`, `src-tauri/src/parser/fake_provider.rs`, `src-tauri/src/parser/result_applier.rs`, `schemas/parse-note.schema.json`.
-- Task 3 owns `src/lib/theme/**`, `src/app.css`, static Svelte layout components under `src/lib/components/**`.
+- Task 3 owns `src/lib/theme/**`, `src/lib/components/**`, and base page styling in `src/routes/+page.svelte`.
 - Task 4 owns `src-tauri/src/windowing/**` and native shell tests that do not require a live tray.
 - Task 5 owns `src-tauri/src/parser/codex_provider.rs`, `src-tauri/src/parser/prompt.rs`, parser-provider tests.
-- Task 6 owns `src/lib/api.ts`, `src/lib/stores/**`, `src/lib/types.ts`, `src/App.svelte`, workflow components, and frontend tests.
+- Task 6 owns `src/lib/api.ts`, `src/lib/stores/**`, `src/lib/types.ts`, `src/routes/+page.svelte`, workflow components, and frontend tests.
 - Task 7 owns `src-tauri/src/commands.rs`, `src-tauri/src/app_state.rs`, service wiring tests.
 - Task 8 owns final Tauri registration, runtime permissions, and Windows manual behavior verification.
 - Task 9 owns `README.md`, verification scripts, and final QA notes.
@@ -168,11 +170,13 @@ Frontend status strings use snake_case and map directly to serialized Rust enums
 - Modify: `.gitignore`
 - Create: `package.json`
 - Create: `package-lock.json`
-- Create: `index.html`
+- Create: `svelte.config.js`
 - Create: `src/**`
 - Create: `src-tauri/**`
-- Create: `vite.config.ts`
+- Create: `static/**`
+- Create: `vite.config.js`
 - Create: `tsconfig.json`
+- Create: `scripts/cargo-test.cmd`
 
 - [ ] **Step 1: Confirm branch and clean state**
 
@@ -185,7 +189,7 @@ git status --short --branch
 Expected:
 
 ```text
-## feature/work-notes-v1
+## work-notes-v1
 ```
 
 - [ ] **Step 2: Scaffold into a temp directory**
@@ -193,9 +197,9 @@ Expected:
 Run from repo root:
 
 ```powershell
-$tmp = Join-Path $PWD ".tmp-tauri-scaffold"
+$tmp = Join-Path $PWD ".tmp-tauri-v2"
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-npm create tauri-app@2 .tmp-tauri-scaffold -- --manager npm --template svelte-ts --yes
+npm create tauri-app@latest .tmp-tauri-v2 -- --manager npm --template svelte-ts --yes --tauri-version 2 --identifier com.aweber.worknotes
 ```
 
 Expected:
@@ -209,13 +213,13 @@ Template created!
 Run:
 
 ```powershell
-Get-ChildItem -LiteralPath ".tmp-tauri-scaffold" -Force | ForEach-Object {
-  Move-Item -LiteralPath $_.FullName -Destination $PWD -Force
+Get-ChildItem -LiteralPath ".tmp-tauri-v2" -Force | Where-Object { $_.Name -notin @(".gitignore", "README.md") } | ForEach-Object {
+  Copy-Item -LiteralPath $_.FullName -Destination $PWD -Recurse -Force
 }
-Remove-Item -Recurse -Force ".tmp-tauri-scaffold"
+Remove-Item -Recurse -Force ".tmp-tauri-v2"
 ```
 
-Expected: repo root contains `package.json`, `src`, `src-tauri`, `vite.config.ts`, and existing `docs`.
+Expected: repo root contains `package.json`, `src`, `src-tauri`, `static`, `svelte.config.js`, `vite.config.js`, and existing `docs`.
 
 - [ ] **Step 4: Install baseline dependencies**
 
@@ -256,7 +260,10 @@ Ensure `.gitignore` contains exactly these project-specific entries in addition 
 
 ```gitignore
 .superpowers/
+.serena/
 .tmp-tauri-scaffold/
+.tmp-tauri-v2/
+.svelte-kit/
 target/
 node_modules/
 dist/
@@ -272,7 +279,7 @@ Ensure `package.json` has these scripts:
 ```json
 {
   "scripts": {
-    "dev": "vite",
+    "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -290,16 +297,14 @@ Run:
 
 ```powershell
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 ```
 
 Expected:
 
 ```text
 npm run build exits 0
-cargo test exits 0
+scripts\cargo-test.cmd exits 0
 ```
 
 - [ ] **Step 9: Commit scaffold**
@@ -307,7 +312,7 @@ cargo test exits 0
 Run:
 
 ```powershell
-git add .gitignore package.json package-lock.json index.html src src-tauri vite.config.ts tsconfig.json
+git add .gitignore package.json package-lock.json src src-tauri static svelte.config.js vite.config.js tsconfig.json scripts/cargo-test.cmd
 git commit -m "chore: scaffold tauri svelte app"
 ```
 
@@ -381,8 +386,7 @@ fn fts_search_matches_raw_and_cleaned_text() {
 Run:
 
 ```powershell
-cd src-tauri
-cargo test save_note_creates_raw_note_and_parse_job fts_search_matches_raw_and_cleaned_text
+scripts\cargo-test.cmd save_note_creates_raw_note_and_parse_job fts_search_matches_raw_and_cleaned_text
 ```
 
 Expected before implementation: tests fail because modules do not exist.
@@ -494,8 +498,7 @@ Implement matching repository methods for tags, action items, and parse jobs.
 Run:
 
 ```powershell
-cd src-tauri
-cargo test repositories db
+scripts\cargo-test.cmd repositories db
 ```
 
 Expected: all persistence tests pass.
@@ -564,8 +567,7 @@ fn fake_provider_returns_deterministic_parse_result() {
 Run:
 
 ```powershell
-cd src-tauri
-cargo test parser_result_deserializes_camel_case_json fake_provider_returns_deterministic_parse_result
+scripts\cargo-test.cmd parser_result_deserializes_camel_case_json fake_provider_returns_deterministic_parse_result
 ```
 
 Expected before implementation: tests fail because parser modules do not exist.
@@ -650,8 +652,7 @@ Include `ParsedTag`, `ParsedActionItem`, `ParserProvider`, and `ParserError`.
 Run:
 
 ```powershell
-cd src-tauri
-cargo test parser
+scripts\cargo-test.cmd parser
 ```
 
 Expected: parser contract and fake provider tests pass.
@@ -680,8 +681,7 @@ Expected: commit succeeds.
 - Create: `src/lib/components/QuickCapturePanel.svelte`
 - Create: `src/lib/components/InboxList.svelte`
 - Create: `src/lib/components/StatusBadge.svelte`
-- Modify: `src/app.css`
-- Modify: `src/App.svelte`
+- Modify: `src/routes/+page.svelte`
 - Test: `src/lib/theme/theme.test.ts`
 
 - [ ] **Step 1: Write failing theme tests**
@@ -784,7 +784,7 @@ Expected: tests and build pass.
 Run:
 
 ```powershell
-git add src/lib/theme src/lib/components src/app.css src/App.svelte
+git add src/lib/theme src/lib/components src/routes/+page.svelte
 git commit -m "feat: add dark compact ui shell"
 ```
 
@@ -822,8 +822,7 @@ fn bottom_right_position_respects_margin() {
 Run:
 
 ```powershell
-cd src-tauri
-cargo test bottom_right_position_respects_margin
+scripts\cargo-test.cmd bottom_right_position_respects_margin
 ```
 
 Expected before implementation: test fails because windowing module does not exist.
@@ -873,8 +872,7 @@ Use labels:
 Run:
 
 ```powershell
-cd src-tauri
-cargo test windowing
+scripts\cargo-test.cmd windowing
 ```
 
 Expected: pure helper tests pass. Runtime tray/hotkey behavior is verified in Task 8.
@@ -913,9 +911,7 @@ Run:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 ```
 
 Expected: all checks pass.
@@ -988,8 +984,7 @@ fn validates_schema_and_rejects_missing_summary() {
 Run:
 
 ```powershell
-cd src-tauri
-cargo test builds_codex_exec_command_with_schema_and_output_file validates_schema_and_rejects_missing_summary
+scripts\cargo-test.cmd builds_codex_exec_command_with_schema_and_output_file validates_schema_and_rejects_missing_summary
 ```
 
 Expected before implementation: tests fail because provider modules do not exist.
@@ -1027,8 +1022,7 @@ Provider behavior:
 Run:
 
 ```powershell
-cd src-tauri
-cargo test parser::codex_provider parser::validate parser::prompt
+scripts\cargo-test.cmd parser::codex_provider parser::validate parser::prompt
 ```
 
 Expected: provider tests pass without invoking the real Codex CLI unless a test is explicitly marked ignored.
@@ -1055,7 +1049,7 @@ Expected: commit succeeds.
 - Create: `src/lib/stores/captureDraft.ts`
 - Create: `src/lib/stores/filters.ts`
 - Create: `src/lib/types.ts`
-- Modify: `src/App.svelte`
+- Modify: `src/routes/+page.svelte`
 - Modify: `src/lib/components/QuickCapturePanel.svelte`
 - Modify: `src/lib/components/InboxList.svelte`
 - Create: `src/lib/components/NoteDetail.svelte`
@@ -1157,7 +1151,7 @@ Expected: tests and build pass.
 Run:
 
 ```powershell
-git add src/lib/api.ts src/lib/stores src/lib/types.ts src/lib/components src/App.svelte
+git add src/lib/api.ts src/lib/stores src/lib/types.ts src/lib/components src/routes/+page.svelte
 git commit -m "feat: add note workflow ui"
 ```
 
@@ -1215,8 +1209,7 @@ fn parse_queue_marks_failed_job_without_modifying_raw_note() {
 Run:
 
 ```powershell
-cd src-tauri
-cargo test capture_service_saves_raw_note_and_enqueues_parse parse_queue_marks_failed_job_without_modifying_raw_note
+scripts\cargo-test.cmd capture_service_saves_raw_note_and_enqueues_parse parse_queue_marks_failed_job_without_modifying_raw_note
 ```
 
 Expected before implementation: tests fail because service modules do not exist.
@@ -1273,8 +1266,7 @@ The loop must:
 Run:
 
 ```powershell
-cd src-tauri
-cargo test services commands
+scripts\cargo-test.cmd services commands
 ```
 
 Expected: command and service tests pass.
@@ -1337,9 +1329,7 @@ Run:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 ```
 
 Expected: all checks pass.
@@ -1428,9 +1418,7 @@ Run:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 ```
 
 Expected: all checks pass.
@@ -1478,8 +1466,7 @@ npm install
 npm run tauri dev
 npm test
 npm run build
-cd src-tauri
-cargo test
+scripts\cargo-test.cmd
 ```
 
 It must also document:
@@ -1497,9 +1484,7 @@ It must also document:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 ```
 
 It must also record manual Windows checks:
@@ -1520,9 +1505,7 @@ Run:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 git status --short
 ```
 
@@ -1531,7 +1514,7 @@ Expected:
 ```text
 npm test exits 0
 npm run build exits 0
-cargo test exits 0
+scripts\cargo-test.cmd exits 0
 git status shows only README/docs changes before commit
 ```
 
@@ -1589,9 +1572,7 @@ Run from repo root:
 ```powershell
 npm test
 npm run build
-cd src-tauri
-cargo test
-cd ..
+scripts\cargo-test.cmd
 git status --short --branch
 git log --oneline -10
 ```
@@ -1601,8 +1582,8 @@ Expected:
 ```text
 npm test exits 0
 npm run build exits 0
-cargo test exits 0
-git status is clean on feature/work-notes-v1
+scripts\cargo-test.cmd exits 0
+git status is clean on work-notes-v1
 recent commits correspond to scaffold, persistence, parser, UI, native shell, integration, docs
 ```
 
