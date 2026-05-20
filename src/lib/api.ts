@@ -154,6 +154,10 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
   return normalizeSettings(saved);
 }
 
+export async function hideQuickCapture(): Promise<void> {
+  await invokeCommand<void>("hide_quick_capture");
+}
+
 export const api = {
   saveCaptureNote,
   listInbox,
@@ -163,6 +167,7 @@ export const api = {
   dismissActionItem,
   getSettings,
   saveSettings,
+  hideQuickCapture,
 };
 
 function toBackendFilters(filters: InboxFilters): UnknownRecord {
@@ -341,6 +346,8 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
     case "save_settings":
       fallbackSettings = normalizeSettings(args?.settings);
       return normalizeSettings(fallbackSettings) as T;
+    case "hide_quick_capture":
+      return undefined as T;
     default:
       throw new Error(`Unsupported fallback command: ${command}`);
   }

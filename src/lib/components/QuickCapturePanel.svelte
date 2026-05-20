@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from "svelte";
   import { createEventDispatcher } from "svelte";
 
   type Props = {
@@ -9,6 +10,7 @@
 
   let { value = "", saving = false, error = null }: Props = $props();
   let draft = $state("");
+  let noteInput: HTMLTextAreaElement;
 
   const dispatch = createEventDispatcher<{
     input: string;
@@ -19,6 +21,16 @@
   $effect(() => {
     draft = value;
   });
+
+  onMount(() => {
+    void focusNoteInput();
+  });
+
+  export async function focusNoteInput() {
+    await tick();
+    noteInput?.focus();
+    noteInput?.select();
+  }
 
   function handleInput(event: Event) {
     const nextValue = (event.currentTarget as HTMLTextAreaElement).value;
@@ -60,6 +72,7 @@
   </div>
 
   <textarea
+    bind:this={noteInput}
     aria-label="Note text"
     placeholder="Name, ask, deadline, next step"
     value={draft}

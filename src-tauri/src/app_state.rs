@@ -4,7 +4,7 @@ use crate::repositories::{
 };
 use crate::services::draft::DraftService;
 use crate::services::parse_queue::{ParseQueueConfig, ParserProviderConfig};
-use crate::services::settings::SettingsService;
+use crate::services::settings::{AppSettings, SettingsService};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,12 +18,22 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(database: Database) -> Self {
+        let settings = SettingsService::new(database.clone());
+        let app_settings = settings.get().unwrap_or_default();
+        Self::with_settings(database, settings, app_settings)
+    }
+
+    fn with_settings(
+        database: Database,
+        settings: SettingsService,
+        app_settings: AppSettings,
+    ) -> Self {
         Self {
             repositories: AppRepositories::new(database.clone()),
-            settings: SettingsService::new(database.clone()),
+            settings,
             drafts: DraftService::default(),
-            parse_queue_config: ParseQueueConfig::default(),
-            parser_provider_config: ParserProviderConfig::default(),
+            parse_queue_config: ParseQueueConfig::from_settings(&app_settings),
+            parser_provider_config: ParserProviderConfig::from_settings(&app_settings),
             database,
         }
     }
@@ -35,6 +45,7 @@ impl AppState {
 
 #[derive(Clone)]
 pub struct AppRepositories {
+    pub database: Database,
     pub notes: NoteRepository,
     pub tags: TagRepository,
     pub action_items: ActionItemRepository,
@@ -44,6 +55,7 @@ pub struct AppRepositories {
 impl AppRepositories {
     pub fn new(database: Database) -> Self {
         Self {
+            database: database.clone(),
             notes: NoteRepository::new(database.clone()),
             tags: TagRepository::new(database.clone()),
             action_items: ActionItemRepository::new(database.clone()),

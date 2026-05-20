@@ -202,6 +202,12 @@ fn run_codex_command(
                 }
             }
         })?;
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        thread::spawn(move || {
+            let mut stderr = String::new();
+            pipe.read_to_string(&mut stderr).map(|_| stderr)
+        })
+    });
 
     if let Some(mut stdin) = child.stdin.take() {
         let wrote_prompt = match stdin.write_all(stdin_body.as_bytes()) {
@@ -224,7 +230,7 @@ fn run_codex_command(
     }
 
     let status = wait_with_timeout(&mut child, timeout)?;
-    let stderr = read_stderr(&mut child)?;
+    let stderr = read_stderr(stderr_reader)?;
 
     if status.success() {
         Ok(())
@@ -261,18 +267,23 @@ fn wait_with_timeout(
     }
 }
 
-fn read_stderr(child: &mut std::process::Child) -> Result<String, CodexParserError> {
-    let mut stderr = String::new();
+fn read_stderr(
+    reader: Option<thread::JoinHandle<io::Result<String>>>,
+) -> Result<String, CodexParserError> {
+    let Some(reader) = reader else {
+        return Ok(String::new());
+    };
 
-    if let Some(mut pipe) = child.stderr.take() {
-        pipe.read_to_string(&mut stderr)
-            .map_err(|source| CodexParserError::Io {
-                context: "read codex parser stderr",
-                source,
-            })?;
-    }
-
-    Ok(stderr)
+    reader
+        .join()
+        .map_err(|_| CodexParserError::Io {
+            context: "read codex parser stderr",
+            source: io::Error::new(io::ErrorKind::Other, "stderr reader panicked"),
+        })?
+        .map_err(|source| CodexParserError::Io {
+            context: "read codex parser stderr",
+            source,
+        })
 }
 
 fn read_parser_result(output_path: PathBuf) -> Result<ParserResult, CodexParserError> {

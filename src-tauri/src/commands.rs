@@ -12,6 +12,7 @@ use crate::services::parse_queue::ParseQueue;
 use crate::services::search::{NoteDetail, SearchService};
 use crate::services::settings::AppSettings;
 use crate::services::ServiceError;
+use crate::windowing;
 
 pub type AppSettingsDto = AppSettings;
 
@@ -85,12 +86,13 @@ pub struct NoteListItemDto {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub tags: Vec<TagAssignmentDto>,
     pub tag_count: u32,
     pub action_item_count: u32,
 }
 
-impl From<NoteListItem> for NoteListItemDto {
-    fn from(item: NoteListItem) -> Self {
+impl NoteListItemDto {
+    fn from_item(item: NoteListItem, tags: Vec<TagAssignment>) -> Self {
         Self {
             id: item.id.to_string(),
             raw_text: item.raw_text,
@@ -102,6 +104,7 @@ impl From<NoteListItem> for NoteListItemDto {
             parse_status: item.parse_status,
             review_status: item.review_status,
             is_archived: item.is_archived,
+            tags: tags.into_iter().map(Into::into).collect(),
             tag_count: item.tag_count,
             action_item_count: item.action_item_count,
         }
@@ -282,7 +285,13 @@ pub async fn list_inbox(
 ) -> Result<Vec<NoteListItemDto>, CommandError> {
     let filters = InboxFilters::try_from(filters)?;
     let items = SearchService::new(state.repositories.clone()).list_inbox(filters)?;
-    Ok(items.into_iter().map(Into::into).collect())
+    items
+        .into_iter()
+        .map(|item| {
+            let tags = state.repositories.tags.list_for_note(item.id)?;
+            Ok(NoteListItemDto::from_item(item, tags))
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -345,10 +354,20 @@ pub async fn get_settings(
 
 #[tauri::command]
 pub async fn save_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     settings: AppSettingsDto,
 ) -> Result<AppSettingsDto, CommandError> {
-    state.settings.save(settings).map_err(Into::into)
+    let saved = state.settings.save(settings).map_err(CommandError::from)?;
+    windowing::hotkey::register_global_shortcut(&app, &saved.global_hotkey)
+        .map_err(|error| CommandError::new("hotkey_error", error.to_string()))?;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn hide_quick_capture(app: tauri::AppHandle) -> Result<(), CommandError> {
+    windowing::quick_capture::hide_quick_capture_window(&app)
+        .map_err(|error| CommandError::new("window_error", error.to_string()))
 }
 
 fn parse_note_id(id: &str) -> Result<NoteId, CommandError> {
@@ -379,6 +398,7 @@ mod tests {
             parse_status: ParseStatus::Queued,
             review_status: ReviewStatus::None,
             is_archived: false,
+            tags: Vec::new(),
             tag_count: 2,
             action_item_count: 3,
         };
@@ -390,6 +410,7 @@ mod tests {
         assert!(serialized.get("parseStatus").is_some());
         assert!(serialized.get("reviewStatus").is_some());
         assert!(serialized.get("isArchived").is_some());
+        assert!(serialized.get("tags").is_some());
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());
     }

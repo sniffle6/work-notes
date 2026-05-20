@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { hideQuickCapture } from "$lib/api";
   import AppShell from "$lib/components/AppShell.svelte";
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
@@ -18,6 +21,7 @@
   const {
     inbox,
     filteredInbox,
+    filters,
     selectedNote,
     settings,
     loadingInbox,
@@ -31,10 +35,13 @@
   let quickDraft = $state("");
   let quickCaptureOpen = $state(true);
   let quickCaptureError = $state<string | null>(null);
+  let currentWindowLabel = $state("browser");
+  let quickCapturePanel = $state<{ focusNoteInput: () => Promise<void> } | null>(null);
 
   const selectedActionItems = $derived($selectedNote?.actionItems ?? []);
   const suggestedActions = $derived(selectedActionItems.filter((action) => action.status === "suggested"));
   const selectedId = $derived($selectedNote?.id);
+  const isQuickCaptureWindow = $derived(currentWindowLabel === "quick-capture");
   const metrics = $derived([
     { label: "Inbox", value: String($inbox.length) },
     { label: "Needs review", value: String($inbox.filter((note) => note.reviewStatus === "needs_review").length) },
@@ -44,7 +51,36 @@
   onMount(() => {
     void workNotes.loadInbox();
     void workNotes.loadSettings();
+
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    currentWindowLabel = getCurrentWindow().label;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void listen("quick-capture:focus-note-textarea", async () => {
+      quickCaptureOpen = true;
+      await tick();
+      await quickCapturePanel?.focusNoteInput();
+    }).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+      } else {
+        unlisten = nextUnlisten;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
+
+  function isTauriRuntime(): boolean {
+    return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
 
   function updateQuickDraft(event: CustomEvent<string>) {
     quickDraft = event.detail;
@@ -56,13 +92,15 @@
     try {
       await workNotes.saveCapture(event.detail);
       quickDraft = "";
+      await closeQuickCapture();
     } catch (unknownError) {
       quickCaptureError = unknownError instanceof Error ? unknownError.message : "Could not save note.";
     }
   }
 
-  function closeQuickCapture() {
+  async function closeQuickCapture() {
     quickCaptureOpen = false;
+    await hideQuickCapture();
   }
 </script>
 
@@ -71,60 +109,77 @@
   <meta name="color-scheme" content="dark" />
 </svelte:head>
 
-<AppShell
-  title="Work Notes"
-  subtitle="Fast capture for coworker drive-bys"
-  workspace="Local workspace"
-  {metrics}
-  {themeStyle}
->
-  {#if $error}
-    <p class="app-error">{$error}</p>
-  {/if}
-
-  <div class="workspace-grid">
-    <InboxList
-      items={$filteredInbox}
-      {selectedId}
-      loading={$loadingInbox}
-      on:select={(event) => void workNotes.selectNote(event.detail)}
+{#if isQuickCaptureWindow}
+  <main class="quick-window" style={themeStyle}>
+    <QuickCapturePanel
+      bind:this={quickCapturePanel}
+      value={quickDraft}
+      saving={$savingCapture}
+      error={quickCaptureError}
+      on:input={updateQuickDraft}
+      on:save={saveQuickDraft}
+      on:close={() => void closeQuickCapture()}
     />
-
-    <div class="detail-column">
-      <NoteDetail
-        note={$selectedNote}
-        loading={$loadingNote}
-        on:retryParse={() => void workNotes.retrySelectedParse()}
-      />
-
-      <ReviewQueue
-        actions={suggestedActions}
-        busyActionId={$busyActionId}
-        on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
-        on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
-      />
-
-      <SettingsView
-        settings={$settings}
-        saving={$savingSettings}
-        on:save={(event) => void workNotes.persistSettings(event.detail)}
-      />
-    </div>
-  </div>
-
-  {#snippet quickCapture()}
-    {#if quickCaptureOpen}
-      <QuickCapturePanel
-        value={quickDraft}
-        saving={$savingCapture}
-        error={quickCaptureError}
-        on:input={updateQuickDraft}
-        on:save={saveQuickDraft}
-        on:close={closeQuickCapture}
-      />
+  </main>
+{:else}
+  <AppShell
+    title="Work Notes"
+    subtitle="Fast capture for coworker drive-bys"
+    workspace="Local workspace"
+    {metrics}
+    {themeStyle}
+  >
+    {#if $error}
+      <p class="app-error">{$error}</p>
     {/if}
-  {/snippet}
-</AppShell>
+
+    <div class="workspace-grid">
+      <InboxList
+        items={$filteredInbox}
+        filters={$filters}
+        {selectedId}
+        loading={$loadingInbox}
+        on:select={(event) => void workNotes.selectNote(event.detail)}
+        on:filter={(event) => workNotes.updateFilters(event.detail)}
+      />
+
+      <div class="detail-column">
+        <NoteDetail
+          note={$selectedNote}
+          loading={$loadingNote}
+          on:retryParse={() => void workNotes.retrySelectedParse()}
+        />
+
+        <ReviewQueue
+          actions={suggestedActions}
+          busyActionId={$busyActionId}
+          on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+          on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+        />
+
+        <SettingsView
+          settings={$settings}
+          saving={$savingSettings}
+          on:save={(event) => void workNotes.persistSettings(event.detail)}
+        />
+      </div>
+    </div>
+
+    {#snippet quickCapture()}
+      {#if quickCaptureOpen}
+        <QuickCapturePanel
+          bind:this={quickCapturePanel}
+          value={quickDraft}
+          saving={$savingCapture}
+          error={quickCaptureError}
+          on:input={updateQuickDraft}
+          on:save={saveQuickDraft}
+          on:close={() => void closeQuickCapture()}
+        />
+      {/if}
+    {/snippet}
+  </AppShell>
+{/if}
 
 <style>
   :global(html) {
@@ -134,7 +189,7 @@
   :global(body) {
     min-height: 100%;
     margin: 0;
-    background: var(--color-app-bg, #11151c);
+    background: var(--color-app-bg);
   }
 
   :global(*) {
@@ -147,6 +202,21 @@
     gap: 12px;
     min-width: 0;
     min-height: 0;
+  }
+
+  .quick-window {
+    min-height: 100vh;
+    color: var(--color-text-primary);
+    background: var(--color-app-bg);
+  }
+
+  :global(.quick-window .quick-capture) {
+    position: static;
+    width: 100%;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .detail-column {

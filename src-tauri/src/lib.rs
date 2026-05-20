@@ -34,7 +34,14 @@ pub fn run() {
                 .get()
                 .map(|settings| settings.global_hotkey)
                 .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+            let parse_worker = services::parse_queue::ParseQueue::with_runtime_settings(
+                state.repositories.clone(),
+                state.settings.clone(),
+                state.parse_queue_config.clone(),
+                state.parser_provider_config.clone(),
+            );
             app.manage(state);
+            parse_worker.start_background_worker()?;
             windowing::initialize_windowing(app.handle(), &quick_capture_shortcut)?;
             Ok(())
         })
@@ -46,7 +53,8 @@ pub fn run() {
             commands::accept_action_item,
             commands::dismiss_action_item,
             commands::get_settings,
-            commands::save_settings
+            commands::save_settings,
+            commands::hide_quick_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

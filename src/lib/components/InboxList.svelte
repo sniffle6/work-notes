@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import type { NoteListItem, ParseStatus, ReviewStatus } from "$lib/types";
+  import type { InboxFilters, NoteListItem, ParseStatus, ReviewStatus, Tag } from "$lib/types";
 
   import StatusBadge from "./StatusBadge.svelte";
 
@@ -8,14 +8,17 @@
 
   type Props = {
     items: NoteListItem[];
+    filters: InboxFilters;
     selectedId?: string;
     loading?: boolean;
   };
 
-  let { items, selectedId, loading = false }: Props = $props();
+  let { items, filters, selectedId, loading = false }: Props = $props();
+  const availableTags = $derived(uniqueTags(items));
 
   const dispatch = createEventDispatcher<{
     select: string;
+    filter: Partial<InboxFilters>;
   }>();
 
   function parseLabel(status: ParseStatus): string {
@@ -83,6 +86,35 @@
       minute: "2-digit",
     });
   }
+
+  function updateSearch(event: Event) {
+    dispatch("filter", { search: (event.currentTarget as HTMLInputElement).value });
+  }
+
+  function updateParseStatus(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value as ParseStatus | "";
+    dispatch("filter", { parseStatuses: value ? [value] : [] });
+  }
+
+  function updateReviewStatus(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value as ReviewStatus | "";
+    dispatch("filter", { reviewStatuses: value ? [value] : [] });
+  }
+
+  function updateTag(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    dispatch("filter", { tagIds: value ? [value] : [] });
+  }
+
+  function uniqueTags(notes: NoteListItem[]): Tag[] {
+    const byId = new Map<string, Tag>();
+    for (const note of notes) {
+      for (const tag of note.tags) {
+        byId.set(tag.id, tag);
+      }
+    }
+    return [...byId.values()].sort((left, right) => `${left.kind}:${left.name}`.localeCompare(`${right.kind}:${right.name}`));
+  }
 </script>
 
 <section class="inbox-list" aria-label="Inbox notes">
@@ -92,6 +124,34 @@
       <h2>Drive-by captures</h2>
     </div>
     <StatusBadge label={loading ? "Loading" : `${items.length} open`} tone="accent" />
+  </div>
+
+  <div class="filters" aria-label="Inbox filters">
+    <input
+      aria-label="Search notes"
+      placeholder="Search notes"
+      value={filters.search}
+      oninput={updateSearch}
+    />
+    <select aria-label="Parse status" value={filters.parseStatuses[0] ?? ""} onchange={updateParseStatus}>
+      <option value="">Any parse</option>
+      <option value="queued">Queued</option>
+      <option value="parsing">Parsing</option>
+      <option value="parsed">Parsed</option>
+      <option value="failed">Failed</option>
+    </select>
+    <select aria-label="Review status" value={filters.reviewStatuses[0] ?? ""} onchange={updateReviewStatus}>
+      <option value="">Any review</option>
+      <option value="none">No review</option>
+      <option value="needs_review">Needs review</option>
+      <option value="reviewed">Reviewed</option>
+    </select>
+    <select aria-label="Tag, project, topic, or person" value={filters.tagIds[0] ?? ""} onchange={updateTag}>
+      <option value="">Any tag</option>
+      {#each availableTags as tag}
+        <option value={tag.id}>{tag.kind}: {tag.name}</option>
+      {/each}
+    </select>
   </div>
 
   <div class="items">
@@ -143,6 +203,32 @@
     padding: 12px 14px;
     border-bottom: 1px solid var(--color-border-default);
     background: var(--color-surface-2);
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid var(--color-border-default);
+    background: var(--color-surface-1);
+  }
+
+  .filters input,
+  .filters select {
+    min-width: 0;
+    min-height: 30px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 6px;
+    padding: 0 8px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-input);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .filters input {
+    grid-column: 1 / -1;
   }
 
   .eyebrow {

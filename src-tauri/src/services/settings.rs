@@ -25,7 +25,7 @@ impl Default for AppSettings {
             launch_at_startup: false,
             minimize_to_tray: true,
             global_hotkey: "Ctrl+Shift+Space".to_string(),
-            theme: "dark".to_string(),
+            theme: "dark-compact".to_string(),
             parser_timeout_seconds: 30,
             parser_max_retries: 3,
             codex_command_path: "codex".to_string(),

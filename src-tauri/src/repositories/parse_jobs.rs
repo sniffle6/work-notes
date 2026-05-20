@@ -122,6 +122,40 @@ impl ParseJobRepository {
         self.finish_job(id, ParseStatus::Failed, Some(error))
     }
 
+    pub fn mark_queued(&self, id: ParseJobId, error: &str) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+        let note_id = transaction
+            .query_row(
+                "SELECT note_id FROM parse_jobs WHERE id = ?1",
+                [id_text.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| RepositoryError::NotFound {
+                entity: "parse_job",
+                id: id.to_string(),
+            })?;
+
+        transaction.execute(
+            "UPDATE parse_jobs
+             SET status = ?2,
+                 last_error = ?3,
+                 started_at = NULL,
+                 finished_at = NULL
+             WHERE id = ?1",
+            params![id_text, ParseStatus::Queued.as_str(), error],
+        )?;
+        transaction.execute(
+            "UPDATE notes SET parse_status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![note_id, ParseStatus::Queued.as_str(), now],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn record_run(
         &self,
         note_id: NoteId,
