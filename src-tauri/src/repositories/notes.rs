@@ -1,7 +1,9 @@
 use rusqlite::{params, params_from_iter, OptionalExtension, Row, Transaction};
 
 use crate::db::Database;
-use crate::domain::{InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus};
+use crate::domain::{
+    InboxFilters, Note, NoteId, NoteListItem, ParseJobId, ParseStatus, ReviewStatus,
+};
 
 use super::{now_db_string, parse_db_datetime, u32_from_i64, RepositoryError, RepositoryResult};
 
@@ -40,6 +42,17 @@ impl NoteRepository {
             ],
         )?;
         replace_fts(&transaction, &id_text, raw_text, None, None)?;
+        transaction.execute(
+            "INSERT INTO parse_jobs (
+                id, note_id, status, attempt_count, last_error, created_at, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, 0, NULL, ?4, NULL, NULL)",
+            params![
+                ParseJobId::new().to_string(),
+                id_text,
+                ParseStatus::Queued.as_str(),
+                now
+            ],
+        )?;
         transaction.commit()?;
         drop(connection);
 

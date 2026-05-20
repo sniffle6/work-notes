@@ -78,13 +78,27 @@ mod tests {
         let note = notes
             .create_raw_note("Mike says deploy moved to Friday")
             .unwrap();
-        jobs.enqueue(note.id).unwrap();
 
         let stored = notes.get(note.id).unwrap().unwrap();
         assert_eq!(stored.raw_text, "Mike says deploy moved to Friday");
         assert_eq!(stored.parse_status, ParseStatus::Queued);
         assert_eq!(stored.review_status, ReviewStatus::None);
         assert_eq!(jobs.next_queued().unwrap().unwrap().note_id, note.id);
+    }
+
+    #[test]
+    fn enqueue_reuses_existing_active_parse_job_for_note() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let jobs = ParseJobRepository::new(db.clone());
+
+        let note = notes.create_raw_note("Only parse once").unwrap();
+        let first = jobs.enqueue(note.id).unwrap();
+        let second = jobs.enqueue(note.id).unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(jobs.claim_next_queued().unwrap().unwrap().id, first.id);
+        assert!(jobs.next_queued().unwrap().is_none());
     }
 
     #[test]

@@ -34,6 +34,10 @@ pub fn run() {
                 .get()
                 .map(|settings| settings.global_hotkey)
                 .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+            let quick_capture_shortcut = windowing::hotkey::validate_shortcut(
+                &quick_capture_shortcut,
+            )
+            .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
             let parse_worker = services::parse_queue::ParseQueue::with_runtime_settings(
                 state.repositories.clone(),
                 state.settings.clone(),

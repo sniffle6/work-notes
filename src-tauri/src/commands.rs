@@ -358,9 +358,21 @@ pub async fn save_settings(
     state: tauri::State<'_, AppState>,
     settings: AppSettingsDto,
 ) -> Result<AppSettingsDto, CommandError> {
-    let saved = state.settings.save(settings).map_err(CommandError::from)?;
-    windowing::hotkey::register_global_shortcut(&app, &saved.global_hotkey)
+    windowing::hotkey::validate_shortcut(&settings.global_hotkey)
         .map_err(|error| CommandError::new("hotkey_error", error.to_string()))?;
+
+    let previous_hotkey = state
+        .settings
+        .get()
+        .map(|settings| settings.global_hotkey)
+        .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+
+    if let Err(error) = windowing::hotkey::register_global_shortcut(&app, &settings.global_hotkey) {
+        let _ = windowing::hotkey::register_global_shortcut(&app, &previous_hotkey);
+        return Err(CommandError::new("hotkey_error", error.to_string()));
+    }
+
+    let saved = state.settings.save(settings).map_err(CommandError::from)?;
     Ok(saved)
 }
 

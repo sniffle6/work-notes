@@ -160,8 +160,9 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
-  function updateFilters(nextFilters: Partial<InboxFilters>): void {
+  async function updateFilters(nextFilters: Partial<InboxFilters>): Promise<void> {
     filters.update((current) => createInboxFilters({ ...current, ...nextFilters }));
+    await loadInbox();
   }
 
   async function updateAction(

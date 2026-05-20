@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
 
-import type { NoteListItem } from "$lib/types";
+import type { AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
+import { createWorkNotesStore } from "./inbox";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
 function note(overrides: Partial<NoteListItem> = {}): NoteListItem {
@@ -93,3 +95,48 @@ describe("matchesNoteFilters", () => {
     expect(matchesNoteFilters(note({ parseStatus: "failed" }), filters)).toBe(false);
   });
 });
+
+describe("createWorkNotesStore", () => {
+  it("reloads the inbox from the API when filters change", async () => {
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([note({ id: "before-filter" })])
+        .mockResolvedValueOnce([note({ id: "after-filter", rawText: "needle" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadInbox();
+    await store.updateFilters({ search: "needle" });
+
+    expect(api.listInbox).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: "needle" }),
+    );
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["after-filter"]);
+  });
+});
+
+type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
+
+function testApi(overrides: Partial<TestApi> = {}): TestApi {
+  const settings: AppSettings = {
+    hotkey: "Ctrl+Shift+Space",
+    parserTimeoutSeconds: 30,
+    parserMaxRetries: 3,
+    codexCommandPath: "codex",
+    selectedTheme: "dark-compact",
+  };
+  const detail: NoteDetail = { ...note(), actionItems: [] };
+
+  return {
+    saveCaptureNote: vi.fn<(rawText: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
+    listInbox: vi.fn<(filters: InboxFilters) => Promise<NoteListItem[]>>().mockResolvedValue([]),
+    getNote: vi.fn<(noteId: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
+    retryParse: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings),
+    saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings),
+    ...overrides,
+  };
+}

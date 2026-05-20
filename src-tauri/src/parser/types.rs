@@ -10,6 +10,12 @@ pub struct ParserResult {
     pub action_items: Vec<ParsedActionItem>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParserOutput {
+    pub raw_response: String,
+    pub result: ParserResult,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedTag {
@@ -41,6 +47,17 @@ pub enum TagKind {
 
 pub trait ParserProvider {
     fn parse(&self, input: &str) -> Result<ParserResult, ParserError>;
+
+    fn parse_output(&self, input: &str) -> Result<ParserOutput, ParserError> {
+        let result = self.parse(input)?;
+        let raw_response = serde_json::to_string(&result)
+            .map_err(|error| ParserError::InvalidResult(error.to_string()))?;
+
+        Ok(ParserOutput {
+            raw_response,
+            result,
+        })
+    }
 }
 
 #[derive(Debug, Error)]

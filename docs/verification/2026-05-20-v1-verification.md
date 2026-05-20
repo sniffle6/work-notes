@@ -6,7 +6,7 @@
 npm test
 ```
 
-Result: passed. Vitest reported 4 test files and 11 tests passing.
+Result: passed. Vitest reported 4 test files and 12 tests passing.
 
 ```powershell
 npm run check
@@ -24,7 +24,7 @@ Result: passed. Vite and SvelteKit production build completed and wrote `build`.
 scripts\cargo-test.cmd
 ```
 
-Result: passed. Rust reported 20 tests passing.
+Result: passed. Rust reported 24 tests passing.
 
 ```powershell
 cmd.exe /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && npm run tauri build -- --debug"
@@ -64,6 +64,10 @@ Build-level native checks completed:
 - `hide_quick_capture` command is registered for `Esc` and post-save close behavior.
 - Background parse worker starts during Tauri setup.
 - Parser worker reads saved Codex command path, timeout, and retry settings before jobs.
+- Hotkey settings are validated before persistence and shortcut replacement unregisters older app shortcuts.
+- Note capture creates the raw note and queued parse job in one SQLite transaction.
+- Active parse jobs are reused so repeated retry actions do not create duplicate queued/parsing work.
+- Parse runs retain the provider raw response separately from normalized parsed JSON.
 
 Manual interactive checks still need to be performed on the actual desktop session:
 
@@ -87,10 +91,12 @@ Manual interactive checks still need to be performed on the actual desktop sessi
 - Added frontend focus handling for quick-capture show events.
 - Rendered a dedicated quick-capture-only surface in the `quick-capture` Tauri window.
 - Added visible inbox filters and backend tag data in inbox rows.
+- Re-query inbox data when filters change so SQLite/FTS remains the filtering source of truth.
 - Aligned Dark Compact theme tokens with the approved palette.
+- Added parser health, launch-at-startup, and minimize-to-tray settings controls.
+- Guarded startup against invalid persisted hotkeys by falling back to the default shortcut.
 
 ## Residual Risks
 
 - The native tray/hotkey flow has build coverage and pure Rust positioning tests, but still needs a live Windows desktop pass.
 - The parser worker is intentionally one job at a time for v1.
-- Saved hotkeys take effect immediately by registering the new shortcut; previously registered shortcuts may remain active until restart.

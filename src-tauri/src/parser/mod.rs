@@ -15,7 +15,9 @@ pub use result_applier::{
     ActionItemApplication, ParserResultApplier, ParserResultSink, TagApplication, AI_TAG_SOURCE,
     NEEDS_REVIEW_STATUS, SUGGESTED_ACTION_STATUS,
 };
-pub use types::{ParsedActionItem, ParsedTag, ParserError, ParserProvider, ParserResult, TagKind};
+pub use types::{
+    ParsedActionItem, ParsedTag, ParserError, ParserOutput, ParserProvider, ParserResult, TagKind,
+};
 pub use validate::validate_parser_json;
 
 #[cfg(test)]

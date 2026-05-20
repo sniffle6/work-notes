@@ -1,6 +1,6 @@
 use super::{
     prompt::build_parse_prompt,
-    types::{ParserError, ParserProvider, ParserResult},
+    types::{ParserError, ParserOutput, ParserProvider, ParserResult},
     validate::validate_parser_json,
 };
 use std::{
@@ -108,6 +108,14 @@ impl CodexParserProvider {
         &self,
         raw_note: &str,
     ) -> Result<ParserResult, CodexParserError> {
+        self.parse_output_with_typed_errors(raw_note)
+            .map(|output| output.result)
+    }
+
+    pub fn parse_output_with_typed_errors(
+        &self,
+        raw_note: &str,
+    ) -> Result<ParserOutput, CodexParserError> {
         let temp_dir = tempfile::Builder::new()
             .prefix("work-notes-codex-parser-")
             .tempdir()
@@ -134,6 +142,11 @@ fn path_to_arg(path: impl AsRef<Path>) -> String {
 impl ParserProvider for CodexParserProvider {
     fn parse(&self, input: &str) -> Result<ParserResult, ParserError> {
         self.parse_with_typed_errors(input).map_err(Into::into)
+    }
+
+    fn parse_output(&self, input: &str) -> Result<ParserOutput, ParserError> {
+        self.parse_output_with_typed_errors(input)
+            .map_err(Into::into)
     }
 }
 
@@ -209,27 +222,13 @@ fn run_codex_command(
         })
     });
 
-    if let Some(mut stdin) = child.stdin.take() {
-        let wrote_prompt = match stdin.write_all(stdin_body.as_bytes()) {
-            Ok(()) => true,
-            Err(source) if source.kind() == io::ErrorKind::BrokenPipe => false,
-            Err(source) => {
-                return Err(CodexParserError::Io {
-                    context: "write parser prompt to codex stdin",
-                    source,
-                });
-            }
-        };
-
-        if wrote_prompt {
-            stdin.flush().map_err(|source| CodexParserError::Io {
-                context: "write parser prompt to codex stdin",
-                source,
-            })?;
-        }
-    }
+    let stdin_writer = child.stdin.take().map(|mut stdin| {
+        let stdin_body = stdin_body.to_string();
+        thread::spawn(move || write_stdin(&mut stdin, &stdin_body))
+    });
 
     let status = wait_with_timeout(&mut child, timeout)?;
+    read_stdin_result(stdin_writer)?;
     let stderr = read_stderr(stderr_reader)?;
 
     if status.success() {
@@ -240,6 +239,33 @@ fn run_codex_command(
             stderr,
         })
     }
+}
+
+fn write_stdin(stdin: &mut std::process::ChildStdin, stdin_body: &str) -> io::Result<()> {
+    match stdin.write_all(stdin_body.as_bytes()) {
+        Ok(()) => stdin.flush(),
+        Err(source) if source.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(source) => Err(source),
+    }
+}
+
+fn read_stdin_result(
+    writer: Option<thread::JoinHandle<io::Result<()>>>,
+) -> Result<(), CodexParserError> {
+    let Some(writer) = writer else {
+        return Ok(());
+    };
+
+    writer
+        .join()
+        .map_err(|_| CodexParserError::Io {
+            context: "write parser prompt to codex stdin",
+            source: io::Error::new(io::ErrorKind::Other, "stdin writer panicked"),
+        })?
+        .map_err(|source| CodexParserError::Io {
+            context: "write parser prompt to codex stdin",
+            source,
+        })
 }
 
 fn wait_with_timeout(
@@ -286,7 +312,7 @@ fn read_stderr(
         })
 }
 
-fn read_parser_result(output_path: PathBuf) -> Result<ParserResult, CodexParserError> {
+fn read_parser_result(output_path: PathBuf) -> Result<ParserOutput, CodexParserError> {
     if !output_path.exists() {
         return Err(CodexParserError::MissingOutput { path: output_path });
     }
@@ -309,7 +335,12 @@ fn read_parser_result(output_path: PathBuf) -> Result<ParserResult, CodexParserE
     validate_parser_json(&value).map_err(|error| CodexParserError::SchemaValidation {
         message: error.to_string(),
     })?;
-    serde_json::from_value(value).map_err(|source| CodexParserError::InvalidJson { source })
+    let result =
+        serde_json::from_value(value).map_err(|source| CodexParserError::InvalidJson { source })?;
+    Ok(ParserOutput {
+        raw_response: output,
+        result,
+    })
 }
 
 #[cfg(test)]

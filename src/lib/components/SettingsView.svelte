@@ -12,6 +12,8 @@
   let parserTimeoutSeconds = $state(45);
   let codexCommandPath = $state("");
   let selectedTheme = $state("dark-compact");
+  let launchAtStartup = $state(false);
+  let minimizeToTray = $state(true);
 
   const dispatch = createEventDispatcher<{
     save: AppSettings;
@@ -22,6 +24,8 @@
     parserTimeoutSeconds = settings?.parserTimeoutSeconds ?? 45;
     codexCommandPath = settings?.codexCommandPath ?? "";
     selectedTheme = settings?.selectedTheme ?? "dark-compact";
+    launchAtStartup = settings?.launchAtStartup ?? false;
+    minimizeToTray = settings?.minimizeToTray ?? true;
   });
 
   function handleSubmit() {
@@ -31,8 +35,8 @@
       parserMaxRetries: settings?.parserMaxRetries,
       codexCommandPath: codexCommandPath.trim(),
       selectedTheme,
-      launchAtStartup: settings?.launchAtStartup,
-      minimizeToTray: settings?.minimizeToTray,
+      launchAtStartup,
+      minimizeToTray,
     });
   }
 </script>
@@ -76,6 +80,21 @@
         <option value="dark-compact">Dark Compact</option>
       </select>
     </label>
+
+    <label class="checkbox-row">
+      <input type="checkbox" bind:checked={launchAtStartup} disabled={!settings || saving} />
+      <span>Launch at startup</span>
+    </label>
+
+    <label class="checkbox-row">
+      <input type="checkbox" bind:checked={minimizeToTray} disabled={!settings || saving} />
+      <span>Minimize to tray</span>
+    </label>
+
+    <div class="parser-health" aria-label="Parser health">
+      <span>Parser health</span>
+      <strong>{codexCommandPath.trim() ? "Codex command configured" : "Codex command missing"}</strong>
+    </div>
   </div>
 </section>
 
@@ -133,7 +152,8 @@
     min-width: 0;
   }
 
-  label span {
+  label span,
+  .parser-health span {
     color: var(--color-text-muted);
     font-size: 11px;
     font-weight: 800;
@@ -157,6 +177,34 @@
     min-height: 32px;
     padding: 0 9px;
     font-size: 13px;
+  }
+
+  input[type="checkbox"] {
+    width: 16px;
+    min-height: 16px;
+    padding: 0;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .parser-health {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 6px;
+    background: var(--color-surface-input);
+  }
+
+  .parser-health strong {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    line-height: 1.2;
   }
 
   button {

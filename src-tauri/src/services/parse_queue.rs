@@ -4,7 +4,7 @@ use crate::app_state::AppRepositories;
 use crate::domain::{ActionItemId, ParseRunId, TagId};
 use crate::domain::{NoteId, ParseJob, ParseJobId, ReviewStatus, TagKind as DomainTagKind};
 use crate::parser::{
-    ActionItemApplication, CodexParserProvider, ParserProvider, ParserResult, ParserResultApplier,
+    ActionItemApplication, CodexParserProvider, ParserOutput, ParserProvider, ParserResultApplier,
     ParserResultSink, TagApplication, TagKind as ParserTagKind,
 };
 use crate::services::settings::{AppSettings, SettingsService};
@@ -197,14 +197,14 @@ impl ParseQueue {
             }
         })?;
 
-        match provider.parse(&note.raw_text) {
-            Ok(result) => self.apply_successful_parse(job, &result),
+        match provider.parse_output(&note.raw_text) {
+            Ok(output) => self.apply_successful_parse(job, &output),
             Err(error) => self.handle_parse_failure(job, &error.to_string()),
         }
     }
 
-    fn apply_successful_parse(&self, job: &ParseJob, result: &ParserResult) -> ServiceResult<()> {
-        if let Err(error) = self.apply_successful_parse_transaction(job, result) {
+    fn apply_successful_parse(&self, job: &ParseJob, output: &ParserOutput) -> ServiceResult<()> {
+        if let Err(error) = self.apply_successful_parse_transaction(job, output) {
             let _ = self.mark_failed(job.id, &error.to_string());
             return Err(error);
         }
@@ -214,9 +214,9 @@ impl ParseQueue {
     fn apply_successful_parse_transaction(
         &self,
         job: &ParseJob,
-        result: &ParserResult,
+        output: &ParserOutput,
     ) -> ServiceResult<()> {
-        let parsed_json = serde_json::to_string(result)?;
+        let parsed_json = serde_json::to_string(&output.result)?;
         let provider_config = self.current_parser_provider_config();
         let now = Utc::now().to_rfc3339();
         let mut connection = self.repositories.database.connection()?;
@@ -227,7 +227,7 @@ impl ParseQueue {
             job.note_id,
             &provider_config.provider_name,
             &provider_config.prompt_version,
-            &parsed_json,
+            &output.raw_response,
             &parsed_json,
             &now,
         )?;
@@ -236,7 +236,7 @@ impl ParseQueue {
             transaction: &transaction,
             updated_at: now.as_str(),
         };
-        ParserResultApplier::default().apply(&mut sink, job.note_id, result)?;
+        ParserResultApplier::default().apply(&mut sink, job.note_id, &output.result)?;
         mark_job_parsed(&transaction, job.id, job.note_id, &now)?;
         transaction.commit()?;
         Ok(())
@@ -501,7 +501,7 @@ mod tests {
     use crate::db::Database;
     use crate::domain::{ActionStatus, ParseStatus, ReviewStatus, TagKind};
     use crate::parser::{
-        ParsedActionItem, ParsedTag, ParserError, ParserProvider, ParserResult,
+        ParsedActionItem, ParsedTag, ParserError, ParserOutput, ParserProvider, ParserResult,
         TagKind as ParserTagKind,
     };
     use crate::services::parse_queue::{ParseQueue, ParseQueueConfig, ParserProviderConfig};
@@ -605,6 +605,33 @@ mod tests {
         assert_eq!(actions[0].text, "Fix the QA flag.");
     }
 
+    #[test]
+    fn process_next_records_raw_provider_response_separately_from_parsed_json() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+
+        ParseQueue::new(repositories.clone())
+            .process_next_with_provider(&RawResponseProvider)
+            .unwrap();
+
+        let connection = repositories.database.connection().unwrap();
+        let (raw_response, parsed_json): (String, String) = connection
+            .query_row(
+                "SELECT raw_response, parsed_json FROM parse_runs WHERE note_id = ?1",
+                [note.id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(raw_response, RAW_PROVIDER_RESPONSE);
+        assert_ne!(raw_response, parsed_json);
+        assert!(parsed_json.contains("Sam said to fix the QA flag."));
+    }
+
     struct StaticProvider;
 
     impl ParserProvider for StaticProvider {
@@ -633,6 +660,23 @@ mod tests {
     impl ParserProvider for FailingProvider {
         fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
             Err(ParserError::Provider("codex unavailable".to_string()))
+        }
+    }
+
+    const RAW_PROVIDER_RESPONSE: &str = "{\n  \"cleanedText\": \"Sam said to fix the QA flag.\",\n  \"summary\": \"Fix QA flag.\",\n  \"tags\": [],\n  \"actionItems\": []\n}";
+
+    struct RawResponseProvider;
+
+    impl ParserProvider for RawResponseProvider {
+        fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
+            StaticProvider.parse("")
+        }
+
+        fn parse_output(&self, _input: &str) -> Result<ParserOutput, ParserError> {
+            Ok(ParserOutput {
+                raw_response: RAW_PROVIDER_RESPONSE.to_string(),
+                result: StaticProvider.parse("")?,
+            })
         }
     }
 }

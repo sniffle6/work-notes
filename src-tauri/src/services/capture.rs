@@ -18,9 +18,10 @@ impl CaptureService {
             return Err(ServiceError::InvalidInput("note text is required"));
         }
 
-        let note = self.repositories.notes.create_raw_note(raw_text)?;
-        self.repositories.parse_jobs.enqueue(note.id)?;
-        Ok(note)
+        self.repositories
+            .notes
+            .create_raw_note(raw_text)
+            .map_err(Into::into)
     }
 }
 

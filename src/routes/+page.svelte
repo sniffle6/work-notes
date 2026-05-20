@@ -35,7 +35,7 @@
   let quickDraft = $state("");
   let quickCaptureOpen = $state(true);
   let quickCaptureError = $state<string | null>(null);
-  let currentWindowLabel = $state("browser");
+  let currentWindowLabel = $state(initialWindowLabel());
   let quickCapturePanel = $state<{ focusNoteInput: () => Promise<void> } | null>(null);
 
   const selectedActionItems = $derived($selectedNote?.actionItems ?? []);
@@ -49,14 +49,17 @@
   ]);
 
   onMount(() => {
-    void workNotes.loadInbox();
-    void workNotes.loadSettings();
-
     if (!isTauriRuntime()) {
+      void workNotes.loadInbox();
+      void workNotes.loadSettings();
       return;
     }
 
     currentWindowLabel = getCurrentWindow().label;
+    if (currentWindowLabel !== "quick-capture") {
+      void workNotes.loadInbox();
+      void workNotes.loadSettings();
+    }
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
@@ -80,6 +83,10 @@
 
   function isTauriRuntime(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
+
+  function initialWindowLabel(): string {
+    return isTauriRuntime() ? getCurrentWindow().label : "browser";
   }
 
   function updateQuickDraft(event: CustomEvent<string>) {
@@ -140,7 +147,7 @@
         {selectedId}
         loading={$loadingInbox}
         on:select={(event) => void workNotes.selectNote(event.detail)}
-        on:filter={(event) => workNotes.updateFilters(event.detail)}
+        on:filter={(event) => void workNotes.updateFilters(event.detail)}
       />
 
       <div class="detail-column">

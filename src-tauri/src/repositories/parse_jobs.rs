@@ -25,6 +25,12 @@ impl ParseJobRepository {
         let created_at = now_db_string();
         let mut connection = self.db.connection()?;
         let transaction = connection.transaction()?;
+
+        if let Some(active_job) = active_job_for_note(&transaction, &note_id_text)? {
+            transaction.commit()?;
+            return Ok(active_job);
+        }
+
         transaction.execute(
             "INSERT INTO parse_jobs (
                 id, note_id, status, attempt_count, last_error, created_at, started_at, finished_at
@@ -238,6 +244,29 @@ fn job_by_id(transaction: &Transaction<'_>, id: &str) -> RepositoryResult<Option
              FROM parse_jobs
              WHERE id = ?1",
             [id],
+            ParseJobRecord::from_row,
+        )
+        .optional()?;
+    record.map(ParseJobRecord::into_job).transpose()
+}
+
+fn active_job_for_note(
+    transaction: &Transaction<'_>,
+    note_id: &str,
+) -> RepositoryResult<Option<ParseJob>> {
+    let record = transaction
+        .query_row(
+            "SELECT id, note_id, status, attempt_count, last_error,
+                    created_at, started_at, finished_at
+             FROM parse_jobs
+             WHERE note_id = ?1 AND status IN (?2, ?3)
+             ORDER BY created_at, rowid
+             LIMIT 1",
+            params![
+                note_id,
+                ParseStatus::Queued.as_str(),
+                ParseStatus::Parsing.as_str()
+            ],
             ParseJobRecord::from_row,
         )
         .optional()?;
