@@ -12,9 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Work Notes",
-        "width": 800,
-        "height": 600
+        "width": 1100,
+        "height": 720
+      },
+      {
+        "label": "quick-capture",
+        "title": "Quick Capture",
+        "url": "index.html",
+        "width": 560,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

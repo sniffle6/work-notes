@@ -24,7 +24,7 @@ impl Default for AppSettings {
         Self {
             launch_at_startup: false,
             minimize_to_tray: true,
-            global_hotkey: "Ctrl+Alt+Space".to_string(),
+            global_hotkey: "Ctrl+Shift+Space".to_string(),
             theme: "dark".to_string(),
             parser_timeout_seconds: 30,
             parser_max_retries: 3,

@@ -2,6 +2,8 @@ pub mod hotkey;
 pub mod quick_capture;
 pub mod tray;
 
+use tauri::{AppHandle, Manager};
+
 pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const QUICK_CAPTURE_WINDOW_LABEL: &str = "quick-capture";
 
@@ -34,6 +36,26 @@ pub fn bottom_right_position(
         x: work_area.x + work_area.width as i32 - window.width as i32 - margin,
         y: work_area.y + work_area.height as i32 - window.height as i32 - margin,
     }
+}
+
+pub fn initialize_windowing(
+    app: &AppHandle,
+    quick_capture_shortcut: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    quick_capture::prepare_quick_capture_window(app)?;
+    tray::initialize_tray_menu(app)?;
+    hotkey::register_global_shortcut(app, quick_capture_shortcut)?;
+    Ok(())
+}
+
+pub fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window.show()?;
+        window.unminimize()?;
+        window.set_focus()?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
