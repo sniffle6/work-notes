@@ -2,6 +2,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
+use crate::parser::DEFAULT_CODEX_PROGRAM;
 
 use super::{ServiceError, ServiceResult};
 
@@ -28,7 +29,7 @@ impl Default for AppSettings {
             theme: "dark-compact".to_string(),
             parser_timeout_seconds: 30,
             parser_max_retries: 3,
-            codex_command_path: "codex".to_string(),
+            codex_command_path: DEFAULT_CODEX_PROGRAM.to_string(),
         }
     }
 }

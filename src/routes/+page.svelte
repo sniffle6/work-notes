@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { hideQuickCapture } from "$lib/api";
   import AppShell from "$lib/components/AppShell.svelte";
@@ -9,6 +9,7 @@
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
+  import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
   import { createWorkNotesStore } from "$lib/stores/inbox";
   import { toCssVariables } from "$lib/theme/applyTheme";
   import { darkCompactTheme } from "$lib/theme/themes";
@@ -60,24 +61,37 @@
       void workNotes.loadInbox();
       void workNotes.loadSettings();
     }
-    let unlisten: (() => void) | undefined;
+    const unlisteners: Array<() => void> = [];
     let disposed = false;
+    const registerUnlisten = (nextUnlisten: () => void) => {
+      if (disposed) {
+        nextUnlisten();
+      } else {
+        unlisteners.push(nextUnlisten);
+      }
+    };
 
     void listen("quick-capture:focus-note-textarea", async () => {
       quickCaptureOpen = true;
       await tick();
       await quickCapturePanel?.focusNoteInput();
-    }).then((nextUnlisten) => {
-      if (disposed) {
-        nextUnlisten();
-      } else {
-        unlisten = nextUnlisten;
-      }
-    });
+    }).then(registerUnlisten);
+
+    if (currentWindowLabel !== "quick-capture") {
+      void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
+        if (event.payload.noteId) {
+          void workNotes.showCapturedNote(event.payload.noteId);
+        } else {
+          void workNotes.loadInbox();
+        }
+      }).then(registerUnlisten);
+    }
 
     return () => {
       disposed = true;
-      unlisten?.();
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
   });
 
@@ -97,7 +111,10 @@
     quickCaptureError = null;
 
     try {
-      await workNotes.saveCapture(event.detail);
+      const noteId = await workNotes.saveCapture(event.detail);
+      if (noteId && currentWindowLabel === "quick-capture") {
+        await emit(NOTE_CAPTURED_EVENT, { noteId } satisfies NoteCapturedPayload).catch(() => undefined);
+      }
       quickDraft = "";
       await closeQuickCapture();
     } catch (unknownError) {
@@ -108,6 +125,14 @@
   async function closeQuickCapture() {
     quickCaptureOpen = false;
     await hideQuickCapture();
+  }
+
+  async function deleteSelectedNote() {
+    if (typeof window !== "undefined" && !window.confirm("Delete this note?")) {
+      return;
+    }
+
+    await workNotes.deleteSelectedNote();
   }
 </script>
 
@@ -155,6 +180,8 @@
           note={$selectedNote}
           loading={$loadingNote}
           on:retryParse={() => void workNotes.retrySelectedParse()}
+          on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
+          on:deleteNote={() => void deleteSelectedNote()}
         />
 
         <ReviewQueue

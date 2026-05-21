@@ -102,6 +102,47 @@ mod tests {
     }
 
     #[test]
+    fn archived_notes_are_hidden_from_default_inbox() {
+        let db = test_db();
+        let notes = NoteRepository::new(db);
+
+        let note = notes.create_raw_note("delete this note").unwrap();
+        notes.archive(note.id).unwrap();
+
+        let default_items = notes
+            .list_inbox(crate::domain::InboxFilters::default())
+            .unwrap();
+        let archived_items = notes
+            .list_inbox(crate::domain::InboxFilters {
+                include_archived: true,
+                ..crate::domain::InboxFilters::default()
+            })
+            .unwrap();
+
+        assert!(default_items.is_empty());
+        assert_eq!(archived_items.len(), 1);
+        assert!(archived_items[0].is_archived);
+    }
+
+    #[test]
+    fn parse_job_feedback_is_persisted_for_reparse() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let jobs = ParseJobRepository::new(db.clone());
+
+        let note = notes.create_raw_note("raw note").unwrap();
+        let job = jobs
+            .enqueue_with_feedback(note.id, Some("tag as research"))
+            .unwrap();
+
+        assert_eq!(job.feedback.as_deref(), Some("tag as research"));
+        assert_eq!(
+            jobs.next_queued().unwrap().unwrap().feedback.as_deref(),
+            Some("tag as research")
+        );
+    }
+
+    #[test]
     fn fts_search_matches_raw_and_cleaned_text() {
         let db = test_db();
         let notes = NoteRepository::new(db);

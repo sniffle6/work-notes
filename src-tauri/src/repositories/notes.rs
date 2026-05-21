@@ -62,6 +62,25 @@ impl NoteRepository {
         })
     }
 
+    pub fn archive(&self, id: NoteId) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let connection = self.db.connection()?;
+        let changed = connection.execute(
+            "UPDATE notes SET is_archived = 1, updated_at = ?2 WHERE id = ?1",
+            params![id_text, now],
+        )?;
+
+        if changed == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn get(&self, id: NoteId) -> RepositoryResult<Option<Note>> {
         let connection = self.db.connection()?;
         let id_text = id.to_string();

@@ -320,6 +320,32 @@ pub async fn retry_parse(
 }
 
 #[tauri::command]
+pub async fn retry_parse_with_feedback(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+    feedback: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    ParseQueue::with_config(
+        state.repositories.clone(),
+        state.parse_queue_config.clone(),
+        state.parser_provider_config.clone(),
+    )
+    .retry_note_with_feedback(note_id, &feedback)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    state.repositories.notes.archive(note_id)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn accept_action_item(
     state: tauri::State<'_, AppState>,
     action_id: String,

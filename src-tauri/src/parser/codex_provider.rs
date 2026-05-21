@@ -1,5 +1,5 @@
 use super::{
-    prompt::build_parse_prompt,
+    prompt::build_parse_prompt_with_feedback,
     types::{ParserError, ParserOutput, ParserProvider, ParserResult},
     validate::validate_parser_json,
 };
@@ -14,9 +14,13 @@ use std::{
 use tempfile::TempDir;
 use thiserror::Error;
 
+#[cfg(windows)]
+pub const DEFAULT_CODEX_PROGRAM: &str = "codex.cmd";
+#[cfg(not(windows))]
 pub const DEFAULT_CODEX_PROGRAM: &str = "codex";
 pub const DEFAULT_SCHEMA_PATH: &str = "schemas/parse-note.schema.json";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_SCHEMA_JSON: &str = include_str!("../../../schemas/parse-note.schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexCommandSpec {
@@ -116,6 +120,14 @@ impl CodexParserProvider {
         &self,
         raw_note: &str,
     ) -> Result<ParserOutput, CodexParserError> {
+        self.parse_output_with_feedback(raw_note, None)
+    }
+
+    pub fn parse_output_with_feedback(
+        &self,
+        raw_note: &str,
+        feedback: Option<&str>,
+    ) -> Result<ParserOutput, CodexParserError> {
         let temp_dir = tempfile::Builder::new()
             .prefix("work-notes-codex-parser-")
             .tempdir()
@@ -125,12 +137,17 @@ impl CodexParserProvider {
             })?;
         let output_path = temp_output_path(&temp_dir);
         let output_arg = output_path.to_string_lossy().into_owned();
+        let schema_path = default_schema_arg_path(&temp_dir, &self.schema_path)?;
         let command = CodexCommandBuilder::new(self.program.clone())
-            .schema_path(self.schema_path.clone())
+            .schema_path(schema_path)
             .output_path(output_arg)
             .build();
 
-        run_codex_command(&command, &build_parse_prompt(raw_note), self.timeout)?;
+        run_codex_command(
+            &command,
+            &build_parse_prompt_with_feedback(raw_note, feedback),
+            self.timeout,
+        )?;
         read_parser_result(output_path)
     }
 }
@@ -190,6 +207,24 @@ impl From<CodexParserError> for ParserError {
 
 fn temp_output_path(temp_dir: &TempDir) -> PathBuf {
     temp_dir.path().join("parse-result.json")
+}
+
+fn default_schema_arg_path(
+    temp_dir: &TempDir,
+    schema_path: &str,
+) -> Result<PathBuf, CodexParserError> {
+    if schema_path != DEFAULT_SCHEMA_PATH {
+        return Ok(PathBuf::from(schema_path));
+    }
+
+    let runtime_schema_path = temp_dir.path().join("parse-note.schema.json");
+    fs::write(&runtime_schema_path, DEFAULT_SCHEMA_JSON).map_err(|source| {
+        CodexParserError::Io {
+            context: "write parser schema to temporary file",
+            source,
+        }
+    })?;
+    Ok(runtime_schema_path)
 }
 
 fn run_codex_command(
@@ -345,7 +380,33 @@ fn read_parser_result(output_path: PathBuf) -> Result<ParserOutput, CodexParserE
 
 #[cfg(test)]
 mod tests {
-    use super::CodexCommandBuilder;
+    use super::{
+        default_schema_arg_path, CodexCommandBuilder, DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH,
+    };
+
+    #[test]
+    fn default_codex_program_uses_runnable_platform_shim() {
+        #[cfg(windows)]
+        assert_eq!(DEFAULT_CODEX_PROGRAM, "codex.cmd");
+
+        #[cfg(not(windows))]
+        assert_eq!(DEFAULT_CODEX_PROGRAM, "codex");
+    }
+
+    #[test]
+    fn default_schema_is_written_to_temp_file_for_runtime_access() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let schema_path =
+            default_schema_arg_path(&temp_dir, DEFAULT_SCHEMA_PATH).expect("schema path");
+
+        assert!(schema_path.is_absolute());
+        assert!(schema_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(schema_path).expect("schema content"),
+            include_str!("../../../schemas/parse-note.schema.json")
+        );
+    }
 
     #[test]
     fn builds_codex_exec_command_with_schema_and_output_file() {

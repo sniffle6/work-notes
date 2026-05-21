@@ -10,7 +10,7 @@ pub use codex_provider::{
     DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH, DEFAULT_TIMEOUT,
 };
 pub use fake_provider::FakeParserProvider;
-pub use prompt::build_parse_prompt;
+pub use prompt::{build_parse_prompt, build_parse_prompt_with_feedback};
 pub use result_applier::{
     ActionItemApplication, ParserResultApplier, ParserResultSink, TagApplication, AI_TAG_SOURCE,
     NEEDS_REVIEW_STATUS, SUGGESTED_ACTION_STATUS,

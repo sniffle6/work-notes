@@ -5,7 +5,7 @@ use crate::domain::{ActionItemId, ParseRunId, TagId};
 use crate::domain::{NoteId, ParseJob, ParseJobId, ReviewStatus, TagKind as DomainTagKind};
 use crate::parser::{
     ActionItemApplication, CodexParserProvider, ParserOutput, ParserProvider, ParserResultApplier,
-    ParserResultSink, TagApplication, TagKind as ParserTagKind,
+    ParserResultSink, TagApplication, TagKind as ParserTagKind, DEFAULT_CODEX_PROGRAM,
 };
 use crate::services::settings::{AppSettings, SettingsService};
 use chrono::Utc;
@@ -51,7 +51,7 @@ impl Default for ParserProviderConfig {
         Self {
             provider_name: "codex".to_string(),
             prompt_version: "parse-note-v1".to_string(),
-            codex_command_path: "codex".to_string(),
+            codex_command_path: DEFAULT_CODEX_PROGRAM.to_string(),
             schema_path: "schemas/parse-note.schema.json".to_string(),
             timeout_seconds: 30,
         }
@@ -123,6 +123,23 @@ impl ParseQueue {
         self.enqueue_note(note_id)
     }
 
+    pub fn retry_note_with_feedback(
+        &self,
+        note_id: NoteId,
+        feedback: &str,
+    ) -> ServiceResult<ParseJob> {
+        if feedback.trim().is_empty() {
+            return Err(super::ServiceError::InvalidInput(
+                "reparse feedback is required",
+            ));
+        }
+
+        self.repositories
+            .parse_jobs
+            .enqueue_with_feedback(note_id, Some(feedback))
+            .map_err(Into::into)
+    }
+
     pub fn claim_next(&self) -> ServiceResult<Option<ParseJob>> {
         self.repositories
             .parse_jobs
@@ -163,7 +180,23 @@ impl ParseQueue {
             .schema_path(provider_config.schema_path)
             .timeout(Duration::from_secs(provider_config.timeout_seconds));
 
-        self.process_next_with_provider(&provider)
+        let Some(job) = self.claim_next()? else {
+            return Ok(false);
+        };
+
+        let note = self.repositories.notes.get(job.note_id)?.ok_or_else(|| {
+            super::ServiceError::NotFound {
+                entity: "note",
+                id: job.note_id.to_string(),
+            }
+        })?;
+
+        match provider.parse_output_with_feedback(&note.raw_text, job.feedback.as_deref()) {
+            Ok(output) => self.apply_successful_parse(&job, &output),
+            Err(error) => self.handle_parse_failure(&job, &error.to_string()),
+        }?;
+
+        Ok(true)
     }
 
     pub fn start_background_worker(self) -> std::io::Result<()> {
@@ -229,6 +262,7 @@ impl ParseQueue {
             &provider_config.prompt_version,
             &output.raw_response,
             &parsed_json,
+            job.feedback.as_deref(),
             &now,
         )?;
         delete_replaceable_parser_suggestions(&transaction, job.note_id)?;
@@ -377,12 +411,13 @@ fn record_parse_run(
     prompt_version: &str,
     raw_response: &str,
     parsed_json: &str,
+    feedback: Option<&str>,
     created_at: &str,
 ) -> ServiceResult<()> {
     transaction.execute(
         "INSERT INTO parse_runs (
-            id, note_id, provider, prompt_version, raw_response, parsed_json, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            id, note_id, provider, prompt_version, raw_response, parsed_json, feedback, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             ParseRunId::new().to_string(),
             note_id.to_string(),
@@ -390,6 +425,7 @@ fn record_parse_run(
             prompt_version,
             raw_response,
             parsed_json,
+            feedback.map(str::trim).filter(|value| !value.is_empty()),
             created_at
         ],
     )?;
@@ -619,17 +655,46 @@ mod tests {
             .unwrap();
 
         let connection = repositories.database.connection().unwrap();
-        let (raw_response, parsed_json): (String, String) = connection
+        let (raw_response, parsed_json, feedback): (String, String, Option<String>) = connection
             .query_row(
-                "SELECT raw_response, parsed_json FROM parse_runs WHERE note_id = ?1",
+                "SELECT raw_response, parsed_json, feedback FROM parse_runs WHERE note_id = ?1",
                 [note.id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
 
         assert_eq!(raw_response, RAW_PROVIDER_RESPONSE);
         assert_ne!(raw_response, parsed_json);
+        assert_eq!(feedback, None);
         assert!(parsed_json.contains("Sam said to fix the QA flag."));
+    }
+
+    #[test]
+    fn process_next_records_reparse_feedback_in_parse_run() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        repositories
+            .parse_jobs
+            .enqueue_with_feedback(note.id, Some("Tag this as QA follow-up"))
+            .unwrap();
+
+        ParseQueue::new(repositories.clone())
+            .process_next_with_provider(&RawResponseProvider)
+            .unwrap();
+
+        let connection = repositories.database.connection().unwrap();
+        let feedback: Option<String> = connection
+            .query_row(
+                "SELECT feedback FROM parse_runs WHERE note_id = ?1",
+                [note.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(feedback.as_deref(), Some("Tag this as QA follow-up"));
     }
 
     struct StaticProvider;

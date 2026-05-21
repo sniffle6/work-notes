@@ -99,7 +99,7 @@ let fallbackSettings: AppSettings = {
   hotkey: "Ctrl+Shift+Space",
   parserTimeoutSeconds: 45,
   parserMaxRetries: 3,
-  codexCommandPath: "codex",
+  codexCommandPath: "codex.cmd",
   selectedTheme: "dark-compact",
   launchAtStartup: true,
   minimizeToTray: true,
@@ -136,6 +136,14 @@ export async function retryParse(noteId: string): Promise<void> {
   await invokeCommand<void>("retry_parse", { noteId });
 }
 
+export async function retryParseWithFeedback(noteId: string, feedback: string): Promise<void> {
+  await invokeCommand<void>("retry_parse_with_feedback", { noteId, feedback });
+}
+
+export async function deleteNote(noteId: string): Promise<void> {
+  await invokeCommand<void>("delete_note", { noteId });
+}
+
 export async function acceptActionItem(actionItemId: string): Promise<void> {
   await invokeCommand<void>("accept_action_item", { actionId: actionItemId });
 }
@@ -163,6 +171,8 @@ export const api = {
   listInbox,
   getNote,
   retryParse,
+  retryParseWithFeedback,
+  deleteNote,
   acceptActionItem,
   dismissActionItem,
   getSettings,
@@ -317,7 +327,9 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       return normalizeNoteListItem(note) as T;
     }
     case "list_inbox":
-      return fallbackNotes.map(normalizeNoteListItem) as T;
+      return fallbackNotes
+        .filter((note) => Boolean((args?.filters as UnknownRecord | undefined)?.includeArchived) || !note.isArchived)
+        .map(normalizeNoteListItem) as T;
     case "get_note": {
       const note = fallbackNotes.find((item) => item.id === args?.id) ?? fallbackNotes[0];
       return normalizeNoteDetail(note) as T;
@@ -327,6 +339,24 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       if (note) {
         note.parseStatus = "queued";
         note.parseError = null;
+        note.updatedAt = new Date().toISOString();
+      }
+      return undefined as T;
+    }
+    case "retry_parse_with_feedback": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.parseStatus = "queued";
+        note.parseError = null;
+        note.summary = String(args?.feedback ?? "").trim() || note.summary;
+        note.updatedAt = new Date().toISOString();
+      }
+      return undefined as T;
+    }
+    case "delete_note": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.isArchived = true;
         note.updatedAt = new Date().toISOString();
       }
       return undefined as T;

@@ -114,6 +114,58 @@ describe("createWorkNotesStore", () => {
     );
     expect(get(store.inbox).map((item) => item.id)).toEqual(["after-filter"]);
   });
+
+  it("reveals an externally captured note by clearing filters and selecting it", async () => {
+    const captured = note({
+      id: "captured-note",
+      rawText: "Robert asked about local AI feasibility.",
+      parseStatus: "failed",
+      reviewStatus: "none",
+    });
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([captured]),
+      getNote: vi
+        .fn()
+        .mockResolvedValue({ ...captured, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.updateFilters({ search: "old filter" });
+    await store.showCapturedNote("captured-note");
+
+    expect(get(store.filters)).toEqual(createInboxFilters());
+    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters());
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["captured-note"]);
+    expect(get(store.selectedNote)?.id).toBe("captured-note");
+  });
+
+  it("retries the selected note with feedback and reloads it", async () => {
+    const api = testApi();
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.retrySelectedParseWithFeedback("Tag this as research.");
+
+    expect(api.retryParseWithFeedback).toHaveBeenCalledWith("note-1", "Tag this as research.");
+    expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+  });
+
+  it("archives the selected note and clears the selection", async () => {
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.deleteSelectedNote();
+
+    expect(api.deleteNote).toHaveBeenCalledWith("note-1");
+    expect(get(store.selectedNote)).toBeNull();
+    expect(get(store.inbox)).toEqual([]);
+  });
 });
 
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
@@ -133,6 +185,10 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     listInbox: vi.fn<(filters: InboxFilters) => Promise<NoteListItem[]>>().mockResolvedValue([]),
     getNote: vi.fn<(noteId: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
     retryParse: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    retryParseWithFeedback: vi
+      .fn<(noteId: string, feedback: string) => Promise<void>>()
+      .mockResolvedValue(undefined),
+    deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings),

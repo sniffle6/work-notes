@@ -71,7 +71,7 @@
 
     <label>
       <span>Codex command</span>
-      <input bind:value={codexCommandPath} disabled={!settings || saving} placeholder="codex" />
+      <input bind:value={codexCommandPath} disabled={!settings || saving} placeholder="codex.cmd" />
     </label>
 
     <label>

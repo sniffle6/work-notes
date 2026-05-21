@@ -281,6 +281,7 @@ pub struct ParseJob {
     pub status: ParseStatus,
     pub attempt_count: u32,
     pub last_error: Option<String>,
+    pub feedback: Option<String>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -294,5 +295,6 @@ pub struct ParseRun {
     pub prompt_version: String,
     pub raw_response: String,
     pub parsed_json: String,
+    pub feedback: Option<String>,
     pub created_at: DateTime<Utc>,
 }

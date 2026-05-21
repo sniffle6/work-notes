@@ -12,10 +12,22 @@
   };
 
   let { note, loading = false }: Props = $props();
+  let reparseFeedback = $state("");
+  let currentNoteId = $state<string | null>(null);
 
   const dispatch = createEventDispatcher<{
     retryParse: void;
+    reparseWithFeedback: string;
+    deleteNote: void;
   }>();
+
+  $effect(() => {
+    const noteId = note?.id ?? null;
+    if (noteId !== currentNoteId) {
+      currentNoteId = noteId;
+      reparseFeedback = "";
+    }
+  });
 
   function parseLabel(status: ParseStatus): string {
     switch (status) {
@@ -78,6 +90,14 @@
       minute: "2-digit",
     });
   }
+
+  function dispatchReparseWithFeedback() {
+    const feedback = reparseFeedback.trim();
+    if (feedback) {
+      dispatch("reparseWithFeedback", feedback);
+      reparseFeedback = "";
+    }
+  }
 </script>
 
 <section class="note-detail" aria-label="Note detail">
@@ -91,9 +111,14 @@
         <p class="eyebrow">{formatDate(note.createdAt)}</p>
         <h2>{note.title}</h2>
       </div>
-      <div class="badges" aria-label="Selected note statuses">
-        <StatusBadge label={parseLabel(note.parseStatus)} tone={parseTone(note.parseStatus)} />
-        <StatusBadge label={reviewLabel(note.reviewStatus)} tone={reviewTone(note.reviewStatus)} />
+      <div class="header-actions">
+        <div class="badges" aria-label="Selected note statuses">
+          <StatusBadge label={parseLabel(note.parseStatus)} tone={parseTone(note.parseStatus)} />
+          <StatusBadge label={reviewLabel(note.reviewStatus)} tone={reviewTone(note.reviewStatus)} />
+        </div>
+        <button class="delete-button" type="button" onclick={() => dispatch("deleteNote")} disabled={loading}>
+          Delete
+        </button>
       </div>
     </header>
 
@@ -103,6 +128,21 @@
         <button type="button" onclick={() => dispatch("retryParse")} disabled={loading}>Retry</button>
       </div>
     {/if}
+
+    <section class="reparse-block" aria-label="Reparse note">
+      <label>
+        <span>Reparse feedback</span>
+        <textarea
+          bind:value={reparseFeedback}
+          aria-label="Reparse feedback"
+          disabled={loading}
+          rows="3"
+        ></textarea>
+      </label>
+      <button type="button" onclick={dispatchReparseWithFeedback} disabled={loading || !reparseFeedback.trim()}>
+        Reparse with feedback
+      </button>
+    </section>
 
     <div class="text-grid">
       <section class="text-block" aria-label="Raw note">
@@ -204,6 +244,7 @@
     text-transform: uppercase;
   }
 
+  .header-actions,
   .badges,
   .tags {
     display: flex;
@@ -214,6 +255,11 @@
 
   .badges {
     justify-content: flex-end;
+  }
+
+  .header-actions {
+    align-items: flex-end;
+    flex-direction: column;
   }
 
   .parse-failure {
@@ -229,6 +275,8 @@
   }
 
   .parse-failure button,
+  .reparse-block button,
+  .delete-button,
   .tag {
     border: 1px solid var(--color-border-default);
     border-radius: 6px;
@@ -237,10 +285,51 @@
     font: inherit;
   }
 
-  .parse-failure button {
+  .parse-failure button,
+  .reparse-block button,
+  .delete-button {
     min-height: 28px;
     padding: 0 10px;
     cursor: pointer;
+  }
+
+  .delete-button {
+    color: var(--color-status-error);
+  }
+
+  .reparse-block {
+    display: grid;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-border-default);
+    background: var(--color-surface-1);
+  }
+
+  .reparse-block label {
+    display: grid;
+    gap: 6px;
+  }
+
+  .reparse-block span {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .reparse-block textarea {
+    width: 100%;
+    min-height: 68px;
+    resize: vertical;
+    border: 1px solid var(--color-border-default);
+    border-radius: 6px;
+    padding: 8px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-input);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.35;
   }
 
   .text-grid {

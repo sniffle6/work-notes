@@ -19,26 +19,49 @@ impl ParseJobRepository {
     }
 
     pub fn enqueue(&self, note_id: NoteId) -> RepositoryResult<ParseJob> {
+        self.enqueue_with_feedback(note_id, None)
+    }
+
+    pub fn enqueue_with_feedback(
+        &self,
+        note_id: NoteId,
+        feedback: Option<&str>,
+    ) -> RepositoryResult<ParseJob> {
         let id = ParseJobId::new();
         let id_text = id.to_string();
         let note_id_text = note_id.to_string();
         let created_at = now_db_string();
+        let feedback = normalize_feedback(feedback);
         let mut connection = self.db.connection()?;
         let transaction = connection.transaction()?;
 
         if let Some(active_job) = active_job_for_note(&transaction, &note_id_text)? {
+            if active_job.status == ParseStatus::Queued {
+                transaction.execute(
+                    "UPDATE parse_jobs SET feedback = ?2 WHERE id = ?1",
+                    params![active_job.id.to_string(), feedback],
+                )?;
+            }
+            let active_job =
+                job_by_id(&transaction, &active_job.id.to_string())?.ok_or_else(|| {
+                    RepositoryError::NotFound {
+                        entity: "parse_job",
+                        id: active_job.id.to_string(),
+                    }
+                })?;
             transaction.commit()?;
             return Ok(active_job);
         }
 
         transaction.execute(
             "INSERT INTO parse_jobs (
-                id, note_id, status, attempt_count, last_error, created_at, started_at, finished_at
-             ) VALUES (?1, ?2, ?3, 0, NULL, ?4, NULL, NULL)",
+                id, note_id, status, attempt_count, last_error, feedback, created_at, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, 0, NULL, ?4, ?5, NULL, NULL)",
             params![
                 id_text,
                 note_id_text,
                 ParseStatus::Queued.as_str(),
+                feedback,
                 created_at
             ],
         )?;
@@ -60,7 +83,7 @@ impl ParseJobRepository {
         let record = connection
             .query_row(
                 "SELECT id, note_id, status, attempt_count, last_error,
-                        created_at, started_at, finished_at
+                        feedback, created_at, started_at, finished_at
                  FROM parse_jobs
                  WHERE status = ?1
                  ORDER BY created_at, rowid
@@ -169,14 +192,16 @@ impl ParseJobRepository {
         prompt_version: &str,
         raw_response: &str,
         parsed_json: &str,
+        feedback: Option<&str>,
     ) -> RepositoryResult<ParseRun> {
         let id = ParseRunId::new();
         let created_at = now_db_string();
+        let feedback = normalize_feedback(feedback);
         let connection = self.db.connection()?;
         connection.execute(
             "INSERT INTO parse_runs (
-                id, note_id, provider, prompt_version, raw_response, parsed_json, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                id, note_id, provider, prompt_version, raw_response, parsed_json, feedback, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id.to_string(),
                 note_id.to_string(),
@@ -184,6 +209,7 @@ impl ParseJobRepository {
                 prompt_version,
                 raw_response,
                 parsed_json,
+                feedback,
                 created_at
             ],
         )?;
@@ -195,6 +221,7 @@ impl ParseJobRepository {
             prompt_version: prompt_version.to_string(),
             raw_response: raw_response.to_string(),
             parsed_json: parsed_json.to_string(),
+            feedback,
             created_at: parse_db_datetime("created_at", created_at)?,
         })
     }
@@ -240,7 +267,7 @@ fn job_by_id(transaction: &Transaction<'_>, id: &str) -> RepositoryResult<Option
     let record = transaction
         .query_row(
             "SELECT id, note_id, status, attempt_count, last_error,
-                    created_at, started_at, finished_at
+                    feedback, created_at, started_at, finished_at
              FROM parse_jobs
              WHERE id = ?1",
             [id],
@@ -257,7 +284,7 @@ fn active_job_for_note(
     let record = transaction
         .query_row(
             "SELECT id, note_id, status, attempt_count, last_error,
-                    created_at, started_at, finished_at
+                    feedback, created_at, started_at, finished_at
              FROM parse_jobs
              WHERE note_id = ?1 AND status IN (?2, ?3)
              ORDER BY created_at, rowid
@@ -279,6 +306,7 @@ struct ParseJobRecord {
     status: String,
     attempt_count: i64,
     last_error: Option<String>,
+    feedback: Option<String>,
     created_at: String,
     started_at: Option<String>,
     finished_at: Option<String>,
@@ -292,9 +320,10 @@ impl ParseJobRecord {
             status: row.get(2)?,
             attempt_count: row.get(3)?,
             last_error: row.get(4)?,
-            created_at: row.get(5)?,
-            started_at: row.get(6)?,
-            finished_at: row.get(7)?,
+            feedback: row.get(5)?,
+            created_at: row.get(6)?,
+            started_at: row.get(7)?,
+            finished_at: row.get(8)?,
         })
     }
 
@@ -305,9 +334,17 @@ impl ParseJobRecord {
             status: ParseStatus::from_db(&self.status)?,
             attempt_count: u32_from_i64("attempt_count", self.attempt_count)?,
             last_error: self.last_error,
+            feedback: self.feedback,
             created_at: parse_db_datetime("created_at", self.created_at)?,
             started_at: optional_db_datetime("started_at", self.started_at)?,
             finished_at: optional_db_datetime("finished_at", self.finished_at)?,
         })
     }
+}
+
+fn normalize_feedback(feedback: Option<&str>) -> Option<String> {
+    feedback
+        .map(str::trim)
+        .filter(|feedback| !feedback.is_empty())
+        .map(ToString::to_string)
 }

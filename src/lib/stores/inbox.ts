@@ -7,6 +7,8 @@ import {
   getSettings,
   listInbox,
   retryParse,
+  retryParseWithFeedback,
+  deleteNote,
   saveCaptureNote,
   saveSettings,
 } from "$lib/api";
@@ -19,6 +21,8 @@ type WorkNotesApi = {
   listInbox: typeof listInbox;
   getNote: typeof getNote;
   retryParse: typeof retryParse;
+  retryParseWithFeedback: typeof retryParseWithFeedback;
+  deleteNote: typeof deleteNote;
   acceptActionItem: typeof acceptActionItem;
   dismissActionItem: typeof dismissActionItem;
   getSettings: typeof getSettings;
@@ -30,6 +34,8 @@ const defaultApi: WorkNotesApi = {
   listInbox,
   getNote,
   retryParse,
+  retryParseWithFeedback,
+  deleteNote,
   acceptActionItem,
   dismissActionItem,
   getSettings,
@@ -90,10 +96,10 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
-  async function saveCapture(rawText: string): Promise<void> {
+  async function saveCapture(rawText: string): Promise<string | undefined> {
     const trimmed = rawText.trim();
     if (!trimmed) {
-      return;
+      return undefined;
     }
 
     savingCapture.set(true);
@@ -101,8 +107,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
     try {
       const saved = await api.saveCaptureNote(trimmed);
-      await loadInbox();
-      await selectNote(saved.id);
+      await showCapturedNote(saved.id);
+      return saved.id;
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not save note."));
       throw unknownError;
@@ -126,6 +132,47 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       selectedNote.set(await api.getNote(note.id));
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not retry parse."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function retrySelectedParseWithFeedback(feedback: string): Promise<void> {
+    const note = get(selectedNote);
+    const trimmed = feedback.trim();
+    if (!note || !trimmed) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.retryParseWithFeedback(note.id, trimmed);
+      await loadInbox();
+      selectedNote.set(await api.getNote(note.id));
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not reparse note."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function deleteSelectedNote(): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.deleteNote(note.id);
+      selectedNote.set(null);
+      await loadInbox();
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not delete note."));
     } finally {
       loadingNote.set(false);
     }
@@ -165,6 +212,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await loadInbox();
   }
 
+  async function showCapturedNote(noteId: string): Promise<void> {
+    filters.set(createInboxFilters());
+    await loadInbox();
+    await selectNote(noteId);
+  }
+
   async function updateAction(
     actionItemId: string,
     update: WorkNotesApi["acceptActionItem"] | WorkNotesApi["dismissActionItem"],
@@ -201,7 +254,10 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     loadInbox,
     selectNote,
     saveCapture,
+    showCapturedNote,
     retrySelectedParse,
+    retrySelectedParseWithFeedback,
+    deleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,
     loadSettings,

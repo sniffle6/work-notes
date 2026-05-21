@@ -54,6 +54,8 @@ pub fn run() {
             commands::list_inbox,
             commands::get_note,
             commands::retry_parse,
+            commands::retry_parse_with_feedback,
+            commands::delete_note,
             commands::accept_action_item,
             commands::dismiss_action_item,
             commands::get_settings,

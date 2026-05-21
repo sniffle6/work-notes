@@ -96,5 +96,28 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_parse_runs_note_id
           ON parse_runs(note_id);
         ",
-    )
+    )?;
+
+    ensure_column(connection, "parse_jobs", "feedback", "feedback TEXT")?;
+    ensure_column(connection, "parse_runs", "feedback", "feedback TEXT")?;
+
+    Ok(())
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !columns.iter().any(|existing| existing == column) {
+        connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])?;
+    }
+
+    Ok(())
 }
