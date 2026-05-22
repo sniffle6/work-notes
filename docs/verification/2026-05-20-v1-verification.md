@@ -1,5 +1,7 @@
 # Work Notes v1 Verification - 2026-05-20
 
+This is a historical verification snapshot from the original v1 handoff. Use `docs/testing.md` for current verification guidance and rerun the listed commands before treating results as current.
+
 ## Automated Checks
 
 ```powershell

@@ -4,7 +4,7 @@
 
 Work Notes is a Windows-only local desktop note app optimized for drive-by information dumps. The app must open instantly, capture raw notes with almost no friction, and then organize those notes automatically in the background using the user's local Codex subscription through the Codex CLI.
 
-The highest priority is preserving speed and trust at capture time. Raw notes are saved immediately and never overwritten. AI-generated cleanup, tags, summaries, and action extraction improve scanability, but they remain derived data that can be reviewed, retried, or corrected.
+The highest priority is preserving speed and trust at capture time. Raw notes are saved immediately and never overwritten. AI-generated titles, Markdown cleanup, tags, summaries, and action extraction improve scanability, but they remain derived data that can be reviewed, retried, or corrected.
 
 ## Product Workflow
 
@@ -23,9 +23,9 @@ The main app is inbox-first. Notes are ordered by recency and can be filtered by
 Primary screens:
 
 - Quick Capture: compact bottom-right transient window.
-- Inbox: dense default view for captured notes, filters, tags, search, and parse status.
-- Note Detail: raw note, cleaned note, summary, tags, action items, parse status, and parse history.
-- Review Queue: extracted actions, due dates, and owner assumptions that need confirmation.
+- Inbox: dense default view for captured notes, filters, tags, search, parse status, and an Actions mode for notes with suggested actions.
+- Note Detail: raw note, Markdown cleaned note, summary, tags, action items, parse status, retry, and reparse feedback.
+- Action Review: extracted actions, due dates, and owner assumptions reviewed from the inbox Actions mode or note detail.
 - Settings: hotkey, startup/tray behavior, selected theme, parser timeout, Codex command path, and parser health.
 
 ## Technology Stack
@@ -36,16 +36,17 @@ The app uses:
 - Svelte and TypeScript for the frontend.
 - Rust for native commands, persistence, background worker ownership, and process execution.
 - SQLite as the source of truth.
-- SQLite FTS5 for full-text search over raw and cleaned note content.
+- SQLite FTS5 for full-text search over raw text, cleaned text, and summaries.
 - Local `codex exec` for automatic background parsing through the user's Codex subscription.
 
-This stack is intentionally local-first. The app does not use OpenAI API keys and does not incur OpenAI API token billing.
+This stack is intentionally local-first. The app does not use OpenAI API keys or an OpenAI API billing path. Parser work runs through local Codex CLI and the user's Codex subscription.
 
 ## Data Model
 
 ### `notes`
 
 - `id`
+- `title`
 - `raw_text`
 - `cleaned_text`
 - `summary`
@@ -56,7 +57,7 @@ This stack is intentionally local-first. The app does not use OpenAI API keys an
 - `review_status`: `none | needs_review | reviewed`
 - `is_archived`
 
-`raw_text` is immutable after capture except for explicit user correction flows added later. Parser output must never overwrite it.
+`raw_text` is immutable after capture except for explicit user correction flows added later. Parser output must never overwrite it. Parser output may update `title`, `cleaned_text`, and `summary` after schema validation; `cleaned_text` is rendered as Markdown in the note detail.
 
 ### `tags`
 
@@ -94,6 +95,7 @@ Action items start as `suggested`. The parser must not silently mark an action a
 - `status`: `queued | parsing | parsed | failed`
 - `attempt_count`
 - `last_error`
+- `feedback`
 - `created_at`
 - `started_at`
 - `finished_at`
@@ -106,6 +108,7 @@ Action items start as `suggested`. The parser must not silently mark an action a
 - `prompt_version`
 - `raw_response`
 - `parsed_json`
+- `feedback`
 - `created_at`
 
 Parse runs are retained for debugging, audit, and prompt iteration.
@@ -163,7 +166,8 @@ Parser output schema:
 
 ```json
 {
-  "cleanedText": "Mike said the deploy moved to Friday. Check the config flag before QA gets the build.",
+  "title": "Verify QA Config Flag",
+  "cleanedText": "## Context\n\nMike said the deploy moved to Friday.\n\n## Follow-up\n\n- Check the `config` flag before QA gets the build.",
   "summary": "Deploy moved to Friday; verify config flag before QA build.",
   "tags": [
     { "name": "Mike", "kind": "person", "confidence": 0.92 },
@@ -185,6 +189,7 @@ Parser output schema:
 Parser trust rules:
 
 - Raw note text is never overwritten.
+- Title is auto-applied.
 - Cleaned note text is auto-applied.
 - Summary is auto-applied.
 - Tags are auto-applied.
@@ -197,7 +202,7 @@ Parser trust rules:
 
 ## Theme System
 
-The default theme is Dark Compact. It should feel like a quiet, dense Windows utility rather than a marketing page or decorative notebook.
+The default theme is Dark Compact. It should feel like a quiet, dense Windows utility rather than a marketing page or decorative notebook. The current registered themes are Dark Compact (`dark-compact`) and Memphis '86 (`memphis`).
 
 Themes are developer-defined files. Components consume semantic CSS variables only. Adding a new theme should require adding a theme definition and registering it, not editing component styles across the app.
 
@@ -296,7 +301,7 @@ Rust unit tests:
 - `NoteRepository` creates, reads, updates, and searches notes.
 - FTS index updates include raw and cleaned text.
 - `ParseQueue` claims one job at a time and records failures.
-- `ParserResultApplier` auto-applies cleaned text, summary, and tags.
+- `ParserResultApplier` auto-applies title, cleaned text, summary, and tags.
 - `ParserResultApplier` creates suggested action items without accepting them.
 - `CodexParserProvider` handles missing command, timeout, non-zero exit, missing output, invalid JSON, and schema errors.
 
@@ -304,8 +309,8 @@ Frontend tests:
 
 - Quick capture keyboard behavior.
 - Inbox filtering by tag, parse status, review status, and search.
-- Note detail shows raw and cleaned text.
-- Review queue confirms and dismisses suggested actions.
+- Note detail shows raw text and Markdown cleaned text.
+- Inbox Actions mode and note detail expose suggested actions for review.
 - Theme variables apply to key surfaces without raw palette colors in components.
 
 Integration tests:
@@ -313,7 +318,7 @@ Integration tests:
 - Use a fake parser provider before invoking real Codex CLI.
 - Verify automatic parse job creation after note save.
 - Verify parser failure leaves raw note intact.
-- Verify successful parse updates cleaned text, summary, tags, and suggested actions.
+- Verify successful parse updates title, cleaned text, summary, tags, and suggested actions.
 
 Manual Windows verification:
 

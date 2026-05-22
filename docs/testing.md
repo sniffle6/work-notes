@@ -38,8 +38,11 @@ npm run build
 Important frontend tests:
 
 - `src/lib/stores/inbox.test.ts`: filters and workflow store behavior with injected fake APIs.
+- `src/lib/components/InboxList.test.ts`: Notes/Actions mode behavior and suggested-action count labels.
 - `src/lib/components/QuickCapturePanel.test.ts`: quick-capture keyboard behavior.
 - `src/lib/components/NoteDetail.test.ts`: reparse feedback and delete events.
+- `src/lib/components/SettingsView.test.ts`: theme selection and settings save behavior.
+- `src/lib/markdown.test.ts`: Markdown rendering and HTML escaping for cleaned notes.
 - `src/lib/theme/theme.test.ts`: theme token to CSS variable mapping.
 - `src/lib/scaffold.test.ts`: scaffold sanity check.
 
@@ -67,7 +70,7 @@ Rust tests are inline in `src-tauri/src/**`. Current coverage includes:
 - parser schema validation
 - Codex command builder behavior
 - prompt text behavior
-- parser result application trust rules
+- parser result application trust rules, including title updates
 - capture service behavior
 - parse queue success, failure, retry, and parse-run recording
 - command DTO serialization

@@ -1,6 +1,6 @@
 # Work Notes
 
-Work Notes is a Windows-only local desktop app for fast coworker drive-by note capture. It is optimized for opening quickly, saving raw notes immediately, and letting background parsing clean up notes, add tags, summarize, and extract suggested action items later.
+Work Notes is a Windows-only local desktop app for fast coworker drive-by note capture. It is optimized for opening quickly, saving raw notes immediately, and letting background parsing generate a scannable title, clean up notes, add tags, summarize, and extract suggested action items later.
 
 ## Stack
 
@@ -10,7 +10,7 @@ Work Notes is a Windows-only local desktop app for fast coworker drive-by note c
 - SQLite with FTS5 for local note storage and search.
 - Local `codex exec` for parsing through the user's Codex subscription.
 
-The app does not use OpenAI API keys and does not create OpenAI API token usage.
+The app does not use OpenAI API keys or an OpenAI API billing path. Parser work runs through the local Codex CLI and the user's Codex subscription.
 
 ## Development
 
@@ -45,10 +45,10 @@ Raw note text is saved first and remains the source of truth. Parser output is s
 
 ## Parsing
 
-Saving a note enqueues parse work. The background parser worker claims one queued job at a time, invokes local `codex exec`, validates JSON against `schemas/parse-note.schema.json`, records the parse run, and applies cleaned text, summary, tags, and suggested action items.
+Saving a note enqueues parse work. The background parser worker claims one queued job at a time, invokes local `codex exec`, validates JSON against `schemas/parse-note.schema.json`, records the parse run, and applies a title, Markdown cleaned text, summary, tags, and suggested action items as derived data.
 
-Action items stay `suggested` until accepted or dismissed by the user.
+Action items stay `suggested` until accepted, dismissed, or completed by the user. Failed or unsatisfactory parses can be retried, including with user feedback.
 
 ## Verification
 
-Current v1 verification notes are in [docs/verification/2026-05-20-v1-verification.md](docs/verification/2026-05-20-v1-verification.md).
+Use [docs/testing.md](docs/testing.md) to choose verification for the change being made. Historical verification snapshots are kept in [docs/verification/](docs/verification/).

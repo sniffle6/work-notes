@@ -11,7 +11,8 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 5. The store calls `src/lib/api.ts`, which invokes Tauri commands or browser fallback data during non-Tauri frontend smoke checks.
 6. Rust commands call services, services call repositories, repositories write SQLite.
 7. Capture creates a raw note and queued parse job in one persistence path.
-8. The parser worker claims one queued job at a time and applies validated parser output as derived data.
+8. The native quick-capture window saves through `captureRawNote`, emits `work-notes:note-captured`, and lets the main window refresh and select the saved note separately.
+9. The parser worker claims one queued job at a time and applies validated parser output as derived data.
 
 ## Frontend Ownership
 
@@ -22,17 +23,19 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, parse retry, delete/archive, action status changes, filters, and settings.
 - `src/lib/stores/filters.ts`: filter creation and client-side matching helpers used by tests and fallback paths.
 - `src/lib/events.ts`: named frontend/native event contract.
+- `src/lib/markdown.ts`: small Markdown renderer for parser-cleaned notes.
 - `src/lib/theme/`: semantic theme token system. Component CSS should consume variables generated here.
 - `src/lib/components/`: visual surfaces. Keep persistence and parser decisions out of components.
 
 ## Main Components
 
 - `AppShell.svelte`: app frame, sidebar, status metrics, quick capture slot.
-- `InboxList.svelte`: inbox rows, search, status/tag filters, selection.
-- `NoteDetail.svelte`: raw/cleaned text, summary, tags, suggested actions, parse retry, reparse feedback, delete event.
+- `InboxList.svelte`: inbox rows, Notes/Actions modes, search, status/tag filters, selection, and suggested-action counts.
+- `NoteDetail.svelte`: title, raw/Markdown cleaned text, summary, tags, suggested actions, parse retry, reparse feedback, delete event.
+- `MarkdownView.svelte`: renders parser-provided Markdown safely for note detail.
 - `QuickCapturePanel.svelte`: compact note entry; preserves `Enter`, `Shift+Enter`, and `Esc` behavior.
-- `ReviewQueue.svelte`: accept/dismiss suggested action items.
-- `SettingsView.svelte`: hotkey, parser timeout, Codex command path, startup/tray, theme settings.
+- `ReviewQueue.svelte`: standalone accept/dismiss surface for suggested action items; current main flow reviews actions through the inbox Actions mode and note detail.
+- `SettingsView.svelte`: hotkey, parser timeout, Codex command path, startup/tray, theme settings, and settings-save errors.
 - `StatusBadge.svelte`: shared visual status indicator.
 
 ## Backend Ownership
@@ -57,7 +60,7 @@ SQLite is opened from the app data directory described in `docs/development.md`:
 
 Core tables:
 
-- `notes`: raw and derived note fields, parse status, review status, archive flag.
+- `notes`: title, raw and derived note fields, parse status, review status, archive flag.
 - `notes_fts`: FTS5 index over raw text, cleaned text, and summary.
 - `tags` and `note_tags`: normalized tags and note assignments.
 - `action_items`: parser-suggested or user-managed actions.
@@ -83,7 +86,9 @@ save_settings
 hide_quick_capture
 ```
 
-Rust DTOs serialize with camelCase for frontend ergonomics. Parser JSON also uses camelCase. Backend domain enums serialize as snake_case status strings.
+Rust DTOs serialize with camelCase for frontend ergonomics. Inbox rows include `actionItemCount` and `suggestedActionItemCount` so the frontend can render action counts and the Actions mode without fetching every note detail. Parser JSON also uses camelCase. Backend domain enums serialize as snake_case status strings.
+
+`delete_note` is a soft-delete/archive command: it marks the note archived through `is_archived` rather than removing the SQLite row.
 
 ## Native Runtime
 

@@ -22,6 +22,14 @@ scripts\cargo-test.cmd
 
 `scripts\cargo-test.cmd` should be used instead of plain `cargo test` from a normal PowerShell session. It calls Visual Studio's `VsDevCmd.bat` first so native Windows linker paths are available.
 
+If `npm run tauri dev` is launched from a normal PowerShell session and MSVC linker paths are missing, start it through the Visual Studio developer environment:
+
+```powershell
+cmd.exe /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && npm run tauri dev"
+```
+
+Do not open `src-tauri\target\debug\work-notes.exe` directly as the normal development launch path. A dev-mode Tauri binary expects the Vite dev server at `localhost:1420`; without that server it can show a `localhost refused to connect` page. Use `npm run tauri dev` for development, or build/install a package when testing the packaged app.
+
 For a debug installer build:
 
 ```powershell
@@ -57,7 +65,7 @@ codex exec `
   -
 ```
 
-The app writes the parser prompt and raw note to stdin. The parser output is validated against `schemas/parse-note.schema.json` before it is applied.
+The app writes the parser prompt and raw note to stdin. The parser output is validated against `schemas/parse-note.schema.json` before it is applied. Current parser output includes a short inbox title, Markdown `cleanedText`, a summary, tags, and suggested action items.
 
 Settings include:
 
@@ -71,11 +79,16 @@ The background worker reads persisted parser settings before processing jobs, so
 
 Themes are developer-defined. Components should consume semantic CSS variables only and should not hardcode palette colors.
 
-To add a theme:
+Registered themes currently include:
+
+- `dark-compact`: default dense utility theme.
+- `memphis`: alternate compact theme exposed in settings as `Memphis '86`.
+
+To add another theme:
 
 1. Add a `ThemeDefinition` in `src/lib/theme/themes.ts`.
 2. Populate every token from `src/lib/theme/tokens.ts`.
-3. Register the theme in the settings UI once more than one theme exists.
+3. Add it to the exported `themes` array so the settings UI can list it.
 4. Keep component CSS pointed at variables such as `--color-surface-1`, `--color-text-primary`, and `--color-accent-primary`.
 
 Required tokens:
@@ -96,7 +109,7 @@ status.warning
 status.error
 ```
 
-Default v1 theme: Dark Compact.
+Default theme: Dark Compact (`dark-compact`).
 
 ## Architecture Notes
 
