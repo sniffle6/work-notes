@@ -269,4 +269,58 @@ mod tests {
         assert_eq!(items[0].action_item_count, 2);
         assert_eq!(items[0].suggested_action_item_count, 0);
     }
+
+    #[test]
+    fn action_repository_gets_actions_and_lists_suggested_with_note_context() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let actions = ActionItemRepository::new(db);
+
+        let older = notes.create_raw_note("Older action note").unwrap();
+        let newer = notes.create_raw_note("Newer action note").unwrap();
+        let older_action = actions
+            .create_suggested(
+                older.id,
+                "Follow up on older note",
+                Some("Alice"),
+                None,
+                Some(0.72),
+            )
+            .unwrap();
+        let newer_action = actions
+            .create_suggested(
+                newer.id,
+                "Follow up on newer note",
+                Some("Maya"),
+                Some("2026-05-23"),
+                Some(0.91),
+            )
+            .unwrap();
+        let accepted = actions
+            .create_suggested(newer.id, "Already accepted", None, None, Some(0.55))
+            .unwrap();
+        actions
+            .set_status(accepted.id, ActionStatus::Accepted)
+            .unwrap();
+
+        let stored = actions.get(newer_action.id).unwrap().unwrap();
+        assert_eq!(stored.text, "Follow up on newer note");
+        assert_eq!(stored.owner.as_deref(), Some("Maya"));
+        assert_eq!(stored.status, ActionStatus::Suggested);
+        assert!(actions.has_suggested_for_note(newer.id).unwrap());
+
+        let review_items = actions.list_suggested_with_note_context(10).unwrap();
+        assert_eq!(review_items.len(), 2);
+        assert_eq!(review_items[0].id, newer_action.id);
+        assert_eq!(review_items[0].note_id, newer.id);
+        assert_eq!(review_items[0].note_title, newer.title);
+        assert_eq!(review_items[0].due_date.as_deref(), Some("2026-05-23"));
+        assert_eq!(review_items[1].id, older_action.id);
+        assert_eq!(review_items[1].note_title, older.title);
+
+        actions
+            .set_status(older_action.id, ActionStatus::Dismissed)
+            .unwrap();
+        assert!(!actions.has_suggested_for_note(older.id).unwrap());
+    }
 }

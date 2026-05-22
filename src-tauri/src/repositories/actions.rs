@@ -1,9 +1,11 @@
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 
 use crate::db::Database;
-use crate::domain::{ActionItem, ActionItemId, ActionStatus, NoteId};
+use crate::domain::{
+    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, NoteId,
+};
 
-use super::{RepositoryError, RepositoryResult};
+use super::{parse_db_datetime, RepositoryError, RepositoryResult};
 
 #[derive(Clone)]
 pub struct ActionItemRepository {
@@ -75,6 +77,67 @@ impl ActionItemRepository {
         })
     }
 
+    pub fn get(&self, id: ActionItemId) -> RepositoryResult<Option<ActionItem>> {
+        let connection = self.db.connection()?;
+        let record = connection
+            .query_row(
+                "SELECT id, note_id, text, owner, due_date, status, source, confidence
+                 FROM action_items
+                 WHERE id = ?1",
+                [id.to_string()],
+                ActionItemRecord::from_row,
+            )
+            .optional()?;
+
+        record.map(ActionItemRecord::into_action_item).transpose()
+    }
+
+    pub fn has_suggested_for_note(&self, note_id: NoteId) -> RepositoryResult<bool> {
+        let connection = self.db.connection()?;
+        let count = connection.query_row(
+            "SELECT COUNT(*)
+             FROM action_items
+             WHERE note_id = ?1 AND status = 'suggested'",
+            [note_id.to_string()],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        Ok(count > 0)
+    }
+
+    pub fn list_suggested_with_note_context(
+        &self,
+        limit: u32,
+    ) -> RepositoryResult<Vec<ActionReviewItem>> {
+        let connection = self.db.connection()?;
+        let limit = i64::from(limit.clamp(1, 500));
+        let mut statement = connection.prepare(
+            "SELECT
+                ai.id,
+                ai.note_id,
+                n.title,
+                ai.text,
+                ai.owner,
+                ai.due_date,
+                ai.confidence,
+                n.created_at
+             FROM action_items ai
+             JOIN notes n ON n.id = ai.note_id
+             WHERE ai.status = 'suggested' AND n.is_archived = 0
+             ORDER BY n.created_at DESC, ai.rowid ASC
+             LIMIT ?1",
+        )?;
+
+        let records = statement
+            .query_map([limit], ActionReviewItemRecord::from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        records
+            .into_iter()
+            .map(ActionReviewItemRecord::into_review_item)
+            .collect()
+    }
+
     pub fn list_for_note(&self, note_id: NoteId) -> RepositoryResult<Vec<ActionItem>> {
         let connection = self.db.connection()?;
         let mut statement = connection.prepare(
@@ -114,6 +177,45 @@ impl ActionItemRepository {
             [note_id.to_string()],
         )?;
         Ok(())
+    }
+}
+
+struct ActionReviewItemRecord {
+    id: String,
+    note_id: String,
+    note_title: String,
+    text: String,
+    owner: Option<String>,
+    due_date: Option<String>,
+    confidence: Option<f64>,
+    created_at: String,
+}
+
+impl ActionReviewItemRecord {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            note_id: row.get(1)?,
+            note_title: row.get(2)?,
+            text: row.get(3)?,
+            owner: row.get(4)?,
+            due_date: row.get(5)?,
+            confidence: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    }
+
+    fn into_review_item(self) -> RepositoryResult<ActionReviewItem> {
+        Ok(ActionReviewItem {
+            id: ActionItemId::parse(&self.id)?,
+            note_id: NoteId::parse(&self.note_id)?,
+            note_title: self.note_title,
+            text: self.text,
+            owner: self.owner,
+            due_date: self.due_date,
+            confidence: self.confidence,
+            created_at: parse_db_datetime("created_at", self.created_at)?,
+        })
     }
 }
 

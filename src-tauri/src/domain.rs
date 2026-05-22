@@ -277,6 +277,18 @@ pub struct ActionItem {
     pub confidence: Option<f64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionReviewItem {
+    pub id: ActionItemId,
+    pub note_id: NoteId,
+    pub note_title: String,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub confidence: Option<f64>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseJob {
     pub id: ParseJobId,
