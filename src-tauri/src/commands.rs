@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
 use crate::domain::{
-    ActionItem, ActionItemId, ActionStatus, InboxFilters, Note, NoteId, NoteListItem, ParseStatus,
-    ReviewStatus, Tag, TagAssignment, TagId, TagKind,
+    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, InboxFilters, Note, NoteId,
+    NoteListItem, ParseStatus, ReviewStatus, Tag, TagAssignment, TagId, TagKind,
 };
 use crate::repositories::RepositoryError;
+use crate::services::actions::ActionItemService;
 use crate::services::capture::CaptureService;
 use crate::services::parse_queue::ParseQueue;
 use crate::services::search::{NoteDetail, SearchService};
@@ -243,6 +244,34 @@ impl From<ActionItem> for ActionItemDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionReviewItemDto {
+    pub id: String,
+    pub note_id: String,
+    pub note_title: String,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub confidence: Option<f64>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<ActionReviewItem> for ActionReviewItemDto {
+    fn from(action_item: ActionReviewItem) -> Self {
+        Self {
+            id: action_item.id.to_string(),
+            note_id: action_item.note_id.to_string(),
+            note_title: action_item.note_title,
+            text: action_item.text,
+            owner: action_item.owner,
+            due_date: action_item.due_date,
+            confidence: action_item.confidence,
+            created_at: action_item.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxFiltersDto {
@@ -361,10 +390,7 @@ pub async fn accept_action_item(
     action_id: String,
 ) -> Result<(), CommandError> {
     let action_id = parse_action_item_id(&action_id)?;
-    state
-        .repositories
-        .action_items
-        .set_status(action_id, ActionStatus::Accepted)?;
+    ActionItemService::new(state.repositories.clone()).accept(action_id)?;
     Ok(())
 }
 
@@ -374,11 +400,39 @@ pub async fn dismiss_action_item(
     action_id: String,
 ) -> Result<(), CommandError> {
     let action_id = parse_action_item_id(&action_id)?;
-    state
-        .repositories
-        .action_items
-        .set_status(action_id, ActionStatus::Dismissed)?;
+    ActionItemService::new(state.repositories.clone()).dismiss(action_id)?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn complete_action_item(
+    state: tauri::State<'_, AppState>,
+    action_id: String,
+) -> Result<(), CommandError> {
+    let action_id = parse_action_item_id(&action_id)?;
+    ActionItemService::new(state.repositories.clone()).complete(action_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reopen_action_item(
+    state: tauri::State<'_, AppState>,
+    action_id: String,
+) -> Result<(), CommandError> {
+    let action_id = parse_action_item_id(&action_id)?;
+    ActionItemService::new(state.repositories.clone()).reopen(action_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_suggested_actions(
+    state: tauri::State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<ActionReviewItemDto>, CommandError> {
+    let items = ActionItemService::new(state.repositories.clone())
+        .list_suggested(limit.unwrap_or(100))?;
+
+    Ok(items.into_iter().map(Into::into).collect())
 }
 
 #[tauri::command]
@@ -428,8 +482,8 @@ fn parse_action_item_id(id: &str) -> Result<ActionItemId, CommandError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{AppSettingsDto, NoteListItemDto};
-    use crate::domain::{ParseStatus, ReviewStatus};
+    use crate::commands::{ActionReviewItemDto, AppSettingsDto, NoteListItemDto};
+    use crate::domain::{ActionItemId, ActionReviewItem, NoteId, ParseStatus, ReviewStatus};
     use chrono::Utc;
     use serde_json::json;
 
@@ -465,6 +519,28 @@ mod tests {
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());
         assert!(serialized.get("suggestedActionItemCount").is_some());
+    }
+
+    #[test]
+    fn action_review_item_dto_serializes_camel_case_fields() {
+        let item = ActionReviewItem {
+            id: ActionItemId::new(),
+            note_id: NoteId::new(),
+            note_title: "Kiosk 7 telemetry IDs".to_string(),
+            text: "Bring serial list into the Tuesday sync.".to_string(),
+            owner: Some("Maya".to_string()),
+            due_date: None,
+            confidence: Some(0.82),
+            created_at: Utc::now(),
+        };
+
+        let serialized = serde_json::to_value(ActionReviewItemDto::from(item)).unwrap();
+
+        assert!(serialized.get("id").is_some());
+        assert!(serialized.get("noteId").is_some());
+        assert!(serialized.get("noteTitle").is_some());
+        assert!(serialized.get("dueDate").is_some());
+        assert!(serialized.get("createdAt").is_some());
     }
 
     #[test]

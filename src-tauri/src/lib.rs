@@ -58,6 +58,9 @@ pub fn run() {
             commands::delete_note,
             commands::accept_action_item,
             commands::dismiss_action_item,
+            commands::complete_action_item,
+            commands::reopen_action_item,
+            commands::list_suggested_actions,
             commands::get_settings,
             commands::save_settings,
             commands::hide_quick_capture
