@@ -17,7 +17,12 @@ impl ParserResultApplier {
     where
         S: ParserResultSink,
     {
-        sink.apply_cleaned_text(note_id, &result.cleaned_text, &result.summary)?;
+        sink.apply_cleaned_text(
+            note_id,
+            &result.title,
+            &result.cleaned_text,
+            &result.summary,
+        )?;
 
         for tag in &result.tags {
             sink.add_tag(
@@ -65,6 +70,7 @@ pub trait ParserResultSink {
     fn apply_cleaned_text(
         &mut self,
         note_id: Self::NoteId,
+        title: &str,
         cleaned_text: &str,
         summary: &str,
     ) -> Result<(), Self::Error>;

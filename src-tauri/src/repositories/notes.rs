@@ -24,16 +24,18 @@ impl NoteRepository {
         let parse_status = ParseStatus::Queued;
         let review_status = ReviewStatus::None;
         let capture_source = "quick_capture";
+        let title = make_title(raw_text);
 
         let mut connection = self.db.connection()?;
         let transaction = connection.transaction()?;
         transaction.execute(
             "INSERT INTO notes (
-                id, raw_text, cleaned_text, summary, created_at, updated_at,
+                id, title, raw_text, cleaned_text, summary, created_at, updated_at,
                 capture_source, parse_status, review_status, is_archived
-             ) VALUES (?1, ?2, NULL, NULL, ?3, ?3, ?4, ?5, ?6, 0)",
+             ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?4, ?5, ?6, ?7, 0)",
             params![
                 id_text,
+                title,
                 raw_text,
                 now,
                 capture_source,
@@ -86,7 +88,7 @@ impl NoteRepository {
         let id_text = id.to_string();
         let record = connection
             .query_row(
-                "SELECT id, raw_text, cleaned_text, summary, created_at, updated_at,
+                "SELECT id, title, raw_text, cleaned_text, summary, created_at, updated_at,
                         capture_source, parse_status, review_status, is_archived
                  FROM notes
                  WHERE id = ?1",
@@ -158,9 +160,10 @@ impl NoteRepository {
             .collect()
     }
 
-    pub fn apply_cleaned_text(
+    pub fn apply_cleaned_note(
         &self,
         id: NoteId,
+        title: &str,
         cleaned_text: &str,
         summary: &str,
     ) -> RepositoryResult<()> {
@@ -183,9 +186,9 @@ impl NoteRepository {
 
         transaction.execute(
             "UPDATE notes
-             SET cleaned_text = ?2, summary = ?3, updated_at = ?4
+             SET title = ?2, cleaned_text = ?3, summary = ?4, updated_at = ?5
              WHERE id = ?1",
-            params![id_text, cleaned_text, summary, now],
+            params![id_text, normalize_title(title), cleaned_text, summary, now],
         )?;
         replace_fts(
             &transaction,
@@ -269,6 +272,7 @@ fn replace_fts(
 fn list_item_select() -> String {
     "SELECT DISTINCT
         n.id,
+        n.title,
         n.raw_text,
         n.cleaned_text,
         n.summary,
@@ -300,6 +304,7 @@ fn fts_query(query: &str) -> Option<String> {
 
 struct NoteRecord {
     id: String,
+    title: String,
     raw_text: String,
     cleaned_text: Option<String>,
     summary: Option<String>,
@@ -315,21 +320,23 @@ impl NoteRecord {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
-            raw_text: row.get(1)?,
-            cleaned_text: row.get(2)?,
-            summary: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-            capture_source: row.get(6)?,
-            parse_status: row.get(7)?,
-            review_status: row.get(8)?,
-            is_archived: row.get(9)?,
+            title: row.get(1)?,
+            raw_text: row.get(2)?,
+            cleaned_text: row.get(3)?,
+            summary: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            capture_source: row.get(7)?,
+            parse_status: row.get(8)?,
+            review_status: row.get(9)?,
+            is_archived: row.get(10)?,
         })
     }
 
     fn into_note(self) -> RepositoryResult<Note> {
         Ok(Note {
             id: NoteId::parse(&self.id)?,
+            title: self.title,
             raw_text: self.raw_text,
             cleaned_text: self.cleaned_text,
             summary: self.summary,
@@ -345,6 +352,7 @@ impl NoteRecord {
 
 struct NoteListItemRecord {
     id: String,
+    title: String,
     raw_text: String,
     cleaned_text: Option<String>,
     summary: Option<String>,
@@ -361,22 +369,24 @@ impl NoteListItemRecord {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
-            raw_text: row.get(1)?,
-            cleaned_text: row.get(2)?,
-            summary: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-            parse_status: row.get(6)?,
-            review_status: row.get(7)?,
-            is_archived: row.get(8)?,
-            tag_count: row.get(9)?,
-            action_item_count: row.get(10)?,
+            title: row.get(1)?,
+            raw_text: row.get(2)?,
+            cleaned_text: row.get(3)?,
+            summary: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            parse_status: row.get(7)?,
+            review_status: row.get(8)?,
+            is_archived: row.get(9)?,
+            tag_count: row.get(10)?,
+            action_item_count: row.get(11)?,
         })
     }
 
     fn into_list_item(self) -> RepositoryResult<NoteListItem> {
         Ok(NoteListItem {
             id: NoteId::parse(&self.id)?,
+            title: self.title,
             raw_text: self.raw_text,
             cleaned_text: self.cleaned_text,
             summary: self.summary,
@@ -388,5 +398,29 @@ impl NoteListItemRecord {
             tag_count: u32_from_i64("tag_count", self.tag_count)?,
             action_item_count: u32_from_i64("action_item_count", self.action_item_count)?,
         })
+    }
+}
+
+fn make_title(raw_text: &str) -> String {
+    let first_line = raw_text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Untitled note");
+    normalize_title(first_line)
+}
+
+fn normalize_title(title: &str) -> String {
+    let title = title.trim();
+    let title = if title.is_empty() {
+        "Untitled note"
+    } else {
+        title
+    };
+
+    if title.chars().count() > 80 {
+        format!("{}...", title.chars().take(77).collect::<String>())
+    } else {
+        title.to_string()
     }
 }

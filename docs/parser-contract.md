@@ -41,7 +41,8 @@ Parser output must be JSON with camelCase fields:
 
 ```json
 {
-  "cleanedText": "Mike said the deploy moved to Friday. Check the config flag before QA gets the build.",
+  "title": "Verify QA Config Flag",
+  "cleanedText": "## Context\n\nMike said the deploy moved to Friday.\n\n## Follow-up\n\n- Check the `config` flag before QA gets the build.",
   "summary": "Deploy moved to Friday; verify config flag before QA build.",
   "tags": [
     { "name": "Mike", "kind": "person", "confidence": 0.92 }
@@ -57,6 +58,9 @@ Parser output must be JSON with camelCase fields:
   ]
 }
 ```
+
+`title` should be a short task-oriented label, usually 3-8 words, suitable for the inbox row.
+`cleanedText` should be Markdown that cleans the note without erasing useful source structure. Use headings and bullets for ordinary shorthand notes. Preserve multi-line code, config, enum, command, stack trace, and log snippets mostly verbatim in fenced code blocks. Keep identifiers, methods, file names, fields, and enum values as inline code. For copied tickets, preserve labels and order such as Actual, Expected, Steps, Environment, and Notes instead of rewriting the ticket into unrelated categories. Do not repeat the title as the first Markdown heading.
 
 Allowed tag kinds:
 
@@ -74,7 +78,7 @@ Confidence values must be numbers from `0` through `1`. Additional properties ar
 ## Trust Rules
 
 - Raw note text is never overwritten by parser output.
-- Cleaned text and summary may be auto-applied after schema validation.
+- Title, cleaned text, and summary may be auto-applied after schema validation.
 - Parser tags are applied with source `ai`.
 - Parser actions are created as `suggested`.
 - Dates, owners, commitments, and inferred obligations require review.

@@ -5,6 +5,7 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
         "
         CREATE TABLE IF NOT EXISTS notes (
           id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT 'Untitled note',
           raw_text TEXT NOT NULL,
           cleaned_text TEXT,
           summary TEXT,
@@ -100,6 +101,17 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
 
     ensure_column(connection, "parse_jobs", "feedback", "feedback TEXT")?;
     ensure_column(connection, "parse_runs", "feedback", "feedback TEXT")?;
+    ensure_column(connection, "notes", "title", "title TEXT")?;
+    connection.execute(
+        "UPDATE notes
+         SET title = CASE
+           WHEN summary IS NOT NULL AND length(trim(summary)) > 0 THEN trim(summary)
+           WHEN length(trim(raw_text)) > 0 THEN substr(trim(raw_text), 1, 80)
+           ELSE 'Untitled note'
+         END
+         WHERE title IS NULL OR length(trim(title)) = 0",
+        [],
+    )?;
 
     Ok(())
 }

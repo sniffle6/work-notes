@@ -77,6 +77,7 @@ impl From<RepositoryError> for CommandError {
 #[serde(rename_all = "camelCase")]
 pub struct NoteListItemDto {
     pub id: String,
+    pub title: String,
     pub raw_text: String,
     pub cleaned_text: Option<String>,
     pub summary: Option<String>,
@@ -95,6 +96,7 @@ impl NoteListItemDto {
     fn from_item(item: NoteListItem, tags: Vec<TagAssignment>) -> Self {
         Self {
             id: item.id.to_string(),
+            title: item.title,
             raw_text: item.raw_text,
             cleaned_text: item.cleaned_text,
             summary: item.summary,
@@ -115,6 +117,7 @@ impl NoteListItemDto {
 #[serde(rename_all = "camelCase")]
 pub struct NoteDetailDto {
     pub id: String,
+    pub title: String,
     pub raw_text: String,
     pub cleaned_text: Option<String>,
     pub summary: Option<String>,
@@ -126,6 +129,7 @@ pub struct NoteDetailDto {
     pub is_archived: bool,
     pub tags: Vec<TagAssignmentDto>,
     pub action_items: Vec<ActionItemDto>,
+    pub parse_error: Option<String>,
 }
 
 impl From<NoteDetail> for NoteDetailDto {
@@ -133,6 +137,7 @@ impl From<NoteDetail> for NoteDetailDto {
         let note = detail.note;
         Self {
             id: note.id.to_string(),
+            title: note.title,
             raw_text: note.raw_text,
             cleaned_text: note.cleaned_text,
             summary: note.summary,
@@ -144,6 +149,7 @@ impl From<NoteDetail> for NoteDetailDto {
             is_archived: note.is_archived,
             tags: detail.tags.into_iter().map(Into::into).collect(),
             action_items: detail.action_items.into_iter().map(Into::into).collect(),
+            parse_error: detail.parse_error,
         }
     }
 }
@@ -152,6 +158,7 @@ impl From<Note> for NoteDetailDto {
     fn from(note: Note) -> Self {
         Self {
             id: note.id.to_string(),
+            title: note.title,
             raw_text: note.raw_text,
             cleaned_text: note.cleaned_text,
             summary: note.summary,
@@ -163,6 +170,7 @@ impl From<Note> for NoteDetailDto {
             is_archived: note.is_archived,
             tags: Vec::new(),
             action_items: Vec::new(),
+            parse_error: None,
         }
     }
 }
@@ -427,6 +435,7 @@ mod tests {
     fn command_dtos_serialize_camel_case_fields() {
         let item = NoteListItemDto {
             id: "note-1".to_string(),
+            title: "raw".to_string(),
             raw_text: "raw".to_string(),
             cleaned_text: None,
             summary: Some("summary".to_string()),
@@ -443,6 +452,7 @@ mod tests {
         let serialized = serde_json::to_value(item).unwrap();
 
         assert!(serialized.get("rawText").is_some());
+        assert!(serialized.get("title").is_some());
         assert!(serialized.get("cleanedText").is_some());
         assert!(serialized.get("captureSource").is_some());
         assert!(serialized.get("parseStatus").is_some());

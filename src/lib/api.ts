@@ -97,7 +97,7 @@ let fallbackNotes: NoteDetail[] = [
 
 let fallbackSettings: AppSettings = {
   hotkey: "Ctrl+Shift+Space",
-  parserTimeoutSeconds: 45,
+  parserTimeoutSeconds: 90,
   parserMaxRetries: 3,
   codexCommandPath: "codex.cmd",
   selectedTheme: "dark-compact",

@@ -209,6 +209,7 @@ impl ActionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub id: NoteId,
+    pub title: String,
     pub raw_text: String,
     pub cleaned_text: Option<String>,
     pub summary: Option<String>,
@@ -223,6 +224,7 @@ pub struct Note {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteListItem {
     pub id: NoteId,
+    pub title: String,
     pub raw_text: String,
     pub cleaned_text: Option<String>,
     pub summary: Option<String>,

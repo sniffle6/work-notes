@@ -7,6 +7,7 @@ use crate::parser::DEFAULT_CODEX_PROGRAM;
 use super::{ServiceError, ServiceResult};
 
 const APP_SETTINGS_KEY: &str = "app_settings";
+pub const DEFAULT_PARSER_TIMEOUT_SECONDS: u64 = 90;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,10 +28,20 @@ impl Default for AppSettings {
             minimize_to_tray: true,
             global_hotkey: "Ctrl+Shift+Space".to_string(),
             theme: "dark-compact".to_string(),
-            parser_timeout_seconds: 30,
+            parser_timeout_seconds: DEFAULT_PARSER_TIMEOUT_SECONDS,
             parser_max_retries: 3,
             codex_command_path: DEFAULT_CODEX_PROGRAM.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppSettings;
+
+    #[test]
+    fn default_parser_timeout_covers_slower_codex_runs() {
+        assert_eq!(AppSettings::default().parser_timeout_seconds, 90);
     }
 }
 

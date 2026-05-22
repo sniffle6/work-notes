@@ -7,16 +7,12 @@
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
-  import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
   import { createWorkNotesStore } from "$lib/stores/inbox";
+  import type { AppSettings } from "$lib/types";
   import { toCssVariables } from "$lib/theme/applyTheme";
-  import { darkCompactTheme } from "$lib/theme/themes";
-
-  const themeStyle = Object.entries(toCssVariables(darkCompactTheme))
-    .map(([name, value]) => `${name}: ${value}`)
-    .join("; ");
+  import { getThemeById } from "$lib/theme/themes";
 
   const workNotes = createWorkNotesStore();
   const {
@@ -34,20 +30,33 @@
   } = workNotes;
 
   let quickDraft = $state("");
-  let quickCaptureOpen = $state(true);
+  let quickCaptureOpen = $state(false);
   let quickCaptureError = $state<string | null>(null);
   let currentWindowLabel = $state(initialWindowLabel());
   let quickCapturePanel = $state<{ focusNoteInput: () => Promise<void> } | null>(null);
+  let settingsOpen = $state(false);
 
-  const selectedActionItems = $derived($selectedNote?.actionItems ?? []);
-  const suggestedActions = $derived(selectedActionItems.filter((action) => action.status === "suggested"));
   const selectedId = $derived($selectedNote?.id);
   const isQuickCaptureWindow = $derived(currentWindowLabel === "quick-capture");
+  const currentTheme = $derived(getThemeById($settings?.selectedTheme));
+  const themeId = $derived(currentTheme.id);
+  const themeStyle = $derived(
+    Object.entries(toCssVariables(currentTheme))
+      .map(([name, value]) => `${name}: ${value}`)
+      .join("; "),
+  );
   const metrics = $derived([
     { label: "Inbox", value: String($inbox.length) },
     { label: "Needs review", value: String($inbox.filter((note) => note.reviewStatus === "needs_review").length) },
     { label: "Parse failed", value: String($inbox.filter((note) => note.parseStatus === "failed").length) },
   ]);
+  const topTags = $derived(
+    Array.from(new Set($inbox.flatMap((note) => note.tags.map((tag) => tag.name)))).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+  );
+  const parserQueueCount = $derived($inbox.filter((note) => note.parseStatus === "queued" || note.parseStatus === "parsing").length);
+  const parserCommand = $derived($settings?.codexCommandPath || "codex.cmd");
 
   onMount(() => {
     if (!isTauriRuntime()) {
@@ -57,9 +66,9 @@
     }
 
     currentWindowLabel = getCurrentWindow().label;
+    void workNotes.loadSettings();
     if (currentWindowLabel !== "quick-capture") {
       void workNotes.loadInbox();
-      void workNotes.loadSettings();
     }
     const unlisteners: Array<() => void> = [];
     let disposed = false;
@@ -95,6 +104,17 @@
     };
   });
 
+  $effect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    for (const [name, value] of Object.entries(toCssVariables(currentTheme))) {
+      document.body.style.setProperty(name, value);
+    }
+    document.body.dataset.theme = themeId;
+  });
+
   function isTauriRuntime(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   }
@@ -127,6 +147,17 @@
     await hideQuickCapture();
   }
 
+  async function openQuickCapture() {
+    quickCaptureOpen = true;
+    await tick();
+    await quickCapturePanel?.focusNoteInput();
+  }
+
+  async function saveSettings(event: CustomEvent<AppSettings>) {
+    await workNotes.persistSettings(event.detail);
+    settingsOpen = false;
+  }
+
   async function deleteSelectedNote() {
     if (typeof window !== "undefined" && !window.confirm("Delete this note?")) {
       return;
@@ -138,11 +169,11 @@
 
 <svelte:head>
   <title>Work Notes</title>
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content={themeId === "memphis" ? "light" : "dark"} />
 </svelte:head>
 
 {#if isQuickCaptureWindow}
-  <main class="quick-window" style={themeStyle}>
+  <main class="quick-window" data-theme={themeId} style={themeStyle}>
     <QuickCapturePanel
       bind:this={quickCapturePanel}
       value={quickDraft}
@@ -159,7 +190,13 @@
     subtitle="Fast capture for coworker drive-bys"
     workspace="Local workspace"
     {metrics}
+    tags={topTags}
+    {parserCommand}
+    {parserQueueCount}
+    {themeId}
     {themeStyle}
+    on:newNote={() => void openQuickCapture()}
+    on:settings={() => (settingsOpen = true)}
   >
     {#if $error}
       <p class="app-error">{$error}</p>
@@ -175,29 +212,25 @@
         on:filter={(event) => void workNotes.updateFilters(event.detail)}
       />
 
-      <div class="detail-column">
-        <NoteDetail
-          note={$selectedNote}
-          loading={$loadingNote}
-          on:retryParse={() => void workNotes.retrySelectedParse()}
-          on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
-          on:deleteNote={() => void deleteSelectedNote()}
-        />
-
-        <ReviewQueue
-          actions={suggestedActions}
-          busyActionId={$busyActionId}
-          on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
-          on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
-        />
-
-        <SettingsView
-          settings={$settings}
-          saving={$savingSettings}
-          on:save={(event) => void workNotes.persistSettings(event.detail)}
-        />
-      </div>
+      <NoteDetail
+        note={$selectedNote}
+        loading={$loadingNote}
+        busyActionId={$busyActionId}
+        on:retryParse={() => void workNotes.retrySelectedParse()}
+        on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
+        on:deleteNote={() => void deleteSelectedNote()}
+        on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+        on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+      />
     </div>
+
+    <SettingsView
+      settings={$settings}
+      saving={$savingSettings}
+      open={settingsOpen}
+      on:save={(event) => void saveSettings(event)}
+      on:close={() => (settingsOpen = false)}
+    />
 
     {#snippet quickCapture()}
       {#if quickCaptureOpen}
@@ -232,10 +265,9 @@
 
   .workspace-grid {
     display: grid;
-    grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-    gap: 12px;
+    grid-template-columns: 348px minmax(0, 1fr);
     min-width: 0;
-    min-height: 0;
+    min-height: 100vh;
   }
 
   .quick-window {
@@ -253,12 +285,8 @@
     box-shadow: none;
   }
 
-  .detail-column {
-    display: grid;
-    grid-template-rows: minmax(260px, 1fr) auto auto;
-    gap: 12px;
-    min-width: 0;
-    min-height: 0;
+  :global(.quick-window) {
+    display: block;
   }
 
   .app-error {
@@ -275,10 +303,6 @@
   @media (max-width: 980px) {
     .workspace-grid {
       grid-template-columns: 1fr;
-    }
-
-    .detail-column {
-      grid-template-rows: auto;
     }
   }
 </style>

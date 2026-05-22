@@ -143,18 +143,22 @@ mod tests {
     }
 
     #[test]
-    fn fts_search_matches_raw_and_cleaned_text() {
+    fn parser_output_updates_title_and_fts_text() {
         let db = test_db();
         let notes = NoteRepository::new(db);
 
         let note = notes.create_raw_note("cfg flag before qa").unwrap();
         notes
-            .apply_cleaned_text(
+            .apply_cleaned_note(
                 note.id,
+                "Config Flag QA Check",
                 "Check the config flag before QA gets the build.",
                 "Verify config flag.",
             )
             .unwrap();
+
+        let stored = notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.title, "Config Flag QA Check");
 
         let raw_results = notes.search("cfg").unwrap();
         assert_eq!(raw_results.len(), 1);

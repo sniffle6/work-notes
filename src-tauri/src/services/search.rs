@@ -1,5 +1,7 @@
 use crate::app_state::AppRepositories;
-use crate::domain::{ActionItem, InboxFilters, Note, NoteId, NoteListItem, TagAssignment};
+use crate::domain::{
+    ActionItem, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, TagAssignment,
+};
 
 use super::{ServiceError, ServiceResult};
 
@@ -8,6 +10,7 @@ pub struct NoteDetail {
     pub note: Note,
     pub tags: Vec<TagAssignment>,
     pub action_items: Vec<ActionItem>,
+    pub parse_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -42,11 +45,51 @@ impl SearchService {
             })?;
         let tags = self.repositories.tags.list_for_note(id)?;
         let action_items = self.repositories.action_items.list_for_note(id)?;
+        let parse_error = if note.parse_status == ParseStatus::Failed {
+            self.repositories.parse_jobs.latest_error_for_note(id)?
+        } else {
+            None
+        };
 
         Ok(NoteDetail {
             note,
             tags,
             action_items,
+            parse_error,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_state::AppRepositories;
+    use crate::db::Database;
+
+    use super::SearchService;
+
+    fn test_repositories() -> AppRepositories {
+        AppRepositories::new(Database::in_memory().unwrap())
+    }
+
+    #[test]
+    fn get_note_includes_latest_parse_failure_error() {
+        let repositories = test_repositories();
+        let note = repositories.notes.create_raw_note("raw note").unwrap();
+        let job = repositories
+            .parse_jobs
+            .claim_next_queued()
+            .unwrap()
+            .unwrap();
+        repositories
+            .parse_jobs
+            .mark_failed(job.id, "codex command timed out after 30s")
+            .unwrap();
+
+        let detail = SearchService::new(repositories).get_note(note.id).unwrap();
+
+        assert_eq!(
+            detail.parse_error.as_deref(),
+            Some("codex command timed out after 30s")
+        );
     }
 }

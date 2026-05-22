@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 
 import type { NoteDetail as NoteDetailType } from "$lib/types";
 import NoteDetail from "./NoteDetail.svelte";
@@ -9,6 +9,37 @@ import NoteDetail from "./NoteDetail.svelte";
 afterEach(() => cleanup());
 
 describe("NoteDetail", () => {
+  it("renders cleaned markdown instead of plain markdown text", () => {
+    render(NoteDetail, {
+      props: {
+        note: {
+          ...noteDetail(),
+          parseStatus: "parsed",
+          cleanedText: "## Root cause\n\n- SAS ticket-in is not published.\n- `TransactionEvent` is missing.",
+          parseError: null,
+        },
+      },
+    });
+
+    expect(screen.getByRole("heading", { name: "Root cause" })).toBeTruthy();
+    expect(screen.getByText("SAS ticket-in is not published.")).toBeTruthy();
+    expect(screen.getByText("TransactionEvent")).toBeTruthy();
+  });
+
+  it("opens a feedback dialog from the reparse action", async () => {
+    render(NoteDetail, {
+      props: { note: noteDetail() },
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Reparse with feedback" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reparse with feedback" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Reparse with feedback" });
+    expect(within(dialog).getByLabelText("Feedback")).toBeTruthy();
+    expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Send feedback" }).disabled).toBe(true);
+  });
+
   it("dispatches reparse feedback and delete actions for the selected note", async () => {
     const reparseWithFeedback = vi.fn();
     const deleteNote = vi.fn();
@@ -18,11 +49,12 @@ describe("NoteDetail", () => {
       events: { reparseWithFeedback, deleteNote },
     });
 
-    const feedback = screen.getByLabelText("Reparse feedback");
+    await fireEvent.click(screen.getByRole("button", { name: /Reparse with feedback/ }));
+    const feedback = screen.getByLabelText("Feedback");
     await fireEvent.input(feedback, {
       target: { value: "Tag this as research and make Robert the requester." },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Reparse with feedback" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(reparseWithFeedback).toHaveBeenCalledTimes(1);
@@ -30,6 +62,22 @@ describe("NoteDetail", () => {
       "Tag this as research and make Robert the requester.",
     );
     expect(deleteNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches action accept and dismiss from suggested action rows", async () => {
+    const acceptAction = vi.fn();
+    const dismissAction = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: noteDetailWithAction() },
+      events: { acceptAction, dismissAction },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Accept action: Follow up with Robert" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Dismiss action: Follow up with Robert" }));
+
+    expect(acceptAction.mock.calls[0][0].detail).toBe("action-1");
+    expect(dismissAction.mock.calls[0][0].detail).toBe("action-1");
   });
 });
 
@@ -51,5 +99,27 @@ function noteDetail(): NoteDetailType {
     suggestedActionItemCount: 0,
     actionItems: [],
     parseError: "Parser failed.",
+  };
+}
+
+function noteDetailWithAction(): NoteDetailType {
+  return {
+    ...noteDetail(),
+    parseStatus: "parsed",
+    parseError: null,
+    actionItemCount: 1,
+    suggestedActionItemCount: 1,
+    actionItems: [
+      {
+        id: "action-1",
+        noteId: "note-1",
+        text: "Follow up with Robert",
+        owner: "me",
+        dueDate: null,
+        status: "suggested",
+        source: "parser",
+        noteTitle: "Robert local AI",
+      },
+    ],
   };
 }

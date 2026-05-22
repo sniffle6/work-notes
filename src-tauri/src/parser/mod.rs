@@ -35,6 +35,7 @@ mod tests {
     #[test]
     fn parser_result_deserializes_camel_case_json() {
         let json = r#"{
+            "title": "Launch Recap",
             "cleanedText": "Met with Alice about launch.",
             "summary": "Launch discussion.",
             "tags": [
@@ -57,6 +58,7 @@ mod tests {
 
         let result: ParserResult = serde_json::from_str(json).expect("camelCase parser result");
 
+        assert_eq!(result.title, "Launch Recap");
         assert_eq!(result.cleaned_text, "Met with Alice about launch.");
         assert_eq!(result.summary, "Launch discussion.");
         assert_eq!(
@@ -91,6 +93,7 @@ mod tests {
             .expect("fake parse succeeds");
 
         assert_eq!(first, second);
+        assert_eq!(first.title, "Parsed Note");
         assert_eq!(first.cleaned_text, input);
         assert_eq!(first.summary, "Parsed by fake provider.");
         assert!(first.tags.is_empty());
@@ -100,6 +103,7 @@ mod tests {
     #[test]
     fn result_applier_maps_parse_result_to_sink_contract() {
         let result = ParserResult {
+            title: "Rollout Review".to_string(),
             cleaned_text: "Ask Riley to review the rollout note.".to_string(),
             summary: "Rollout note follow-up.".to_string(),
             tags: vec![ParsedTag {
@@ -125,6 +129,7 @@ mod tests {
             sink.cleaned_text,
             Some((
                 7,
+                "Rollout Review".to_string(),
                 "Ask Riley to review the rollout note.".to_string(),
                 "Rollout note follow-up.".to_string(),
             ))
@@ -156,7 +161,7 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingSink {
-        cleaned_text: Option<(u64, String, String)>,
+        cleaned_text: Option<(u64, String, String, String)>,
         tags: Vec<RecordedTag>,
         action_items: Vec<RecordedActionItem>,
         review_statuses: Vec<(u64, &'static str)>,
@@ -169,10 +174,16 @@ mod tests {
         fn apply_cleaned_text(
             &mut self,
             note_id: Self::NoteId,
+            title: &str,
             cleaned_text: &str,
             summary: &str,
         ) -> Result<(), Self::Error> {
-            self.cleaned_text = Some((note_id, cleaned_text.to_string(), summary.to_string()));
+            self.cleaned_text = Some((
+                note_id,
+                title.to_string(),
+                cleaned_text.to_string(),
+                summary.to_string(),
+            ));
             Ok(())
         }
 

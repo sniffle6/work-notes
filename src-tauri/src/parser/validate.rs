@@ -32,8 +32,9 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn validates_schema_and_rejects_missing_summary() {
+    fn validates_schema_and_rejects_missing_title() {
         let valid_result = json!({
+            "title": "Payroll Review",
             "cleanedText": "Ask Riley to review the payroll rollout by Friday.",
             "summary": "Payroll rollout review request.",
             "tags": [
@@ -53,16 +54,17 @@ mod tests {
                 }
             ]
         });
-        let missing_summary = json!({
+        let missing_title = json!({
             "cleanedText": "Ask Riley to review the payroll rollout by Friday.",
+            "summary": "Payroll rollout review request.",
             "tags": [],
             "actionItems": []
         });
 
         validate_parser_json(&valid_result).expect("valid parser JSON should pass schema");
         let error =
-            validate_parser_json(&missing_summary).expect_err("missing summary should fail schema");
+            validate_parser_json(&missing_title).expect_err("missing title should fail schema");
 
-        assert!(error.to_string().contains("summary"));
+        assert!(error.to_string().contains("title"));
     }
 }

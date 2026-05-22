@@ -226,6 +226,23 @@ impl ParseJobRepository {
         })
     }
 
+    pub fn latest_error_for_note(&self, note_id: NoteId) -> RepositoryResult<Option<String>> {
+        let connection = self.db.connection()?;
+        connection
+            .query_row(
+                "SELECT last_error
+                 FROM parse_jobs
+                 WHERE note_id = ?1
+                 ORDER BY created_at DESC, rowid DESC
+                 LIMIT 1",
+                [note_id.to_string()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(Into::into)
+    }
+
     fn finish_job(
         &self,
         id: ParseJobId,

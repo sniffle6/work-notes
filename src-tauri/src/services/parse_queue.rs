@@ -7,7 +7,7 @@ use crate::parser::{
     ActionItemApplication, CodexParserProvider, ParserOutput, ParserProvider, ParserResultApplier,
     ParserResultSink, TagApplication, TagKind as ParserTagKind, DEFAULT_CODEX_PROGRAM,
 };
-use crate::services::settings::{AppSettings, SettingsService};
+use crate::services::settings::{AppSettings, SettingsService, DEFAULT_PARSER_TIMEOUT_SECONDS};
 use chrono::Utc;
 use rusqlite::{params, Transaction};
 
@@ -53,7 +53,7 @@ impl Default for ParserProviderConfig {
             prompt_version: "parse-note-v1".to_string(),
             codex_command_path: DEFAULT_CODEX_PROGRAM.to_string(),
             schema_path: "schemas/parse-note.schema.json".to_string(),
-            timeout_seconds: 30,
+            timeout_seconds: DEFAULT_PARSER_TIMEOUT_SECONDS,
         }
     }
 }
@@ -317,6 +317,7 @@ impl ParserResultSink for RepositoryParserResultSink<'_> {
     fn apply_cleaned_text(
         &mut self,
         note_id: Self::NoteId,
+        title: &str,
         cleaned_text: &str,
         summary: &str,
     ) -> Result<(), Self::Error> {
@@ -328,9 +329,15 @@ impl ParserResultSink for RepositoryParserResultSink<'_> {
         )?;
         self.transaction.execute(
             "UPDATE notes
-             SET cleaned_text = ?2, summary = ?3, updated_at = ?4
+             SET title = ?2, cleaned_text = ?3, summary = ?4, updated_at = ?5
              WHERE id = ?1",
-            params![note_id_text, cleaned_text, summary, self.updated_at],
+            params![
+                note_id_text,
+                normalize_title(title),
+                cleaned_text,
+                summary,
+                self.updated_at
+            ],
         )?;
         replace_fts(
             self.transaction,
@@ -401,6 +408,21 @@ impl ParserResultSink for RepositoryParserResultSink<'_> {
             ],
         )?;
         Ok(())
+    }
+}
+
+fn normalize_title(title: &str) -> String {
+    let title = title.trim();
+    let title = if title.is_empty() {
+        "Untitled note"
+    } else {
+        title
+    };
+
+    if title.chars().count() > 80 {
+        format!("{}...", title.chars().take(77).collect::<String>())
+    } else {
+        title.to_string()
     }
 }
 
@@ -577,6 +599,7 @@ mod tests {
         assert!(processed);
         let stored = repositories.notes.get(note.id).unwrap().unwrap();
         assert_eq!(stored.raw_text, "sam said fix qa flag");
+        assert_eq!(stored.title, "Fix QA Flag");
         assert_eq!(
             stored.cleaned_text,
             Some("Sam said to fix the QA flag.".to_string())
@@ -702,6 +725,7 @@ mod tests {
     impl ParserProvider for StaticProvider {
         fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
             Ok(ParserResult {
+                title: "Fix QA Flag".to_string(),
                 cleaned_text: "Sam said to fix the QA flag.".to_string(),
                 summary: "Fix QA flag.".to_string(),
                 tags: vec![ParsedTag {
@@ -728,7 +752,7 @@ mod tests {
         }
     }
 
-    const RAW_PROVIDER_RESPONSE: &str = "{\n  \"cleanedText\": \"Sam said to fix the QA flag.\",\n  \"summary\": \"Fix QA flag.\",\n  \"tags\": [],\n  \"actionItems\": []\n}";
+    const RAW_PROVIDER_RESPONSE: &str = "{\n  \"title\": \"Fix QA Flag\",\n  \"cleanedText\": \"Sam said to fix the QA flag.\",\n  \"summary\": \"Fix QA flag.\",\n  \"tags\": [],\n  \"actionItems\": []\n}";
 
     struct RawResponseProvider;
 

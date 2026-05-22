@@ -4,6 +4,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParserResult {
+    pub title: String,
     pub cleaned_text: String,
     pub summary: String,
     pub tags: Vec<ParsedTag>,

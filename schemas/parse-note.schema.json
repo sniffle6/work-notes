@@ -5,12 +5,18 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "title",
     "cleanedText",
     "summary",
     "tags",
     "actionItems"
   ],
   "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
     "cleanedText": {
       "type": "string",
       "minLength": 1

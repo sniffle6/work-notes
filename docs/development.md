@@ -62,7 +62,7 @@ The app writes the parser prompt and raw note to stdin. The parser output is val
 Settings include:
 
 - `codexCommandPath`: defaults to `codex`.
-- `parserTimeoutSeconds`: defaults to `30`.
+- `parserTimeoutSeconds`: defaults to `90`.
 - `parserMaxRetries`: defaults to `3`.
 
 The background worker reads persisted parser settings before processing jobs, so command path, timeout, and retry count changes affect later jobs without an app restart.
