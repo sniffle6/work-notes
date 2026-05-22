@@ -82,11 +82,17 @@
         <span>Inbox</span>
         <strong aria-hidden="true">{inboxMetric}</strong>
       </button>
-      <a href="/">
-        <span aria-hidden="true">2</span>
+      <button
+        class:active={activeView === "today"}
+        type="button"
+        aria-current={activeView === "today" ? "page" : undefined}
+        aria-label="Today"
+        onclick={() => navigate("today")}
+      >
+        <span aria-hidden="true">T</span>
         <span>Today</span>
-        <kbd>2</kbd>
-      </a>
+        <kbd aria-hidden="true">2</kbd>
+      </button>
       <button
         class:active={activeView === "actions"}
         type="button"

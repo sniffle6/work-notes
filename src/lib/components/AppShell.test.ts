@@ -8,6 +8,27 @@ import AppShell from "./AppShell.svelte";
 afterEach(() => cleanup());
 
 describe("AppShell", () => {
+  it("marks today active and emits today navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "today",
+      },
+      events: { navigate },
+    });
+
+    const today = screen.getByRole("button", { name: "Today" });
+    await fireEvent.click(today);
+
+    expect(today.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("today");
+  });
+
   it("marks archive active and emits archive navigation", async () => {
     const navigate = vi.fn();
 

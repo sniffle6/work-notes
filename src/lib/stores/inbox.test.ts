@@ -185,6 +185,30 @@ describe("createWorkNotesStore", () => {
     );
   });
 
+  it("enters today view with non-archived notes and suggested actions", async () => {
+    const active = note({ id: "active", isArchived: false });
+    const archived = note({ id: "archived", isArchived: true });
+    const dueAction = reviewItem({ id: "due-action", noteId: "active", dueDate: "2026-05-22" });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([active, archived]),
+      listSuggestedActions: vi.fn().mockResolvedValue([dueAction]),
+      getNote: vi.fn().mockResolvedValue({ ...active, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.showToday();
+
+    expect(get(store.viewMode)).toBe("today");
+    expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
+    expect(api.listInbox).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeArchived: false }),
+    );
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["active"]);
+    expect(get(store.suggestedActions)).toEqual([dueAction]);
+    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+  });
+
   it("restores the selected archived note and returns to inbox mode", async () => {
     const archived = note({ id: "archived", isArchived: true });
     const restored = note({ id: "archived", isArchived: false });

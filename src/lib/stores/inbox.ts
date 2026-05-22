@@ -21,7 +21,7 @@ import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListI
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
-export type InboxViewMode = "inbox" | "archive" | "actions";
+export type InboxViewMode = "inbox" | "archive" | "actions" | "today";
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -272,6 +272,13 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
+  async function showToday(): Promise<void> {
+    viewMode.set("today");
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    await loadInbox();
+    await loadSuggestedActions();
+  }
+
   async function loadArchive(): Promise<void> {
     await showArchive();
   }
@@ -440,6 +447,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showInbox,
     showArchive,
     showActions,
+    showToday,
     restoreSelectedNote,
     permanentlyDeleteSelectedNote,
     acceptSuggestedAction,

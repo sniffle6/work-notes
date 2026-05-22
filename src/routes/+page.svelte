@@ -10,6 +10,7 @@
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
+  import TodayView from "$lib/components/TodayView.svelte";
   import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
   import { createWorkNotesStore, type InboxViewMode } from "$lib/stores/inbox";
   import type { AppSettings } from "$lib/types";
@@ -186,6 +187,11 @@
   }
 
   async function navigatePrimary(event: CustomEvent<InboxViewMode>) {
+    if (event.detail === "today") {
+      await workNotes.showToday();
+      return;
+    }
+
     if (event.detail === "archive") {
       await workNotes.showArchive();
       return;
@@ -197,6 +203,11 @@
     }
 
     await workNotes.showInbox();
+  }
+
+  async function openNoteFromToday(noteId: string) {
+    await workNotes.showInbox();
+    await workNotes.selectNote(noteId);
   }
 
   async function restoreSelectedNote() {
@@ -259,57 +270,69 @@
       <p class="app-error">{$error}</p>
     {/if}
 
-    <div class="workspace-grid">
-      {#if $viewMode === "actions"}
-        <ActionsList
-          actions={$suggestedActions}
-          selectedNoteId={$selectedNote?.id ?? null}
-          busyActionId={$busyActionId}
-          loading={$loadingSuggestedActions}
-          on:select={(event) => void workNotes.selectNote(event.detail)}
-          on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
-          on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
-        />
-      {:else}
-        <InboxList
-          items={$filteredInbox}
-          filters={$filters}
-          {selectedId}
-          loading={$loadingInbox}
-          viewMode={$viewMode}
-          on:select={(event) => void workNotes.selectNote(event.detail)}
-          on:filter={(event) => void workNotes.updateFilters(event.detail)}
-        />
-      {/if}
-
-      <div class="detail-stack">
-        {#if $viewMode !== "actions" && ($suggestedActions.length > 0 || $loadingSuggestedActions)}
-          <ReviewQueue
+    {#if $viewMode === "today"}
+      <TodayView
+        notes={$inbox}
+        actions={$suggestedActions}
+        loadingNotes={$loadingInbox}
+        loadingActions={$loadingSuggestedActions}
+        busyActionId={$busyActionId}
+        on:openNote={(event) => void openNoteFromToday(event.detail)}
+        on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+      />
+    {:else}
+      <div class="workspace-grid">
+        {#if $viewMode === "actions"}
+          <ActionsList
             actions={$suggestedActions}
+            selectedNoteId={$selectedNote?.id ?? null}
             busyActionId={$busyActionId}
             loading={$loadingSuggestedActions}
             on:select={(event) => void workNotes.selectNote(event.detail)}
             on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
             on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
           />
+        {:else}
+          <InboxList
+            items={$filteredInbox}
+            filters={$filters}
+            {selectedId}
+            loading={$loadingInbox}
+            viewMode={$viewMode}
+            on:select={(event) => void workNotes.selectNote(event.detail)}
+            on:filter={(event) => void workNotes.updateFilters(event.detail)}
+          />
         {/if}
 
-        <NoteDetail
-          note={$selectedNote}
-          loading={$loadingNote}
-          busyActionId={$busyActionId}
-          on:retryParse={() => void workNotes.retrySelectedParse()}
-          on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
-          on:deleteNote={() => void deleteSelectedNote()}
-          on:restoreNote={() => void restoreSelectedNote()}
-          on:permanentlyDeleteNote={() => void permanentlyDeleteSelectedNote()}
-          on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
-          on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
-          on:completeAction={(event) => void workNotes.completeAction(event.detail)}
-          on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
-        />
+        <div class="detail-stack">
+          {#if $viewMode !== "actions" && ($suggestedActions.length > 0 || $loadingSuggestedActions)}
+            <ReviewQueue
+              actions={$suggestedActions}
+              busyActionId={$busyActionId}
+              loading={$loadingSuggestedActions}
+              on:select={(event) => void workNotes.selectNote(event.detail)}
+              on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+              on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+            />
+          {/if}
+
+          <NoteDetail
+            note={$selectedNote}
+            loading={$loadingNote}
+            busyActionId={$busyActionId}
+            on:retryParse={() => void workNotes.retrySelectedParse()}
+            on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
+            on:deleteNote={() => void deleteSelectedNote()}
+            on:restoreNote={() => void restoreSelectedNote()}
+            on:permanentlyDeleteNote={() => void permanentlyDeleteSelectedNote()}
+            on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+            on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+            on:completeAction={(event) => void workNotes.completeAction(event.detail)}
+            on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
+          />
+        </div>
       </div>
-    </div>
+    {/if}
 
     <SettingsView
       settings={$settings}
