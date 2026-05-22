@@ -47,6 +47,7 @@
   const visibleTags = $derived(tags.slice(0, 5));
   const hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
   const inboxMetric = $derived(metrics.find((metric) => metric.label === "Inbox")?.value ?? "0");
+  const actionsMetric = $derived(metrics.find((metric) => metric.label === "Needs review")?.value ?? "0");
 
   function navigate(view: InboxViewMode) {
     dispatch("navigate", view);
@@ -86,11 +87,17 @@
         <span>Today</span>
         <kbd>2</kbd>
       </a>
-      <a href="/">
+      <button
+        class:active={activeView === "actions"}
+        type="button"
+        aria-current={activeView === "actions" ? "page" : undefined}
+        aria-label="Actions"
+        onclick={() => navigate("actions")}
+      >
         <span aria-hidden="true">A</span>
         <span>Actions</span>
-        <strong>{metrics.find((metric) => metric.label === "Needs review")?.value ?? "0"}</strong>
-      </a>
+        <strong aria-hidden="true">{actionsMetric}</strong>
+      </button>
       <a href="/">
         <span aria-hidden="true">#</span>
         <span>Tags</span>

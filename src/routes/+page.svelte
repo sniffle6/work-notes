@@ -3,6 +3,7 @@
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { hideQuickCapture } from "$lib/api";
+  import ActionsList from "$lib/components/ActionsList.svelte";
   import AppShell from "$lib/components/AppShell.svelte";
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
@@ -51,7 +52,7 @@
   );
   const metrics = $derived([
     { label: "Inbox", value: String($inbox.length) },
-    { label: "Needs review", value: String($inbox.filter((note) => note.reviewStatus === "needs_review").length) },
+    { label: "Needs review", value: String($suggestedActions.length) },
     { label: "Parse failed", value: String($inbox.filter((note) => note.parseStatus === "failed").length) },
   ]);
   const topTags = $derived(
@@ -190,6 +191,11 @@
       return;
     }
 
+    if (event.detail === "actions") {
+      await workNotes.showActions();
+      return;
+    }
+
     await workNotes.showInbox();
   }
 
@@ -254,18 +260,30 @@
     {/if}
 
     <div class="workspace-grid">
-      <InboxList
-        items={$filteredInbox}
-        filters={$filters}
-        {selectedId}
-        loading={$loadingInbox}
-        viewMode={$viewMode}
-        on:select={(event) => void workNotes.selectNote(event.detail)}
-        on:filter={(event) => void workNotes.updateFilters(event.detail)}
-      />
+      {#if $viewMode === "actions"}
+        <ActionsList
+          actions={$suggestedActions}
+          selectedNoteId={$selectedNote?.id ?? null}
+          busyActionId={$busyActionId}
+          loading={$loadingSuggestedActions}
+          on:select={(event) => void workNotes.selectNote(event.detail)}
+          on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+          on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+        />
+      {:else}
+        <InboxList
+          items={$filteredInbox}
+          filters={$filters}
+          {selectedId}
+          loading={$loadingInbox}
+          viewMode={$viewMode}
+          on:select={(event) => void workNotes.selectNote(event.detail)}
+          on:filter={(event) => void workNotes.updateFilters(event.detail)}
+        />
+      {/if}
 
       <div class="detail-stack">
-        {#if $suggestedActions.length > 0 || $loadingSuggestedActions}
+        {#if $viewMode !== "actions" && ($suggestedActions.length > 0 || $loadingSuggestedActions)}
           <ReviewQueue
             actions={$suggestedActions}
             busyActionId={$busyActionId}

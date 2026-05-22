@@ -331,6 +331,23 @@ describe("createWorkNotesStore", () => {
     expect(get(store.loadingSuggestedActions)).toBe(false);
   });
 
+  it("enters actions view, refreshes suggested actions, and selects the first source note", async () => {
+    const firstAction = reviewItem({ id: "action-1", noteId: "note-action-1", noteTitle: "Action source" });
+    const source = note({ id: "note-action-1", title: "Action source" });
+    const api = testApi({
+      listSuggestedActions: vi.fn().mockResolvedValue([firstAction]),
+      getNote: vi.fn().mockResolvedValue({ ...source, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showActions();
+
+    expect(get(store.viewMode)).toBe("actions");
+    expect(get(store.suggestedActions)).toEqual([firstAction]);
+    expect(get(store.selectedNote)?.id).toBe("note-action-1");
+    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes selected note, inbox, and suggested queue after accepting an action", async () => {
     const api = testApi({
       listInbox: vi.fn().mockResolvedValue([note({ suggestedActionItemCount: 0 })]),
