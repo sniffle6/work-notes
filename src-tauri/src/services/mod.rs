@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod capture;
 pub mod draft;
 pub mod parse_queue;
