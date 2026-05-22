@@ -8,6 +8,7 @@ use crate::domain::{
 };
 use crate::repositories::RepositoryError;
 use crate::services::actions::ActionItemService;
+use crate::services::archive::ArchiveService;
 use crate::services::capture::CaptureService;
 use crate::services::parse_queue::ParseQueue;
 use crate::services::search::{NoteDetail, SearchService};
@@ -385,6 +386,26 @@ pub async fn delete_note(
 }
 
 #[tauri::command]
+pub async fn restore_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    ArchiveService::new(state.repositories.clone()).restore(note_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn permanently_delete_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    ArchiveService::new(state.repositories.clone()).permanently_delete(note_id)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn accept_action_item(
     state: tauri::State<'_, AppState>,
     action_id: String,
@@ -482,8 +503,9 @@ fn parse_action_item_id(id: &str) -> Result<ActionItemId, CommandError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{ActionReviewItemDto, AppSettingsDto, NoteListItemDto};
+    use crate::commands::{ActionReviewItemDto, AppSettingsDto, CommandError, NoteListItemDto};
     use crate::domain::{ActionItemId, ActionReviewItem, NoteId, ParseStatus, ReviewStatus};
+    use crate::services::ServiceError;
     use chrono::Utc;
     use serde_json::json;
 
@@ -559,5 +581,24 @@ mod tests {
         assert_eq!(settings.parser_timeout_seconds, 45);
         assert_eq!(settings.parser_max_retries, 4);
         assert_eq!(settings.codex_command_path, "codex");
+    }
+
+    #[test]
+    fn service_invalid_input_maps_to_command_invalid_input() {
+        let error = CommandError::from(ServiceError::InvalidInput(
+            "note must be archived before permanent delete",
+        ));
+
+        assert_eq!(error.code, "invalid_input");
+    }
+
+    #[test]
+    fn service_not_found_maps_to_command_not_found() {
+        let error = CommandError::from(ServiceError::NotFound {
+            entity: "note",
+            id: "note-missing".to_string(),
+        });
+
+        assert_eq!(error.code, "not_found");
     }
 }

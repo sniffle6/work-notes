@@ -136,8 +136,8 @@ describe("createWorkNotesStore", () => {
     await store.updateFilters({ search: "old filter" });
     await store.showCapturedNote("captured-note");
 
-    expect(get(store.filters)).toEqual(createInboxFilters());
-    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters());
+    expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
+    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
     expect(get(store.inbox).map((item) => item.id)).toEqual(["captured-note"]);
     expect(get(store.selectedNote)?.id).toBe("captured-note");
   });
@@ -165,6 +165,131 @@ describe("createWorkNotesStore", () => {
     expect(api.deleteNote).toHaveBeenCalledWith("note-1");
     expect(get(store.selectedNote)).toBeNull();
     expect(get(store.inbox)).toEqual([]);
+  });
+
+  it("loads archived notes in archive mode only", async () => {
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([
+        note({ id: "active", isArchived: false }),
+        note({ id: "archived", isArchived: true }),
+      ]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+
+    expect(get(store.viewMode)).toBe("archive");
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["archived"]);
+    expect(api.listInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ includeArchived: true }),
+    );
+  });
+
+  it("restores the selected archived note and returns to inbox mode", async () => {
+    const archived = note({ id: "archived", isArchived: true });
+    const restored = note({ id: "archived", isArchived: false });
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([archived])
+        .mockResolvedValueOnce([restored]),
+      getNote: vi
+        .fn()
+        .mockResolvedValueOnce({ ...archived, actionItems: [] })
+        .mockResolvedValueOnce({ ...restored, actionItems: [] })
+        .mockResolvedValue({ ...restored, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.selectNote("archived");
+    await store.restoreSelectedNote();
+
+    expect(get(store.viewMode)).toBe("inbox");
+    expect(get(store.selectedNote)?.id).toBe("archived");
+    expect(api.restoreNote).toHaveBeenCalledWith("archived");
+  });
+
+  it("permanently deletes selected archived note and stays in archive mode", async () => {
+    const first = note({ id: "archived-1", isArchived: true });
+    const second = note({ id: "archived-2", isArchived: true });
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([first, second])
+        .mockResolvedValueOnce([second]),
+      getNote: vi
+        .fn()
+        .mockResolvedValueOnce({ ...first, actionItems: [] })
+        .mockResolvedValueOnce({ ...first, actionItems: [] })
+        .mockResolvedValue({ ...second, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.selectNote("archived-1");
+    await store.permanentlyDeleteSelectedNote();
+
+    expect(get(store.viewMode)).toBe("archive");
+    expect(get(store.selectedNote)?.id).toBe("archived-2");
+    expect(api.permanentlyDeleteNote).toHaveBeenCalledWith("archived-1");
+  });
+
+  it("selects the next archived note after permanently deleting a middle item", async () => {
+    const first = note({ id: "archived-1", isArchived: true });
+    const second = note({ id: "archived-2", isArchived: true });
+    const third = note({ id: "archived-3", isArchived: true });
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([first, second, third])
+        .mockResolvedValueOnce([first, third]),
+      getNote: vi.fn<(noteId: string) => Promise<NoteDetail>>(async (noteId) => {
+        const details: Record<string, NoteDetail> = {
+          "archived-1": { ...first, actionItems: [] },
+          "archived-2": { ...second, actionItems: [] },
+          "archived-3": { ...third, actionItems: [] },
+        };
+
+        return details[noteId];
+      }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.selectNote("archived-2");
+    await store.permanentlyDeleteSelectedNote();
+
+    expect(get(store.viewMode)).toBe("archive");
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["archived-1", "archived-3"]);
+    expect(get(store.selectedNote)?.id).toBe("archived-3");
+    expect(api.getNote).toHaveBeenLastCalledWith("archived-3");
+    expect(api.permanentlyDeleteNote).toHaveBeenCalledWith("archived-2");
+  });
+
+  it("reloads archive and clears stale selection when archived note lookup is not found", async () => {
+    const stale = note({ id: "archived-stale", isArchived: true });
+    const next = note({ id: "archived-next", isArchived: true });
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([stale, next])
+        .mockResolvedValueOnce([next]),
+      getNote: vi
+        .fn()
+        .mockResolvedValueOnce({ ...stale, actionItems: [] })
+        .mockRejectedValueOnce({ code: "not_found", message: "note not found: archived-stale" })
+        .mockResolvedValue({ ...next, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.selectNote("archived-stale");
+
+    expect(get(store.viewMode)).toBe("archive");
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["archived-next"]);
+    expect(get(store.selectedNote)?.id).toBe("archived-next");
+    expect(get(store.error)).toBeNull();
   });
 
   it("can save quick-capture text without refreshing the inbox", async () => {
@@ -250,6 +375,8 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
       .fn<(noteId: string, feedback: string) => Promise<void>>()
       .mockResolvedValue(undefined),
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    restoreNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    permanentlyDeleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     completeActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),

@@ -25,6 +25,8 @@
     retryParse: void;
     reparseWithFeedback: string;
     deleteNote: void;
+    restoreNote: void;
+    permanentlyDeleteNote: void;
     acceptAction: string;
     dismissAction: string;
     completeAction: string;
@@ -150,9 +152,18 @@
         <button class="ghost-button" type="button" onclick={openReparseDialog} disabled={loading}>
           Reparse with feedback
         </button>
-        <button class="delete-button" type="button" onclick={() => dispatch("deleteNote")} disabled={loading}>
-          Delete
-        </button>
+        {#if note.isArchived}
+          <button class="ghost-button" type="button" onclick={() => dispatch("restoreNote")} disabled={loading}>
+            Restore
+          </button>
+          <button class="delete-button" type="button" onclick={() => dispatch("permanentlyDeleteNote")} disabled={loading}>
+            Delete permanently
+          </button>
+        {:else}
+          <button class="delete-button" type="button" onclick={() => dispatch("deleteNote")} disabled={loading}>
+            Archive
+          </button>
+        {/if}
       </div>
     </header>
 

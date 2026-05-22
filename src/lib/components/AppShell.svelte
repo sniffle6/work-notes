@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import type { Snippet } from "svelte";
+  import type { InboxViewMode } from "$lib/stores/inbox";
 
   type ShellMetric = {
     label: string;
@@ -12,6 +13,7 @@
     subtitle: string;
     workspace: string;
     metrics: ShellMetric[];
+    activeView?: InboxViewMode;
     tags?: string[];
     parserCommand?: string;
     parserQueueCount?: number;
@@ -26,6 +28,7 @@
     subtitle,
     workspace,
     metrics,
+    activeView = "inbox",
     tags = [],
     parserCommand = "codex.cmd",
     parserQueueCount = 0,
@@ -38,11 +41,16 @@
   const dispatch = createEventDispatcher<{
     newNote: void;
     settings: void;
+    navigate: InboxViewMode;
   }>();
 
   const visibleTags = $derived(tags.slice(0, 5));
   const hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
   const inboxMetric = $derived(metrics.find((metric) => metric.label === "Inbox")?.value ?? "0");
+
+  function navigate(view: InboxViewMode) {
+    dispatch("navigate", view);
+  }
 </script>
 
 <div class="app-shell" class:theme-memphis={themeId === "memphis"} data-theme={themeId} style={themeStyle}>
@@ -62,11 +70,17 @@
     </button>
 
     <nav class="nav-stack" aria-label="Primary">
-      <a class="active" href="/">
+      <button
+        class:active={activeView === "inbox"}
+        type="button"
+        aria-current={activeView === "inbox" ? "page" : undefined}
+        aria-label="Inbox"
+        onclick={() => navigate("inbox")}
+      >
         <span aria-hidden="true">I</span>
         <span>Inbox</span>
-        <strong>{inboxMetric}</strong>
-      </a>
+        <strong aria-hidden="true">{inboxMetric}</strong>
+      </button>
       <a href="/">
         <span aria-hidden="true">2</span>
         <span>Today</span>
@@ -87,11 +101,17 @@
         <span>People</span>
         <kbd>5</kbd>
       </a>
-      <a href="/">
+      <button
+        class:active={activeView === "archive"}
+        type="button"
+        aria-current={activeView === "archive" ? "page" : undefined}
+        aria-label="Archive"
+        onclick={() => navigate("archive")}
+      >
         <span aria-hidden="true">Z</span>
         <span>Archive</span>
-        <kbd>6</kbd>
-      </a>
+        <kbd aria-hidden="true">6</kbd>
+      </button>
     </nav>
 
     <div class="tag-block">
@@ -318,7 +338,8 @@
     gap: 1px;
   }
 
-  .nav-stack a {
+  .nav-stack a,
+  .nav-stack button {
     display: grid;
     grid-template-columns: 16px minmax(0, 1fr) auto;
     align-items: center;
@@ -328,17 +349,22 @@
     border: 1px solid transparent;
     border-radius: 6px;
     color: var(--color-text-muted);
+    background: transparent;
+    font: inherit;
     font-weight: 650;
     text-decoration: none;
+    text-align: left;
+    cursor: pointer;
   }
 
   .nav-stack a:hover,
-  .nav-stack a.active {
+  .nav-stack button:hover,
+  .nav-stack button.active {
     color: var(--color-text-primary);
     background: var(--color-surface-2);
   }
 
-  .theme-memphis .nav-stack a.active {
+  .theme-memphis .nav-stack button.active {
     border-color: var(--color-border-default);
     background: var(--color-surface-2);
     box-shadow: 2px 2px 0 var(--color-border-default);

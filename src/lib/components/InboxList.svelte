@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import type { InboxViewMode } from "$lib/stores/inbox";
   import type { InboxFilters, NoteListItem, ParseStatus, ReviewStatus, Tag } from "$lib/types";
 
   type Props = {
@@ -7,9 +8,10 @@
     filters: InboxFilters;
     selectedId?: string;
     loading?: boolean;
+    viewMode?: InboxViewMode;
   };
 
-  let { items, filters, selectedId, loading = false }: Props = $props();
+  let { items, filters, selectedId, loading = false, viewMode = "inbox" }: Props = $props();
   let mode = $state<"notes" | "actions">("notes");
 
   const availableTags = $derived(uniqueTags(items));
@@ -181,8 +183,8 @@
     {#if visibleItems.length === 0}
       <div class="empty-state">
         <div class="empty-mark">WN</div>
-        <h2>{mode === "actions" ? "No suggested actions" : "No notes"}</h2>
-        <p>{mode === "actions" ? "Parser suggestions will appear here after capture." : "Press the hotkey to capture your first one."}</p>
+        <h2>{viewMode === "archive" && mode === "notes" ? "No archived notes" : mode === "actions" ? "No suggested actions" : "No notes"}</h2>
+        <p>{viewMode === "archive" && mode === "notes" ? "Archived notes appear here after they leave Inbox." : mode === "actions" ? "Parser suggestions will appear here after capture." : "Press the hotkey to capture your first one."}</p>
       </div>
     {/if}
 

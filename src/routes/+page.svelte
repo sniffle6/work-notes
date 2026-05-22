@@ -10,7 +10,7 @@
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
-  import { createWorkNotesStore } from "$lib/stores/inbox";
+  import { createWorkNotesStore, type InboxViewMode } from "$lib/stores/inbox";
   import type { AppSettings } from "$lib/types";
   import { toCssVariables } from "$lib/theme/applyTheme";
   import { getThemeById } from "$lib/theme/themes";
@@ -20,6 +20,7 @@
     inbox,
     filteredInbox,
     filters,
+    viewMode,
     selectedNote,
     suggestedActions,
     settings,
@@ -176,11 +177,42 @@
   }
 
   async function deleteSelectedNote() {
-    if (typeof window !== "undefined" && !window.confirm("Delete this note?")) {
+    if (typeof window !== "undefined" && !window.confirm("Archive this note?")) {
       return;
     }
 
     await workNotes.deleteSelectedNote();
+  }
+
+  async function navigatePrimary(event: CustomEvent<InboxViewMode>) {
+    if (event.detail === "archive") {
+      await workNotes.showArchive();
+      return;
+    }
+
+    await workNotes.showInbox();
+  }
+
+  async function restoreSelectedNote() {
+    await workNotes.restoreSelectedNote();
+  }
+
+  async function permanentlyDeleteSelectedNote() {
+    const note = $selectedNote;
+
+    if (!note) {
+      return;
+    }
+
+    const title = note.title || note.summary || note.rawText.slice(0, 40);
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Permanently delete "${title}"? This cannot be undone.`)
+    ) {
+      return;
+    }
+
+    await workNotes.permanentlyDeleteSelectedNote();
   }
 </script>
 
@@ -212,8 +244,10 @@
     {parserQueueCount}
     {themeId}
     {themeStyle}
+    activeView={$viewMode}
     on:newNote={() => void openQuickCapture()}
     on:settings={() => (settingsOpen = true)}
+    on:navigate={(event) => void navigatePrimary(event)}
   >
     {#if $error}
       <p class="app-error">{$error}</p>
@@ -225,6 +259,7 @@
         filters={$filters}
         {selectedId}
         loading={$loadingInbox}
+        viewMode={$viewMode}
         on:select={(event) => void workNotes.selectNote(event.detail)}
         on:filter={(event) => void workNotes.updateFilters(event.detail)}
       />
@@ -248,6 +283,8 @@
           on:retryParse={() => void workNotes.retrySelectedParse()}
           on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
           on:deleteNote={() => void deleteSelectedNote()}
+          on:restoreNote={() => void restoreSelectedNote()}
+          on:permanentlyDeleteNote={() => void permanentlyDeleteSelectedNote()}
           on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
           on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
           on:completeAction={(event) => void workNotes.completeAction(event.detail)}

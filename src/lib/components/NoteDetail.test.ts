@@ -40,7 +40,7 @@ describe("NoteDetail", () => {
     expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Send feedback" }).disabled).toBe(true);
   });
 
-  it("dispatches reparse feedback and delete actions for the selected note", async () => {
+  it("dispatches reparse feedback and archive actions for the selected note", async () => {
     const reparseWithFeedback = vi.fn();
     const deleteNote = vi.fn();
 
@@ -55,13 +55,31 @@ describe("NoteDetail", () => {
       target: { value: "Tag this as research and make Robert the requester." },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Archive" }));
 
     expect(reparseWithFeedback).toHaveBeenCalledTimes(1);
     expect(reparseWithFeedback.mock.calls[0][0].detail).toBe(
       "Tag this as research and make Robert the requester.",
     );
     expect(deleteNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows restore and permanent delete actions for archived notes", async () => {
+    const restoreNote = vi.fn();
+    const permanentlyDeleteNote = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), isArchived: true } },
+      events: { restoreNote, permanentlyDeleteNote },
+    });
+
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+
+    expect(restoreNote).toHaveBeenCalledTimes(1);
+    expect(permanentlyDeleteNote).toHaveBeenCalledTimes(1);
   });
 
   it("dispatches action accept and dismiss from suggested action rows", async () => {

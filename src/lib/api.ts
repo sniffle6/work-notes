@@ -18,6 +18,23 @@ const fallbackNow = "2026-05-20T13:42:00.000Z";
 
 let fallbackNotes: NoteDetail[] = [
   {
+    id: "fallback-archived-1",
+    title: "Archived workspace cleanup note",
+    rawText: "Archived workspace cleanup note",
+    cleanedText: "Archived workspace cleanup note",
+    summary: "Archived workspace cleanup note",
+    captureSource: "quick_capture",
+    createdAt: "2026-05-20T13:39:00.000Z",
+    updatedAt: "2026-05-20T13:39:00.000Z",
+    parseStatus: "parsed",
+    reviewStatus: "reviewed",
+    isArchived: true,
+    tags: [{ id: "fallback-tag-archive", name: "archive", kind: "topic", source: "user" }],
+    actionItemCount: 0,
+    suggestedActionItemCount: 0,
+    actionItems: [],
+  },
+  {
     id: "n-1024",
     title: "Kiosk 7 telemetry IDs",
     rawText: "Maya: bring serial list into the Tuesday sync and flag missing asset tags before the vendor call.",
@@ -145,6 +162,14 @@ export async function deleteNote(noteId: string): Promise<void> {
   await invokeCommand<void>("delete_note", { noteId });
 }
 
+export async function restoreNote(noteId: string): Promise<void> {
+  await invokeCommand<void>("restore_note", { noteId });
+}
+
+export async function permanentlyDeleteNote(noteId: string): Promise<void> {
+  await invokeCommand<void>("permanently_delete_note", { noteId });
+}
+
 export async function acceptActionItem(actionItemId: string): Promise<void> {
   await invokeCommand<void>("accept_action_item", { actionId: actionItemId });
 }
@@ -187,6 +212,8 @@ export const api = {
   retryParse,
   retryParseWithFeedback,
   deleteNote,
+  restoreNote,
+  permanentlyDeleteNote,
   acceptActionItem,
   dismissActionItem,
   completeActionItem,
@@ -392,6 +419,33 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
         note.isArchived = true;
         note.updatedAt = new Date().toISOString();
       }
+      return undefined as T;
+    }
+    case "restore_note": {
+      const noteId = String(args?.noteId ?? "");
+      const note = fallbackNotes.find((item) => item.id === noteId);
+
+      if (!note) {
+        throw new Error("note not found");
+      }
+
+      note.isArchived = false;
+      note.updatedAt = new Date().toISOString();
+      return undefined as T;
+    }
+    case "permanently_delete_note": {
+      const noteId = String(args?.noteId ?? "");
+      const index = fallbackNotes.findIndex((item) => item.id === noteId);
+
+      if (index < 0) {
+        throw new Error("note not found");
+      }
+
+      if (!fallbackNotes[index].isArchived) {
+        throw new Error("note must be archived before permanent delete");
+      }
+
+      fallbackNotes.splice(index, 1);
       return undefined as T;
     }
     case "accept_action_item":

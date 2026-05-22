@@ -12,12 +12,16 @@ import {
   retryParse,
   retryParseWithFeedback,
   deleteNote,
+  restoreNote,
+  permanentlyDeleteNote,
   saveCaptureNote,
   saveSettings,
 } from "$lib/api";
 import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
+
+export type InboxViewMode = "inbox" | "archive";
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -26,6 +30,8 @@ type WorkNotesApi = {
   retryParse: typeof retryParse;
   retryParseWithFeedback: typeof retryParseWithFeedback;
   deleteNote: typeof deleteNote;
+  restoreNote: typeof restoreNote;
+  permanentlyDeleteNote: typeof permanentlyDeleteNote;
   acceptActionItem: typeof acceptActionItem;
   dismissActionItem: typeof dismissActionItem;
   completeActionItem: typeof completeActionItem;
@@ -42,6 +48,8 @@ const defaultApi: WorkNotesApi = {
   retryParse,
   retryParseWithFeedback,
   deleteNote,
+  restoreNote,
+  permanentlyDeleteNote,
   acceptActionItem,
   dismissActionItem,
   completeActionItem,
@@ -54,6 +62,7 @@ const defaultApi: WorkNotesApi = {
 export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const inbox = writable<NoteListItem[]>([]);
   const filters = writable<InboxFilters>(createInboxFilters());
+  const viewMode = writable<InboxViewMode>("inbox");
   const selectedNote = writable<NoteDetail | null>(null);
   const suggestedActions = writable<ActionReviewItem[]>([]);
   const settings = writable<AppSettings | null>(null);
@@ -65,28 +74,41 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const busyActionId = writable<string | null>(null);
   const error = writable<string | null>(null);
 
-  const filteredInbox = derived([inbox, filters], ([$inbox, $filters]) =>
-    $inbox.filter((note) => matchesNoteFilters(note, $filters)),
+  const filteredInbox = derived([inbox, filters, viewMode], ([$inbox, $filters, $viewMode]) =>
+    $inbox.filter((note) =>
+      matchesNoteFilters(
+        note,
+        createInboxFilters({
+          ...$filters,
+          includeArchived: $viewMode === "archive",
+        }),
+      ),
+    ),
   );
 
-  async function loadInbox(): Promise<void> {
+  type LoadInboxOptions = {
+    preferredSelectionIndex?: number;
+  };
+
+  async function loadInbox(options: LoadInboxOptions = {}): Promise<void> {
     loadingInbox.set(true);
     error.set(null);
 
     try {
+      const mode = get(viewMode);
       const currentFilters = get(filters);
-      const items = await api.listInbox(currentFilters);
-      inbox.set(items);
+      const backendFilters = createInboxFilters({
+        ...currentFilters,
+        includeArchived: mode === "archive",
+      });
+      const items = await api.listInbox(backendFilters);
+      const visibleItems =
+        mode === "archive"
+          ? items.filter((note) => note.isArchived)
+          : items.filter((note) => !note.isArchived);
 
-      const currentSelected = get(selectedNote);
-      if (items.length === 0) {
-        selectedNote.set(null);
-        return;
-      }
-
-      if (!currentSelected || !items.some((item) => item.id === currentSelected.id)) {
-        await selectNote(items[0].id);
-      }
+      inbox.set(visibleItems);
+      await ensureSelectionAfterLoad(visibleItems, options.preferredSelectionIndex);
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not load inbox."));
     } finally {
@@ -101,6 +123,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     try {
       selectedNote.set(await api.getNote(noteId));
     } catch (unknownError) {
+      if (isNotFoundError(unknownError)) {
+        selectedNote.set(null);
+        await loadInbox();
+        return;
+      }
+
       error.set(errorMessage(unknownError, "Could not load note."));
     } finally {
       loadingNote.set(false);
@@ -217,6 +245,68 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await updateAction(actionItemId, api.dismissActionItem);
   }
 
+  async function showInbox(): Promise<void> {
+    viewMode.set("inbox");
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    await loadInbox();
+  }
+
+  async function showArchive(): Promise<void> {
+    viewMode.set("archive");
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: true }));
+    await loadInbox();
+  }
+
+  async function loadArchive(): Promise<void> {
+    await showArchive();
+  }
+
+  async function restoreSelectedNote(): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.restoreNote(note.id);
+      viewMode.set("inbox");
+      filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+      await loadInbox();
+      await selectNote(note.id);
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not restore note."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function permanentlyDeleteSelectedNote(): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+    const archivedItems = get(inbox);
+    const deletedIndex = archivedItems.findIndex((item) => item.id === note.id);
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.permanentlyDeleteNote(note.id);
+      selectedNote.set(null);
+      await loadInbox({
+        preferredSelectionIndex: deletedIndex >= 0 ? deletedIndex : undefined,
+      });
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not permanently delete note."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
   async function completeAction(actionItemId: string): Promise<void> {
     await updateAction(actionItemId, api.completeActionItem, false);
   }
@@ -253,9 +343,29 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   }
 
   async function showCapturedNote(noteId: string): Promise<void> {
-    filters.set(createInboxFilters());
+    viewMode.set("inbox");
+    filters.set(createInboxFilters({ includeArchived: false }));
     await loadInbox();
     await selectNote(noteId);
+  }
+
+  async function ensureSelectionAfterLoad(
+    items: NoteListItem[],
+    preferredSelectionIndex?: number,
+  ): Promise<void> {
+    const currentSelected = get(selectedNote);
+    if (items.length === 0) {
+      selectedNote.set(null);
+      return;
+    }
+
+    if (!currentSelected || !items.some((item) => item.id === currentSelected.id)) {
+      const index =
+        preferredSelectionIndex === undefined
+          ? 0
+          : Math.min(Math.max(preferredSelectionIndex, 0), items.length - 1);
+      await selectNote(items[index].id);
+    }
   }
 
   async function updateAction(
@@ -290,6 +400,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   return {
     inbox,
     filters,
+    viewMode,
     filteredInbox,
     selectedNote,
     suggestedActions,
@@ -303,6 +414,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     error,
     captureRawNote,
     loadInbox,
+    loadArchive,
     loadSuggestedActions,
     selectNote,
     saveCapture,
@@ -310,6 +422,10 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     retrySelectedParse,
     retrySelectedParseWithFeedback,
     deleteSelectedNote,
+    showInbox,
+    showArchive,
+    restoreSelectedNote,
+    permanentlyDeleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,
     completeAction,
@@ -330,4 +446,21 @@ function errorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.toLocaleLowerCase().includes("not found");
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  if (record.code === "not_found") {
+    return true;
+  }
+
+  return typeof record.message === "string" && record.message.toLocaleLowerCase().includes("not found");
 }

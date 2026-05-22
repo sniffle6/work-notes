@@ -1,0 +1,31 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+
+import AppShell from "./AppShell.svelte";
+
+afterEach(() => cleanup());
+
+describe("AppShell", () => {
+  it("marks archive active and emits archive navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "archive",
+      },
+      events: { navigate },
+    });
+
+    const archive = screen.getByRole("button", { name: "Archive" });
+    await fireEvent.click(archive);
+
+    expect(archive.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("archive");
+  });
+});

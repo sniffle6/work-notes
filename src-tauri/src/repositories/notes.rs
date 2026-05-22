@@ -83,6 +83,51 @@ impl NoteRepository {
         Ok(())
     }
 
+    pub fn restore(&self, id: NoteId) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let connection = self.db.connection()?;
+        let changed = connection.execute(
+            "UPDATE notes SET is_archived = 0, updated_at = ?2 WHERE id = ?1",
+            params![id_text, now],
+        )?;
+
+        if changed == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn permanently_delete(&self, id: NoteId) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+
+        transaction.execute("DELETE FROM note_tags WHERE note_id = ?1", params![&id_text])?;
+        transaction.execute(
+            "DELETE FROM action_items WHERE note_id = ?1",
+            params![&id_text],
+        )?;
+        transaction.execute("DELETE FROM parse_jobs WHERE note_id = ?1", params![&id_text])?;
+        transaction.execute("DELETE FROM parse_runs WHERE note_id = ?1", params![&id_text])?;
+        transaction.execute("DELETE FROM notes_fts WHERE note_id = ?1", params![&id_text])?;
+        let changed = transaction.execute("DELETE FROM notes WHERE id = ?1", params![&id_text])?;
+
+        if changed == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            });
+        }
+
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn get(&self, id: NoteId) -> RepositoryResult<Option<Note>> {
         let connection = self.db.connection()?;
         let id_text = id.to_string();
@@ -433,5 +478,85 @@ fn normalize_title(title: &str) -> String {
         format!("{}...", title.chars().take(77).collect::<String>())
     } else {
         title.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::params;
+
+    use crate::db::Database;
+    use crate::domain::{InboxFilters, TagKind};
+    use crate::repositories::{
+        ActionItemRepository, NoteRepository, ParseJobRepository, TagRepository,
+    };
+
+    fn setup_notes() -> (Database, NoteRepository) {
+        let db = Database::in_memory().unwrap();
+        let notes = NoteRepository::new(db.clone());
+        (db, notes)
+    }
+
+    #[test]
+    fn restore_archived_note_returns_it_to_default_inbox() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("restore me").expect("create note");
+
+        notes.archive(note.id).expect("archive note");
+        notes.restore(note.id).expect("restore note");
+
+        let restored = notes.get(note.id).expect("get note").expect("note exists");
+        assert!(!restored.is_archived);
+
+        let inbox = notes
+            .list_inbox(InboxFilters::default())
+            .expect("list default inbox");
+        assert!(inbox.iter().any(|item| item.id == note.id));
+    }
+
+    #[test]
+    fn permanently_delete_archived_note_removes_dependents() {
+        let (db, notes) = setup_notes();
+        let tags = TagRepository::new(db.clone());
+        let actions = ActionItemRepository::new(db.clone());
+        let parse_jobs = ParseJobRepository::new(db.clone());
+        let note = notes.create_raw_note("delete me").expect("create note");
+
+        let tag = tags.upsert("cleanup", TagKind::Topic).expect("create tag");
+        actions
+            .create_suggested(note.id, "Follow up", None, None, Some(0.8))
+            .expect("add action");
+        tags.apply_to_note(note.id, tag.id, "parser", Some(0.8))
+            .expect("tag note");
+
+        parse_jobs
+            .record_run(note.id, "test", "test-v1", "raw response", "{}", None)
+            .expect("record parse run");
+
+        notes.archive(note.id).expect("archive note");
+        notes
+            .permanently_delete(note.id)
+            .expect("delete note");
+
+        assert!(notes.get(note.id).expect("get deleted note").is_none());
+
+        let connection = db.connection().expect("connect db");
+        for table in [
+            "note_tags",
+            "action_items",
+            "parse_jobs",
+            "parse_runs",
+            "notes_fts",
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE note_id = ?1"),
+                    params![note.id.to_string()],
+                    |row| row.get(0),
+                )
+                .expect("count dependent rows");
+            assert_eq!(count, 0, "{table} rows should be removed");
+        }
     }
 }

@@ -43,6 +43,19 @@ describe("InboxList", () => {
 
     expect(screen.getByText("1 suggested action")).toBeTruthy();
   });
+
+  it("uses archive empty copy in archive mode", () => {
+    render(InboxList, {
+      props: {
+        items: [],
+        filters: { ...filters(), includeArchived: true },
+        selectedId: undefined,
+        viewMode: "archive",
+      },
+    });
+
+    expect(screen.getByText("No archived notes")).toBeTruthy();
+  });
 });
 
 function filters(): InboxFilters {

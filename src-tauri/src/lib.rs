@@ -56,6 +56,8 @@ pub fn run() {
             commands::retry_parse,
             commands::retry_parse_with_feedback,
             commands::delete_note,
+            commands::restore_note,
+            commands::permanently_delete_note,
             commands::accept_action_item,
             commands::dismiss_action_item,
             commands::complete_action_item,
