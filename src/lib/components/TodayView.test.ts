@@ -58,8 +58,8 @@ describe("TodayView", () => {
       },
     });
 
-    expect(screen.getByRole("heading", { name: "Today" })).toBeTruthy();
-    expect(screen.getByText("Friday, May 22")).toBeTruthy();
+    expect(screen.getByText("Today")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Friday, May 22" })).toBeTruthy();
     expect(screen.getByText("Send EOD launch summary")).toBeTruthy();
     expect(screen.getByText(/from "Launch source note"/)).toBeTruthy();
     expect(screen.getByText("Captured launch note")).toBeTruthy();
@@ -102,7 +102,11 @@ describe("TodayView", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open note: Send EOD launch summary" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Open note: Captured launch note" }));
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: /Open note: Captured launch note, Needs review, .*1 action/,
+      }),
+    );
 
     expect(openNote.mock.calls.map((call) => call[0].detail)).toEqual(["note-action", "note-captured"]);
   });

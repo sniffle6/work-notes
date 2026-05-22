@@ -102,7 +102,20 @@ function parseDate(value: string | null | undefined): Date | null {
   const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (dateOnly) {
     const [, year, month, day] = dateOnly;
-    return new Date(Number(year), Number(month) - 1, Number(day));
+    const parsedYear = Number(year);
+    const parsedMonth = Number(month);
+    const parsedDay = Number(day);
+    const parsed = new Date(parsedYear, parsedMonth - 1, parsedDay);
+
+    if (
+      parsed.getFullYear() !== parsedYear ||
+      parsed.getMonth() !== parsedMonth - 1 ||
+      parsed.getDate() !== parsedDay
+    ) {
+      return null;
+    }
+
+    return parsed;
   }
 
   const parsed = new Date(value);

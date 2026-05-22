@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { get } from "svelte/store";
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { hideQuickCapture } from "$lib/api";
@@ -96,6 +97,11 @@
 
     if (currentWindowLabel !== "quick-capture") {
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
+        if (get(viewMode) === "today") {
+          void workNotes.showToday();
+          return;
+        }
+
         if (event.payload.noteId) {
           void workNotes.showCapturedNote(event.payload.noteId);
           void workNotes.loadSuggestedActions();

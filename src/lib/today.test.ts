@@ -51,6 +51,8 @@ describe("today helpers", () => {
         action({ id: "today-later", dueDate: "2026-05-22", createdAt: "2026-05-20T10:00:00" }),
         action({ id: "no-date", dueDate: null }),
         action({ id: "invalid", dueDate: "not-a-date" }),
+        action({ id: "invalid-overflow-day", dueDate: "2026-02-31" }),
+        action({ id: "invalid-overflow-month", dueDate: "2026-13-01" }),
         action({ id: "overdue", dueDate: "2026-05-21", createdAt: "2026-05-21T08:00:00" }),
         action({ id: "today-earlier", dueDate: "2026-05-22", createdAt: "2026-05-19T10:00:00" }),
       ],
@@ -87,6 +89,9 @@ describe("today helpers", () => {
         action({ id: "fri-action", dueDate: "2026-05-22" }),
         action({ id: "sat-action", dueDate: "2026-05-23" }),
         action({ id: "invalid-action", dueDate: "invalid" }),
+        action({ id: "invalid-overflow-day", dueDate: "2026-02-31" }),
+        action({ id: "invalid-overflow-month", dueDate: "2026-13-01" }),
+        action({ id: "invalid-normalizes-to-monday", dueDate: "2026-04-48" }),
       ],
       now,
     );

@@ -197,13 +197,17 @@ describe("createWorkNotesStore", () => {
     const store = createWorkNotesStore(api);
 
     await store.showArchive();
+    await store.updateFilters({
+      search: "stale filter",
+      tagIds: ["tag-stale"],
+      parseStatuses: ["failed"],
+      reviewStatuses: ["reviewed"],
+    });
     await store.showToday();
 
     expect(get(store.viewMode)).toBe("today");
     expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
-    expect(api.listInbox).toHaveBeenLastCalledWith(
-      expect.objectContaining({ includeArchived: false }),
-    );
+    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
     expect(get(store.inbox).map((item) => item.id)).toEqual(["active"]);
     expect(get(store.suggestedActions)).toEqual([dueAction]);
     expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);

@@ -70,13 +70,26 @@
   function actionCountLabel(count: number): string {
     return `${count} ${count === 1 ? "action" : "actions"}`;
   }
+
+  function capturedNoteLabel(note: NoteListItem): string {
+    const parts = [
+      `Open note: ${note.title}`,
+      statusLabel(note.parseStatus, note.reviewStatus),
+      formatShortTime(note.createdAt),
+    ];
+
+    if (note.suggestedActionItemCount > 0) {
+      parts.push(actionCountLabel(note.suggestedActionItemCount));
+    }
+
+    return parts.join(", ");
+  }
 </script>
 
 <section class="today-view" aria-label="Today">
   <header class="today-head">
     <div class="today-eyebrow">Today</div>
-    <h1>Today</h1>
-    <p class="today-date">{formatTodayHeading(now)}</p>
+    <h1>{formatTodayHeading(now)}</h1>
     <p class="today-summary">{summary}</p>
   </header>
 
@@ -144,7 +157,7 @@
           <button
             class="today-note"
             type="button"
-            aria-label={`Open note: ${note.title}`}
+            aria-label={capturedNoteLabel(note)}
             onclick={() => dispatch("openNote", note.id)}
           >
             <span

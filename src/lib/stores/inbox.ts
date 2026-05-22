@@ -274,7 +274,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function showToday(): Promise<void> {
     viewMode.set("today");
-    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    filters.set(createInboxFilters({ includeArchived: false }));
     await loadInbox();
     await loadSuggestedActions();
   }
