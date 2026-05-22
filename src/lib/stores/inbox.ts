@@ -96,7 +96,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
-  async function saveCapture(rawText: string): Promise<string | undefined> {
+  async function captureRawNote(rawText: string): Promise<string | undefined> {
     const trimmed = rawText.trim();
     if (!trimmed) {
       return undefined;
@@ -107,7 +107,6 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
     try {
       const saved = await api.saveCaptureNote(trimmed);
-      await showCapturedNote(saved.id);
       return saved.id;
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not save note."));
@@ -115,6 +114,14 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     } finally {
       savingCapture.set(false);
     }
+  }
+
+  async function saveCapture(rawText: string): Promise<string | undefined> {
+    const noteId = await captureRawNote(rawText);
+    if (noteId) {
+      await showCapturedNote(noteId);
+    }
+    return noteId;
   }
 
   async function retrySelectedParse(): Promise<void> {
@@ -202,6 +209,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       settings.set(await api.saveSettings(nextSettings));
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not save settings."));
+      throw unknownError;
     } finally {
       savingSettings.set(false);
     }
@@ -251,6 +259,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     savingSettings,
     busyActionId,
     error,
+    captureRawNote,
     loadInbox,
     selectNote,
     saveCapture,

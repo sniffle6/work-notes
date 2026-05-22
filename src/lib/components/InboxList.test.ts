@@ -27,6 +27,22 @@ describe("InboxList", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Actions/ }));
     expect(screen.getByText("2 suggested actions")).toBeTruthy();
   });
+
+  it("uses singular action labels for one suggested action", async () => {
+    render(InboxList, {
+      props: {
+        items: [{ ...notes()[0], actionItemCount: 1, suggestedActionItemCount: 1 }],
+        filters: filters(),
+        selectedId: "n1",
+      },
+    });
+
+    expect(screen.getByText("1 action")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Actions/ }));
+
+    expect(screen.getByText("1 suggested action")).toBeTruthy();
+  });
 });
 
 function filters(): InboxFilters {

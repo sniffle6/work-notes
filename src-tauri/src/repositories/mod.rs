@@ -224,4 +224,49 @@ mod tests {
         assert_eq!(note_actions.len(), 1);
         assert_eq!(note_actions[0].status, ActionStatus::Accepted);
     }
+
+    #[test]
+    fn inbox_items_count_total_and_suggested_action_items() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let actions = ActionItemRepository::new(db);
+
+        let note = notes
+            .create_raw_note("Review the invoice and send the update")
+            .unwrap();
+        let suggested = actions
+            .create_suggested(
+                note.id,
+                "Review the invoice",
+                Some("Alice"),
+                None,
+                Some(0.82),
+            )
+            .unwrap();
+        let accepted = actions
+            .create_suggested(note.id, "Send the update", Some("Bob"), None, Some(0.77))
+            .unwrap();
+        actions
+            .set_status(accepted.id, ActionStatus::Accepted)
+            .unwrap();
+
+        let items = notes
+            .list_inbox(crate::domain::InboxFilters::default())
+            .unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, note.id);
+        assert_eq!(items[0].action_item_count, 2);
+        assert_eq!(items[0].suggested_action_item_count, 1);
+
+        actions
+            .set_status(suggested.id, ActionStatus::Dismissed)
+            .unwrap();
+        let items = notes
+            .list_inbox(crate::domain::InboxFilters::default())
+            .unwrap();
+
+        assert_eq!(items[0].action_item_count, 2);
+        assert_eq!(items[0].suggested_action_item_count, 0);
+    }
 }

@@ -90,6 +90,7 @@ pub struct NoteListItemDto {
     pub tags: Vec<TagAssignmentDto>,
     pub tag_count: u32,
     pub action_item_count: u32,
+    pub suggested_action_item_count: u32,
 }
 
 impl NoteListItemDto {
@@ -109,6 +110,7 @@ impl NoteListItemDto {
             tags: tags.into_iter().map(Into::into).collect(),
             tag_count: item.tag_count,
             action_item_count: item.action_item_count,
+            suggested_action_item_count: item.suggested_action_item_count,
         }
     }
 }
@@ -448,6 +450,7 @@ mod tests {
             tags: Vec::new(),
             tag_count: 2,
             action_item_count: 3,
+            suggested_action_item_count: 1,
         };
         let serialized = serde_json::to_value(item).unwrap();
 
@@ -461,6 +464,7 @@ mod tests {
         assert!(serialized.get("tags").is_some());
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());
+        assert!(serialized.get("suggestedActionItemCount").is_some());
     }
 
     #[test]

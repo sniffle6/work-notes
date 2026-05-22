@@ -61,7 +61,7 @@ The app writes the parser prompt and raw note to stdin. The parser output is val
 
 Settings include:
 
-- `codexCommandPath`: defaults to `codex`.
+- `codexCommandPath`: defaults to `codex.cmd` on Windows.
 - `parserTimeoutSeconds`: defaults to `90`.
 - `parserMaxRetries`: defaults to `3`.
 

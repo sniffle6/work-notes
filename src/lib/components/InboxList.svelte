@@ -116,6 +116,14 @@
     }
     return [...byId.values()].sort((left, right) => `${left.kind}:${left.name}`.localeCompare(`${right.kind}:${right.name}`));
   }
+
+  function actionLabel(count: number): string {
+    return `${count} ${count === 1 ? "action" : "actions"}`;
+  }
+
+  function suggestedActionLabel(count: number): string {
+    return `${count} suggested ${count === 1 ? "action" : "actions"}`;
+  }
 </script>
 
 <section class="inbox-list" aria-label="Inbox notes">
@@ -201,7 +209,7 @@
               <span class="more-chip">+{item.tags.length - 3}</span>
             {/if}
             {#if item.suggestedActionItemCount > 0}
-              <span class="action-count">{item.suggestedActionItemCount} actions</span>
+              <span class="action-count">{actionLabel(item.suggestedActionItemCount)}</span>
             {/if}
           </div>
         </button>
@@ -221,7 +229,7 @@
           >
             <span class="check-box" aria-hidden="true"></span>
             <span>
-              <strong>{item.suggestedActionItemCount} suggested actions</strong>
+              <strong>{suggestedActionLabel(item.suggestedActionItemCount)}</strong>
               <small>from "{item.title}"</small>
             </span>
           </button>

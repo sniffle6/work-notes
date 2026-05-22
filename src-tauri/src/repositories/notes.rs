@@ -282,7 +282,12 @@ fn list_item_select() -> String {
         n.review_status,
         n.is_archived,
         (SELECT COUNT(*) FROM note_tags nt WHERE nt.note_id = n.id) AS tag_count,
-        (SELECT COUNT(*) FROM action_items ai WHERE ai.note_id = n.id) AS action_item_count
+        (SELECT COUNT(*) FROM action_items ai WHERE ai.note_id = n.id) AS action_item_count,
+        (
+            SELECT COUNT(*)
+            FROM action_items ai
+            WHERE ai.note_id = n.id AND ai.status = 'suggested'
+        ) AS suggested_action_item_count
      FROM notes n"
         .to_string()
 }
@@ -363,6 +368,7 @@ struct NoteListItemRecord {
     is_archived: i64,
     tag_count: i64,
     action_item_count: i64,
+    suggested_action_item_count: i64,
 }
 
 impl NoteListItemRecord {
@@ -380,6 +386,7 @@ impl NoteListItemRecord {
             is_archived: row.get(9)?,
             tag_count: row.get(10)?,
             action_item_count: row.get(11)?,
+            suggested_action_item_count: row.get(12)?,
         })
     }
 
@@ -397,6 +404,10 @@ impl NoteListItemRecord {
             is_archived: self.is_archived != 0,
             tag_count: u32_from_i64("tag_count", self.tag_count)?,
             action_item_count: u32_from_i64("action_item_count", self.action_item_count)?,
+            suggested_action_item_count: u32_from_i64(
+                "suggested_action_item_count",
+                self.suggested_action_item_count,
+            )?,
         })
     }
 }

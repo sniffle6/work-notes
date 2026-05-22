@@ -131,12 +131,18 @@
     quickCaptureError = null;
 
     try {
-      const noteId = await workNotes.saveCapture(event.detail);
+      const noteId =
+        currentWindowLabel === "quick-capture"
+          ? await workNotes.captureRawNote(event.detail)
+          : await workNotes.saveCapture(event.detail);
       if (noteId && currentWindowLabel === "quick-capture") {
         await emit(NOTE_CAPTURED_EVENT, { noteId } satisfies NoteCapturedPayload).catch(() => undefined);
       }
       quickDraft = "";
-      await closeQuickCapture();
+      quickCaptureOpen = false;
+      await hideQuickCapture().catch((unknownError) => {
+        quickCaptureError = unknownError instanceof Error ? unknownError.message : "Could not hide quick capture.";
+      });
     } catch (unknownError) {
       quickCaptureError = unknownError instanceof Error ? unknownError.message : "Could not save note.";
     }
@@ -154,8 +160,12 @@
   }
 
   async function saveSettings(event: CustomEvent<AppSettings>) {
-    await workNotes.persistSettings(event.detail);
-    settingsOpen = false;
+    try {
+      await workNotes.persistSettings(event.detail);
+      settingsOpen = false;
+    } catch {
+      settingsOpen = true;
+    }
   }
 
   async function deleteSelectedNote() {
@@ -228,6 +238,7 @@
       settings={$settings}
       saving={$savingSettings}
       open={settingsOpen}
+      error={settingsOpen ? $error : null}
       on:save={(event) => void saveSettings(event)}
       on:close={() => (settingsOpen = false)}
     />

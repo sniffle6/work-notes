@@ -23,6 +23,19 @@ describe("SettingsView", () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(save.mock.calls[0][0].detail.selectedTheme).toBe("memphis");
   });
+
+  it("shows a settings save error without closing the modal", () => {
+    render(SettingsView, {
+      props: {
+        settings: settings(),
+        open: true,
+        error: "bad hotkey",
+      },
+    });
+
+    expect(screen.getByText("bad hotkey")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeTruthy();
+  });
 });
 
 function settings(): AppSettings {

@@ -7,9 +7,10 @@
     settings: AppSettings | null;
     saving?: boolean;
     open?: boolean;
+    error?: string | null;
   };
 
-  let { settings, saving = false, open = true }: Props = $props();
+  let { settings, saving = false, open = true, error = null }: Props = $props();
   let hotkey = $state("");
   let parserTimeoutSeconds = $state(90);
   let parserMaxRetries = $state(3);
@@ -68,6 +69,10 @@
       </aside>
 
       <div class="settings-content">
+        {#if error}
+          <p class="settings-error">{error}</p>
+        {/if}
+
         <section class="settings-section">
           <div class="section-head">
             <h3>Appearance</h3>
@@ -356,6 +361,17 @@
     min-width: 0;
     overflow-y: auto;
     padding: 24px 32px 28px;
+  }
+
+  .settings-error {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-status-error);
+    border-radius: 7px;
+    color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 11%, var(--color-surface-1));
+    font-size: 12px;
+    line-height: 1.35;
   }
 
   .settings-section + .settings-section {

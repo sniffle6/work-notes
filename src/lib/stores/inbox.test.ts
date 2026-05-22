@@ -166,18 +166,37 @@ describe("createWorkNotesStore", () => {
     expect(get(store.selectedNote)).toBeNull();
     expect(get(store.inbox)).toEqual([]);
   });
+
+  it("can save quick-capture text without refreshing the inbox", async () => {
+    const api = testApi({
+      listInbox: vi.fn().mockRejectedValue(new Error("refresh failed")),
+    });
+    const store = createWorkNotesStore(api) as ReturnType<typeof createWorkNotesStore> & {
+      captureRawNote?: (rawText: string) => Promise<string | undefined>;
+    };
+
+    expect(store.captureRawNote).toBeTypeOf("function");
+    await expect(store.captureRawNote?.("raw quick note")).resolves.toBe("note-1");
+
+    expect(api.saveCaptureNote).toHaveBeenCalledWith("raw quick note");
+    expect(api.listInbox).not.toHaveBeenCalled();
+    expect(api.getNote).not.toHaveBeenCalled();
+  });
+
+  it("rejects settings persistence failures so callers keep the modal open", async () => {
+    const api = testApi({
+      saveSettings: vi.fn().mockRejectedValue(new Error("bad hotkey")),
+    });
+    const store = createWorkNotesStore(api);
+
+    await expect(store.persistSettings(settings())).rejects.toThrow("bad hotkey");
+    expect(get(store.error)).toBe("bad hotkey");
+  });
 });
 
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
 
 function testApi(overrides: Partial<TestApi> = {}): TestApi {
-  const settings: AppSettings = {
-    hotkey: "Ctrl+Shift+Space",
-    parserTimeoutSeconds: 30,
-    parserMaxRetries: 3,
-    codexCommandPath: "codex",
-    selectedTheme: "dark-compact",
-  };
   const detail: NoteDetail = { ...note(), actionItems: [] };
 
   return {
@@ -191,8 +210,18 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
-    getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings),
-    saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings),
+    getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
+    saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
     ...overrides,
+  };
+}
+
+function settings(): AppSettings {
+  return {
+    hotkey: "Ctrl+Shift+Space",
+    parserTimeoutSeconds: 30,
+    parserMaxRetries: 3,
+    codexCommandPath: "codex",
+    selectedTheme: "dark-compact",
   };
 }

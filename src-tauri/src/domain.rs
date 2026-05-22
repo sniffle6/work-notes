@@ -235,6 +235,7 @@ pub struct NoteListItem {
     pub is_archived: bool,
     pub tag_count: u32,
     pub action_item_count: u32,
+    pub suggested_action_item_count: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
