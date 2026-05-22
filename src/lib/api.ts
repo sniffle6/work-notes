@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   ActionItem,
+  ActionReviewItem,
   AppSettings,
   InboxFilters,
   NoteDetail,
@@ -152,6 +153,19 @@ export async function dismissActionItem(actionItemId: string): Promise<void> {
   await invokeCommand<void>("dismiss_action_item", { actionId: actionItemId });
 }
 
+export async function completeActionItem(actionItemId: string): Promise<void> {
+  await invokeCommand<void>("complete_action_item", { actionId: actionItemId });
+}
+
+export async function reopenActionItem(actionItemId: string): Promise<void> {
+  await invokeCommand<void>("reopen_action_item", { actionId: actionItemId });
+}
+
+export async function listSuggestedActions(limit = 100): Promise<ActionReviewItem[]> {
+  const actions = await invokeCommand<unknown[]>("list_suggested_actions", { limit });
+  return actions.map(normalizeActionReviewItem);
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const settings = await invokeCommand<unknown>("get_settings");
   return normalizeSettings(settings);
@@ -175,6 +189,9 @@ export const api = {
   deleteNote,
   acceptActionItem,
   dismissActionItem,
+  completeActionItem,
+  reopenActionItem,
+  listSuggestedActions,
   getSettings,
   saveSettings,
   hideQuickCapture,
@@ -282,6 +299,22 @@ function normalizeActionItem(value: unknown): ActionItem {
   };
 }
 
+function normalizeActionReviewItem(value: unknown): ActionReviewItem {
+  const record = asRecord(value);
+  const noteTitle = getString(record, "noteTitle", "note_title") ?? "Untitled note";
+
+  return {
+    id: getString(record, "id") ?? crypto.randomUUID(),
+    noteId: getString(record, "noteId", "note_id") ?? "",
+    noteTitle,
+    text: getString(record, "text") ?? "",
+    owner: getNullableString(record, "owner"),
+    dueDate: getNullableString(record, "dueDate", "due_date"),
+    confidence: getNumber(record, "confidence"),
+    createdAt: getString(record, "createdAt", "created_at") ?? fallbackNow,
+  };
+}
+
 function normalizeSettings(value: unknown): AppSettings {
   const record = asRecord(value);
 
@@ -365,12 +398,48 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
     case "dismiss_action_item": {
       const actionItemId = String(args?.actionId ?? "");
       const status = command === "accept_action_item" ? "accepted" : "dismissed";
-      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
-      if (action) {
+      const note = fallbackNotes.find((note) => note.actionItems.some((item) => item.id === actionItemId));
+      const action = note?.actionItems.find((item) => item.id === actionItemId);
+      if (note && action && action.status === "suggested") {
         action.status = status;
+        note.suggestedActionItemCount = note.actionItems.filter((item) => item.status === "suggested").length;
+        if (note.suggestedActionItemCount === 0) {
+          note.reviewStatus = "reviewed";
+        }
+        note.updatedAt = new Date().toISOString();
       }
       return undefined as T;
     }
+    case "complete_action_item": {
+      const actionItemId = String(args?.actionId ?? "");
+      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
+      if (action && action.status === "accepted") {
+        action.status = "done";
+      }
+      return undefined as T;
+    }
+    case "reopen_action_item": {
+      const actionItemId = String(args?.actionId ?? "");
+      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
+      if (action && action.status === "done") {
+        action.status = "accepted";
+      }
+      return undefined as T;
+    }
+    case "list_suggested_actions":
+      return fallbackNotes
+        .flatMap((note) =>
+          note.actionItems
+            .filter((action) => action.status === "suggested")
+            .map((action) =>
+              normalizeActionReviewItem({
+                ...action,
+                noteTitle: note.title,
+                createdAt: note.createdAt,
+              }),
+            ),
+        )
+        .slice(0, Number(args?.limit ?? 100)) as T;
     case "get_settings":
       return normalizeSettings(fallbackSettings) as T;
     case "save_settings":

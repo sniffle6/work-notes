@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
-import type { AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
+import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
 import { createWorkNotesStore } from "./inbox";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
@@ -192,6 +192,48 @@ describe("createWorkNotesStore", () => {
     await expect(store.persistSettings(settings())).rejects.toThrow("bad hotkey");
     expect(get(store.error)).toBe("bad hotkey");
   });
+
+  it("loads suggested actions into review queue state", async () => {
+    const api = testApi({
+      listSuggestedActions: vi.fn().mockResolvedValue([reviewItem({ id: "action-queued" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadSuggestedActions();
+
+    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+    expect(get(store.suggestedActions).map((item) => item.id)).toEqual(["action-queued"]);
+    expect(get(store.loadingSuggestedActions)).toBe(false);
+  });
+
+  it("refreshes selected note, inbox, and suggested queue after accepting an action", async () => {
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([note({ suggestedActionItemCount: 0 })]),
+      listSuggestedActions: vi.fn().mockResolvedValue([]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.acceptSuggestedAction("action-1");
+
+    expect(api.acceptActionItem).toHaveBeenCalledWith("action-1");
+    expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+    expect(api.listInbox).toHaveBeenCalled();
+    expect(api.listSuggestedActions).toHaveBeenCalled();
+  });
+
+  it("completes and reopens actions through the workflow store", async () => {
+    const api = testApi();
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.completeAction("action-1");
+    await store.reopenAction("action-1");
+
+    expect(api.completeActionItem).toHaveBeenCalledWith("action-1");
+    expect(api.reopenActionItem).toHaveBeenCalledWith("action-1");
+    expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+  });
 });
 
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
@@ -210,8 +252,25 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    completeActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    reopenActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    listSuggestedActions: vi.fn<() => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
     saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
+    ...overrides,
+  };
+}
+
+function reviewItem(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
+  return {
+    id: "action-1",
+    noteId: "note-1",
+    noteTitle: "Kiosk 7 telemetry IDs",
+    text: "Bring serial list into the Tuesday sync.",
+    owner: "Maya",
+    dueDate: null,
+    confidence: 0.82,
+    createdAt: "2026-05-20T13:42:00.000Z",
     ...overrides,
   };
 }

@@ -31,6 +31,17 @@ export type ActionItem = {
   noteTitle?: string;
 };
 
+export type ActionReviewItem = {
+  id: string;
+  noteId: string;
+  noteTitle: string;
+  text: string;
+  owner?: string | null;
+  dueDate?: string | null;
+  confidence?: number | null;
+  createdAt: string;
+};
+
 export type NoteListItem = {
   id: string;
   title: string;

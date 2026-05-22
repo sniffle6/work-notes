@@ -2,17 +2,20 @@ import { derived, get, writable } from "svelte/store";
 
 import {
   acceptActionItem,
+  completeActionItem,
   dismissActionItem,
   getNote,
   getSettings,
   listInbox,
+  listSuggestedActions,
+  reopenActionItem,
   retryParse,
   retryParseWithFeedback,
   deleteNote,
   saveCaptureNote,
   saveSettings,
 } from "$lib/api";
-import type { AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
+import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
@@ -25,6 +28,9 @@ type WorkNotesApi = {
   deleteNote: typeof deleteNote;
   acceptActionItem: typeof acceptActionItem;
   dismissActionItem: typeof dismissActionItem;
+  completeActionItem: typeof completeActionItem;
+  reopenActionItem: typeof reopenActionItem;
+  listSuggestedActions: typeof listSuggestedActions;
   getSettings: typeof getSettings;
   saveSettings: typeof saveSettings;
 };
@@ -38,6 +44,9 @@ const defaultApi: WorkNotesApi = {
   deleteNote,
   acceptActionItem,
   dismissActionItem,
+  completeActionItem,
+  reopenActionItem,
+  listSuggestedActions,
   getSettings,
   saveSettings,
 };
@@ -46,9 +55,11 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const inbox = writable<NoteListItem[]>([]);
   const filters = writable<InboxFilters>(createInboxFilters());
   const selectedNote = writable<NoteDetail | null>(null);
+  const suggestedActions = writable<ActionReviewItem[]>([]);
   const settings = writable<AppSettings | null>(null);
   const loadingInbox = writable(false);
   const loadingNote = writable(false);
+  const loadingSuggestedActions = writable(false);
   const savingCapture = writable(false);
   const savingSettings = writable(false);
   const busyActionId = writable<string | null>(null);
@@ -113,6 +124,19 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       throw unknownError;
     } finally {
       savingCapture.set(false);
+    }
+  }
+
+  async function loadSuggestedActions(): Promise<void> {
+    loadingSuggestedActions.set(true);
+    error.set(null);
+
+    try {
+      suggestedActions.set(await api.listSuggestedActions());
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not load suggested actions."));
+    } finally {
+      loadingSuggestedActions.set(false);
     }
   }
 
@@ -193,6 +217,14 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await updateAction(actionItemId, api.dismissActionItem);
   }
 
+  async function completeAction(actionItemId: string): Promise<void> {
+    await updateAction(actionItemId, api.completeActionItem, false);
+  }
+
+  async function reopenAction(actionItemId: string): Promise<void> {
+    await updateAction(actionItemId, api.reopenActionItem, false);
+  }
+
   async function loadSettings(): Promise<void> {
     try {
       settings.set(await api.getSettings());
@@ -228,7 +260,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function updateAction(
     actionItemId: string,
-    update: WorkNotesApi["acceptActionItem"] | WorkNotesApi["dismissActionItem"],
+    update:
+      | WorkNotesApi["acceptActionItem"]
+      | WorkNotesApi["dismissActionItem"]
+      | WorkNotesApi["completeActionItem"]
+      | WorkNotesApi["reopenActionItem"],
+    refreshSuggestedActions = true,
   ): Promise<void> {
     busyActionId.set(actionItemId);
     error.set(null);
@@ -240,6 +277,9 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
         selectedNote.set(await api.getNote(note.id));
       }
       await loadInbox();
+      if (refreshSuggestedActions) {
+        await loadSuggestedActions();
+      }
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not update action."));
     } finally {
@@ -252,15 +292,18 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     filters,
     filteredInbox,
     selectedNote,
+    suggestedActions,
     settings,
     loadingInbox,
     loadingNote,
+    loadingSuggestedActions,
     savingCapture,
     savingSettings,
     busyActionId,
     error,
     captureRawNote,
     loadInbox,
+    loadSuggestedActions,
     selectNote,
     saveCapture,
     showCapturedNote,
@@ -269,6 +312,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     deleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,
+    completeAction,
+    reopenAction,
     loadSettings,
     persistSettings,
     updateFilters,
