@@ -109,11 +109,17 @@
         <span>Tags</span>
         <kbd>4</kbd>
       </a>
-      <a href="/">
+      <button
+        class:active={activeView === "people"}
+        type="button"
+        aria-current={activeView === "people" ? "page" : undefined}
+        aria-label="People"
+        onclick={() => navigate("people")}
+      >
         <span aria-hidden="true">@</span>
         <span>People</span>
-        <kbd>5</kbd>
-      </a>
+        <kbd aria-hidden="true">5</kbd>
+      </button>
       <button
         class:active={activeView === "archive"}
         type="button"

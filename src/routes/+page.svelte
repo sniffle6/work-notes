@@ -8,6 +8,7 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
+  import PeopleView from "$lib/components/PeopleView.svelte";
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
@@ -99,6 +100,11 @@
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
         if (get(viewMode) === "today") {
           void workNotes.showToday();
+          return;
+        }
+
+        if (get(viewMode) === "people") {
+          void workNotes.showPeople();
           return;
         }
 
@@ -208,10 +214,20 @@
       return;
     }
 
+    if (event.detail === "people") {
+      await workNotes.showPeople();
+      return;
+    }
+
     await workNotes.showInbox();
   }
 
   async function openNoteFromToday(noteId: string) {
+    await workNotes.showInbox();
+    await workNotes.selectNote(noteId);
+  }
+
+  async function openNoteFromPeople(noteId: string) {
     await workNotes.showInbox();
     await workNotes.selectNote(noteId);
   }
@@ -285,6 +301,14 @@
         busyActionId={$busyActionId}
         on:openNote={(event) => void openNoteFromToday(event.detail)}
         on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+      />
+    {:else if $viewMode === "people"}
+      <PeopleView
+        notes={$inbox}
+        actions={$suggestedActions}
+        loadingNotes={$loadingInbox}
+        loadingActions={$loadingSuggestedActions}
+        on:openNote={(event) => void openNoteFromPeople(event.detail)}
       />
     {:else}
       <div class="workspace-grid">

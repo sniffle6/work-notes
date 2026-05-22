@@ -73,4 +73,25 @@ describe("AppShell", () => {
     expect(actions.getAttribute("aria-current")).toBe("page");
     expect(navigate.mock.calls[0][0].detail).toBe("actions");
   });
+
+  it("marks people active and emits people navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "people",
+      },
+      events: { navigate },
+    });
+
+    const people = screen.getByRole("button", { name: "People" });
+    await fireEvent.click(people);
+
+    expect(people.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("people");
+  });
 });

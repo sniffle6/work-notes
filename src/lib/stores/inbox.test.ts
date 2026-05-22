@@ -213,6 +213,34 @@ describe("createWorkNotesStore", () => {
     expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
   });
 
+  it("enters people view with non-archived notes, reset filters, and suggested actions", async () => {
+    const active = note({ id: "active", isArchived: false });
+    const archived = note({ id: "archived", isArchived: true });
+    const personAction = reviewItem({ id: "person-action", noteId: "active", owner: "Maria" });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([active, archived]),
+      listSuggestedActions: vi.fn().mockResolvedValue([personAction]),
+      getNote: vi.fn().mockResolvedValue({ ...active, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.updateFilters({
+      search: "stale filter",
+      tagIds: ["tag-stale"],
+      parseStatuses: ["failed"],
+      reviewStatuses: ["reviewed"],
+    });
+    await store.showPeople();
+
+    expect(get(store.viewMode)).toBe("people");
+    expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
+    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["active"]);
+    expect(get(store.suggestedActions)).toEqual([personAction]);
+    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+  });
+
   it("restores the selected archived note and returns to inbox mode", async () => {
     const archived = note({ id: "archived", isArchived: true });
     const restored = note({ id: "archived", isArchived: false });
