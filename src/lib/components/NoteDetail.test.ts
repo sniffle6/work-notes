@@ -79,6 +79,22 @@ describe("NoteDetail", () => {
     expect(acceptAction.mock.calls[0][0].detail).toBe("action-1");
     expect(dismissAction.mock.calls[0][0].detail).toBe("action-1");
   });
+
+  it("dispatches complete and reopen events for accepted and done actions", async () => {
+    const completeAction = vi.fn();
+    const reopenAction = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: noteDetailWithAcceptedAndDoneActions() },
+      events: { completeAction, reopenAction },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Complete action: Send the update" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Reopen action: Verify the fix" }));
+
+    expect(completeAction.mock.calls[0][0].detail).toBe("action-accepted");
+    expect(reopenAction.mock.calls[0][0].detail).toBe("action-done");
+  });
 });
 
 function noteDetail(): NoteDetailType {
@@ -117,6 +133,38 @@ function noteDetailWithAction(): NoteDetailType {
         owner: "me",
         dueDate: null,
         status: "suggested",
+        source: "parser",
+        noteTitle: "Robert local AI",
+      },
+    ],
+  };
+}
+
+function noteDetailWithAcceptedAndDoneActions(): NoteDetailType {
+  return {
+    ...noteDetail(),
+    parseStatus: "parsed",
+    parseError: null,
+    actionItemCount: 2,
+    suggestedActionItemCount: 0,
+    actionItems: [
+      {
+        id: "action-accepted",
+        noteId: "note-1",
+        text: "Send the update",
+        owner: "me",
+        dueDate: null,
+        status: "accepted",
+        source: "parser",
+        noteTitle: "Robert local AI",
+      },
+      {
+        id: "action-done",
+        noteId: "note-1",
+        text: "Verify the fix",
+        owner: "me",
+        dueDate: null,
+        status: "done",
         source: "parser",
         noteTitle: "Robert local AI",
       },

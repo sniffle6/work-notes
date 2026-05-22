@@ -18,9 +18,8 @@
   let reparseFeedbackInput = $state<HTMLTextAreaElement | null>(null);
 
   const suggestedActions = $derived(note?.actionItems.filter((action) => action.status === "suggested") ?? []);
-  const completedActions = $derived(
-    note?.actionItems.filter((action) => action.status === "accepted" || action.status === "done") ?? [],
-  );
+  const acceptedActions = $derived(note?.actionItems.filter((action) => action.status === "accepted") ?? []);
+  const doneActions = $derived(note?.actionItems.filter((action) => action.status === "done") ?? []);
 
   const dispatch = createEventDispatcher<{
     retryParse: void;
@@ -28,6 +27,8 @@
     deleteNote: void;
     acceptAction: string;
     dismissAction: string;
+    completeAction: string;
+    reopenAction: string;
   }>();
 
   $effect(() => {
@@ -219,7 +220,7 @@
           <small>{suggestedActions.length} suggested</small>
         </div>
         <div class="actions">
-          {#if suggestedActions.length === 0 && completedActions.length === 0}
+          {#if suggestedActions.length === 0 && acceptedActions.length === 0 && doneActions.length === 0}
             <p class="muted">No actions</p>
           {/if}
 
@@ -252,16 +253,50 @@
             </article>
           {/each}
 
-          {#if completedActions.length > 0}
+          {#if acceptedActions.length > 0}
+            <div class="section-head muted-head">
+              <span>Accepted</span>
+            </div>
+            {#each acceptedActions as action}
+              <article class="action-row">
+                <button
+                  class="action-check"
+                  type="button"
+                  aria-label={`Complete action: ${action.text}`}
+                  disabled={loading || busyActionId === action.id}
+                  onclick={() => dispatch("completeAction", action.id)}
+                >
+                  OK
+                </button>
+                <div>
+                  <p>{action.text}</p>
+                  {#if actionMeta(action)}
+                    <small>{actionMeta(action)}</small>
+                  {/if}
+                </div>
+              </article>
+            {/each}
+          {/if}
+
+          {#if doneActions.length > 0}
             <div class="section-head muted-head">
               <span>Done</span>
             </div>
-            {#each completedActions as action}
+            {#each doneActions as action}
               <article class="action-row done">
                 <span class="action-check checked">OK</span>
                 <div>
                   <p>{action.text}</p>
                 </div>
+                <button
+                  class="action-dismiss"
+                  type="button"
+                  aria-label={`Reopen action: ${action.text}`}
+                  disabled={loading || busyActionId === action.id}
+                  onclick={() => dispatch("reopenAction", action.id)}
+                >
+                  x
+                </button>
               </article>
             {/each}
           {/if}

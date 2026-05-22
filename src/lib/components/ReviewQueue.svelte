@@ -1,23 +1,30 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import type { ActionItem } from "$lib/types";
+  import type { ActionReviewItem } from "$lib/types";
 
   import StatusBadge from "./StatusBadge.svelte";
 
   type Props = {
-    actions: ActionItem[];
+    actions: ActionReviewItem[];
     busyActionId?: string | null;
+    loading?: boolean;
   };
 
-  let { actions, busyActionId = null }: Props = $props();
+  let { actions, busyActionId = null, loading = false }: Props = $props();
 
   const dispatch = createEventDispatcher<{
+    select: string;
     accept: string;
     dismiss: string;
   }>();
 
-  function actionMeta(action: ActionItem): string {
-    return [action.owner, action.dueDate].filter(Boolean).join(" · ") || "Needs confirmation";
+  function actionMetaParts(action: ActionReviewItem): string[] {
+    const parts = [action.owner, action.dueDate, confidenceLabel(action.confidence)].filter(Boolean) as string[];
+    return parts.length > 0 ? parts : ["Needs confirmation"];
+  }
+
+  function confidenceLabel(confidence: number | null | undefined): string | null {
+    return typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : null;
   }
 </script>
 
@@ -38,23 +45,34 @@
     {#each actions as action}
       <article class="action-card">
         <div class="action-copy">
-          {#if action.noteTitle}
-            <span>{action.noteTitle}</span>
-          {/if}
+          <button
+            class="note-link"
+            type="button"
+            aria-label={`Open note: ${action.noteTitle}`}
+            onclick={() => dispatch("select", action.noteId)}
+          >
+            {action.noteTitle}
+          </button>
           <p>{action.text}</p>
-          <small>{actionMeta(action)}</small>
+          <small>
+            {#each actionMetaParts(action) as part, index}
+              <span>{part}</span>{#if index < actionMetaParts(action).length - 1} · {/if}
+            {/each}
+          </small>
         </div>
         <div class="action-buttons">
           <button
             type="button"
-            disabled={busyActionId === action.id}
+            aria-label={`Accept action: ${action.text}`}
+            disabled={loading || busyActionId === action.id}
             onclick={() => dispatch("accept", action.id)}
           >
             Accept
           </button>
           <button
             type="button"
-            disabled={busyActionId === action.id}
+            aria-label={`Dismiss action: ${action.text}`}
+            disabled={loading || busyActionId === action.id}
             onclick={() => dispatch("dismiss", action.id)}
           >
             Dismiss
@@ -130,7 +148,6 @@
     min-width: 0;
   }
 
-  .action-copy span,
   .action-copy small,
   .empty-state {
     color: var(--color-text-muted);
@@ -138,10 +155,29 @@
     line-height: 1.2;
   }
 
-  .action-copy span {
+  .note-link {
+    width: fit-content;
+    border: 0;
+    padding: 0;
     color: var(--color-accent-primary);
+    background: transparent;
+    font: inherit;
+    font-size: 11px;
     font-weight: 800;
+    text-align: left;
     text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .action-copy small span {
+    color: inherit;
+    font: inherit;
+  }
+
+  .note-link:hover,
+  .note-link:focus-visible {
+    text-decoration: underline;
+    outline: none;
   }
 
   .action-copy p {

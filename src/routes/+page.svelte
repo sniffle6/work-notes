@@ -7,6 +7,7 @@
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
+  import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
   import { createWorkNotesStore } from "$lib/stores/inbox";
@@ -20,9 +21,11 @@
     filteredInbox,
     filters,
     selectedNote,
+    suggestedActions,
     settings,
     loadingInbox,
     loadingNote,
+    loadingSuggestedActions,
     savingCapture,
     savingSettings,
     busyActionId,
@@ -61,6 +64,7 @@
   onMount(() => {
     if (!isTauriRuntime()) {
       void workNotes.loadInbox();
+      void workNotes.loadSuggestedActions();
       void workNotes.loadSettings();
       return;
     }
@@ -69,6 +73,7 @@
     void workNotes.loadSettings();
     if (currentWindowLabel !== "quick-capture") {
       void workNotes.loadInbox();
+      void workNotes.loadSuggestedActions();
     }
     const unlisteners: Array<() => void> = [];
     let disposed = false;
@@ -90,8 +95,10 @@
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
         if (event.payload.noteId) {
           void workNotes.showCapturedNote(event.payload.noteId);
+          void workNotes.loadSuggestedActions();
         } else {
           void workNotes.loadInbox();
+          void workNotes.loadSuggestedActions();
         }
       }).then(registerUnlisten);
     }
@@ -222,16 +229,31 @@
         on:filter={(event) => void workNotes.updateFilters(event.detail)}
       />
 
-      <NoteDetail
-        note={$selectedNote}
-        loading={$loadingNote}
-        busyActionId={$busyActionId}
-        on:retryParse={() => void workNotes.retrySelectedParse()}
-        on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
-        on:deleteNote={() => void deleteSelectedNote()}
-        on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
-        on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
-      />
+      <div class="detail-stack">
+        {#if $suggestedActions.length > 0 || $loadingSuggestedActions}
+          <ReviewQueue
+            actions={$suggestedActions}
+            busyActionId={$busyActionId}
+            loading={$loadingSuggestedActions}
+            on:select={(event) => void workNotes.selectNote(event.detail)}
+            on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+            on:dismiss={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+          />
+        {/if}
+
+        <NoteDetail
+          note={$selectedNote}
+          loading={$loadingNote}
+          busyActionId={$busyActionId}
+          on:retryParse={() => void workNotes.retrySelectedParse()}
+          on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
+          on:deleteNote={() => void deleteSelectedNote()}
+          on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+          on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
+          on:completeAction={(event) => void workNotes.completeAction(event.detail)}
+          on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
+        />
+      </div>
     </div>
 
     <SettingsView
@@ -279,6 +301,22 @@
     grid-template-columns: 348px minmax(0, 1fr);
     min-width: 0;
     min-height: 100vh;
+  }
+
+  .detail-stack {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  :global(.detail-stack .review-queue) {
+    max-height: 240px;
+    border-top: 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
   }
 
   .quick-window {
