@@ -104,9 +104,72 @@ describe("people helpers", () => {
     expect(maria).toMatchObject({
       name: "Maria",
       noteCount: 2,
-      actionCount: 1,
+      actionCount: 2,
       lastInteractionAt: "2026-05-22T10:30:00.000Z",
     });
+  });
+
+  it("counts me-owned actions from tagged notes without duplicate tag inflation", () => {
+    const people = buildPeople(
+      [
+        note({
+          id: "kavi-note",
+          title: "Kavi platform note",
+          createdAt: "2026-05-19T12:00:00.000Z",
+          tags: [
+            { id: "tag-kavi-1", name: "Kavi", kind: "person", source: "ai", confidence: 0.9 },
+            { id: "tag-kavi-2", name: "kavi", kind: "person", source: "ai", confidence: 0.8 },
+          ],
+        }),
+      ],
+      [
+        action({
+          id: "you-owe-kavi",
+          noteId: "kavi-note",
+          owner: "myself",
+          text: "Send Kavi the rollout summary.",
+        }),
+      ],
+    );
+
+    expect(people.find((person) => person.key === "kavi")).toMatchObject({
+      noteCount: 1,
+      actionCount: 1,
+    });
+  });
+
+  it("uses source note or action creation time for owner-only people", () => {
+    const people = buildPeople(
+      [
+        note({
+          id: "priya-source",
+          title: "Priya source note",
+          createdAt: "2026-05-18T08:00:00.000Z",
+          tags: [],
+        }),
+      ],
+      [
+        action({
+          id: "priya-action",
+          noteId: "priya-source",
+          owner: "Priya",
+          createdAt: "2026-05-20T10:00:00.000Z",
+        }),
+        action({
+          id: "devon-action",
+          noteId: "missing-note",
+          owner: "Devon",
+          createdAt: "2026-05-17T11:00:00.000Z",
+        }),
+      ],
+    );
+
+    expect(people.find((person) => person.key === "priya")?.lastInteractionAt).toBe(
+      "2026-05-18T08:00:00.000Z",
+    );
+    expect(people.find((person) => person.key === "devon")?.lastInteractionAt).toBe(
+      "2026-05-17T11:00:00.000Z",
+    );
   });
 
   it("builds selected person detail with direction-aware actions and recent notes", () => {
@@ -128,7 +191,8 @@ describe("people helpers", () => {
     expect(matchesPersonSearch(maria, "mari")).toBe(true);
     expect(matchesPersonSearch(maria, "missing")).toBe(false);
     expect(formatPersonWhen(null)).toBe("never");
-    expect(formatPersonWhen("not-a-date")).toBe("never");
+    expect(formatPersonWhen("")).toBe("never");
+    expect(formatPersonWhen("not-a-date")).toBe("not-a-date");
     expect(formatPersonWhen("2026-05-22T10:30:00.000Z")).not.toBe("never");
     expect(avatarHue("Maria")).toBe(avatarHue("Maria"));
     expect(avatarHue("Maria")).toBeGreaterThanOrEqual(0);

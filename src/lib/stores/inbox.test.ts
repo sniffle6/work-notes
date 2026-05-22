@@ -235,10 +235,28 @@ describe("createWorkNotesStore", () => {
 
     expect(get(store.viewMode)).toBe("people");
     expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
-    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
+    expect(api.listInbox).toHaveBeenLastCalledWith(
+      createInboxFilters({ includeArchived: false, limit: 1000 }),
+    );
     expect(get(store.inbox).map((item) => item.id)).toEqual(["active"]);
     expect(get(store.suggestedActions)).toEqual([personAction]);
-    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+    expect(api.listSuggestedActions).toHaveBeenCalledWith(500);
+  });
+
+  it("does not keep the people inbox limit when returning to normal inbox", async () => {
+    const active = note({ id: "active", isArchived: false });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([active]),
+      getNote: vi.fn().mockResolvedValue({ ...active, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showPeople();
+    await store.showInbox();
+
+    expect(get(store.viewMode)).toBe("inbox");
+    expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
+    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
   });
 
   it("restores the selected archived note and returns to inbox mode", async () => {
@@ -454,7 +472,7 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     completeActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     reopenActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
-    listSuggestedActions: vi.fn<() => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
+    listSuggestedActions: vi.fn<(limit?: number) => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
     saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
     ...overrides,

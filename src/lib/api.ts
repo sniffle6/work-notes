@@ -231,6 +231,7 @@ function toBackendFilters(filters: InboxFilters): UnknownRecord {
     tagIds: filters.tagIds,
     query: filters.search.trim() || null,
     includeArchived: Boolean(filters.includeArchived),
+    limit: filters.limit ?? null,
   };
 }
 
@@ -389,6 +390,7 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
     case "list_inbox":
       return fallbackNotes
         .filter((note) => Boolean((args?.filters as UnknownRecord | undefined)?.includeArchived) || !note.isArchived)
+        .slice(0, Number((args?.filters as UnknownRecord | undefined)?.limit ?? 200))
         .map(normalizeNoteListItem) as T;
     case "get_note": {
       const note = fallbackNotes.find((item) => item.id === args?.id) ?? fallbackNotes[0];

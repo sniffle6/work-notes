@@ -91,6 +91,8 @@ describe("PeopleView", () => {
 
     expect(screen.queryByRole("button", { name: /Select Maria/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Select Jin/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Jin" })).toBeTruthy();
+    expect(screen.getByText("Jin owes you")).toBeTruthy();
   });
 
   it("updates the detail panel when a person is selected", async () => {

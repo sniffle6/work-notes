@@ -26,6 +26,7 @@ export function buildPeople(
   actions: ActionReviewItem[],
 ): PersonSummary[] {
   const people = new Map<string, MutablePerson>();
+  const sourceNotes = new Map(notes.map((note) => [note.id, note]));
 
   for (const note of notes) {
     const notePersonKeys = new Set<string>();
@@ -57,11 +58,25 @@ export function buildPeople(
 
   for (const action of actions) {
     const key = personKey(action.owner);
-    if (!key || key === "me") {
+    if (!key) {
       continue;
     }
 
-    ensurePerson(people, action.owner ?? key, key).actionCount += 1;
+    const sourceNote = sourceNotes.get(action.noteId);
+
+    if (isSelfOwner(key)) {
+      for (const taggedPersonKey of notePersonKeys(sourceNote)) {
+        ensurePerson(people, displayNameForPerson(sourceNote, taggedPersonKey), taggedPersonKey).actionCount += 1;
+      }
+      continue;
+    }
+
+    const person = ensurePerson(people, action.owner ?? key, key);
+    person.actionCount += 1;
+    person.lastInteractionAt = newerInteraction(
+      person.lastInteractionAt,
+      sourceNote?.createdAt ?? action.createdAt,
+    );
   }
 
   return Array.from(people.values()).sort(comparePeople);
@@ -88,7 +103,7 @@ export function buildPersonDetail(
     .sort((left, right) => sortableTime(right.createdAt) - sortableTime(left.createdAt));
 
   const youOwe = actions
-    .filter((action) => personKey(action.owner) === "me" && noteHasPerson(sourceNotes.get(action.noteId), key))
+    .filter((action) => isSelfOwner(personKey(action.owner)) && noteHasPerson(sourceNotes.get(action.noteId), key))
     .map((action) => attachSourceNote(action, sourceNotes))
     .sort(compareActions);
 
@@ -115,9 +130,13 @@ export function matchesPersonSearch(person: PersonSummary, query: string): boole
 }
 
 export function formatPersonWhen(value: string | null): string {
+  if (!value || !value.trim()) {
+    return "never";
+  }
+
   const date = parseDate(value);
   if (!date) {
-    return "never";
+    return value;
   }
 
   const days = dayDifference(date, new Date());
@@ -174,6 +193,29 @@ function personKeyFromInput(value: string): string {
 
 function noteHasPerson(note: NoteListItem | undefined, key: string): boolean {
   return note?.tags.some((tag) => tag.kind === "person" && personKey(tag.name) === key) ?? false;
+}
+
+function notePersonKeys(note: NoteListItem | undefined): Set<string> {
+  const keys = new Set<string>();
+
+  for (const tag of note?.tags ?? []) {
+    if (tag.kind === "person") {
+      const key = personKey(tag.name);
+      if (key) {
+        keys.add(key);
+      }
+    }
+  }
+
+  return keys;
+}
+
+function displayNameForPerson(note: NoteListItem | undefined, key: string): string {
+  return note?.tags.find((tag) => tag.kind === "person" && personKey(tag.name) === key)?.name ?? key;
+}
+
+function isSelfOwner(key: string): boolean {
+  return key === "me" || key === "myself";
 }
 
 function attachSourceNote(

@@ -70,6 +70,7 @@ export type InboxFilters = {
   parseStatuses: ParseStatus[];
   reviewStatuses: ReviewStatus[];
   includeArchived?: boolean;
+  limit?: number;
 };
 
 export type AppSettings = {

@@ -25,7 +25,11 @@
 
   const people = $derived(buildPeople(notes, actions));
   const visiblePeople = $derived(people.filter((person) => matchesPersonSearch(person, query)));
-  const activeKey = $derived(selectedKey ?? people[0]?.key ?? null);
+  const activeKey = $derived(
+    selectedKey && visiblePeople.some((person) => person.key === selectedKey)
+      ? selectedKey
+      : visiblePeople[0]?.key ?? null,
+  );
   const detail = $derived(activeKey ? buildPersonDetail(activeKey, notes, actions) : null);
   const loading = $derived(loadingNotes || loadingActions);
 

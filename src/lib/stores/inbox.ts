@@ -88,6 +88,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   type LoadInboxOptions = {
     preferredSelectionIndex?: number;
+    limit?: number;
   };
 
   async function loadInbox(options: LoadInboxOptions = {}): Promise<void> {
@@ -100,6 +101,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       const backendFilters = createInboxFilters({
         ...currentFilters,
         includeArchived: mode === "archive",
+        limit: options.limit,
       });
       const items = await api.listInbox(backendFilters);
       const visibleItems =
@@ -155,12 +157,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
-  async function loadSuggestedActions(): Promise<void> {
+  async function loadSuggestedActions(limit?: number): Promise<void> {
     loadingSuggestedActions.set(true);
     error.set(null);
 
     try {
-      suggestedActions.set(await api.listSuggestedActions());
+      suggestedActions.set(await api.listSuggestedActions(limit));
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not load suggested actions."));
     } finally {
@@ -282,8 +284,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   async function showPeople(): Promise<void> {
     viewMode.set("people");
     filters.set(createInboxFilters({ includeArchived: false }));
-    await loadInbox();
-    await loadSuggestedActions();
+    await loadInbox({ limit: 1000 });
+    await loadSuggestedActions(500);
   }
 
   async function loadArchive(): Promise<void> {

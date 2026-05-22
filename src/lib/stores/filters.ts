@@ -7,6 +7,7 @@ export function createInboxFilters(overrides: Partial<InboxFilters> = {}): Inbox
     parseStatuses: [...(overrides.parseStatuses ?? [])],
     reviewStatuses: [...(overrides.reviewStatuses ?? [])],
     includeArchived: overrides.includeArchived,
+    limit: overrides.limit,
   };
 }
 
