@@ -36,7 +36,7 @@ pub fn build_parse_prompt_with_context(
         String::new()
     } else {
         format!(
-            "\nLinked repos/directories available for optional inspection:\n{}\n",
+            "\nLinked repos/directories available for optional read-only inspection. Each is an absolute directory root you may read from directly by its full path; they are equally available and none is the primary repo:\n{}\n",
             linked_workspace_paths
                 .iter()
                 .map(|path| format!("- {path}"))
@@ -128,7 +128,8 @@ mod tests {
             ],
         );
 
-        assert!(prompt.contains("Linked repos/directories available for optional inspection:"));
+        assert!(prompt.contains("available for optional read-only inspection"));
+        assert!(prompt.contains("none is the primary repo"));
         assert!(prompt.contains("- C:\\code\\product"));
         assert!(prompt.contains("- D:\\scratch\\other"));
     }
