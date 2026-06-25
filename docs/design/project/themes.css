@@ -1,0 +1,147 @@
+/* Work Notes — theme tokens
+   Every theme defines the same surface, the same naming.
+   Switch by setting [data-theme] on any ancestor (body, .app, an artboard).
+   Components NEVER hard-code colors — they consume var(--*) only. */
+
+/* ─── Base (cascades into every theme; theme files override) ───────────── */
+:root {
+  /* Type */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-display: var(--font-sans);
+
+  /* Geometry */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --border-w: 1px;
+  --border-w-strong: 1px;
+
+  /* Decoration hooks — memphis turns these on, dark leaves them off */
+  --pattern-app: none;
+  --pattern-canvas: none;
+  --shape-decoration: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg-canvas);
+  color: var(--text-default);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+button { font-family: inherit; }
+
+/* Artboard reset — design_canvas hosts each board in its own frame */
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  position: relative;
+  background: var(--bg-app);
+  color: var(--text-default);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+.app-theme-wrap {
+  position: relative;
+  font-family: var(--font-sans);
+  color: var(--text-default);
+}
+
+/* ─── Dark · default ───────────────────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --theme-name: "dark";
+
+  --bg-app:        oklch(0.205 0.005 250);
+  --bg-canvas:     oklch(0.182 0.005 250);
+  --surface-1:     oklch(0.235 0.006 250);
+  --surface-2:     oklch(0.268 0.006 250);
+  --surface-3:     oklch(0.305 0.007 250);
+  --surface-input: oklch(0.21 0.006 250);
+  --surface-hover: oklch(0.255 0.006 250);
+
+  --border-subtle:  oklch(0.31 0.006 250);
+  --border-default: oklch(0.36 0.008 250);
+  --border-strong:  oklch(0.46 0.01 250);
+
+  --text-primary: oklch(0.97 0.005 250);
+  --text-default: oklch(0.88 0.006 250);
+  --text-muted:   oklch(0.66 0.008 250);
+  --text-subtle:  oklch(0.5 0.008 250);
+
+  --accent:        oklch(0.72 0.11 195);
+  --accent-strong: oklch(0.78 0.13 195);
+  --accent-soft:   oklch(0.72 0.11 195 / 0.14);
+  --accent-text:   oklch(0.18 0.01 250);
+
+  --ok:   oklch(0.72 0.13 155);
+  --warn: oklch(0.79 0.13 80);
+  --err:  oklch(0.7 0.18 25);
+  --info: oklch(0.72 0.11 230);
+
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-pop:  0 24px 48px -16px oklch(0 0 0 / 0.55), 0 2px 6px oklch(0 0 0 / 0.4);
+
+  --kbd-shadow: 0 1px 0 var(--border-default);
+  --brand-grad: linear-gradient(135deg, var(--accent), oklch(0.78 0.13 220));
+}
+
+/* ─── Memphis · ’80s pastel + black ────────────────────────────────────── */
+[data-theme="memphis"] {
+  --theme-name: "memphis";
+
+  --font-display: "Space Grotesk", "Geist", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --border-w: 1.5px;
+  --border-w-strong: 2px;
+
+  --bg-app:        oklch(0.97 0.02 80);   /* warm cream */
+  --bg-canvas:     oklch(0.94 0.04 80);   /* darker cream */
+  --surface-1:     oklch(1 0 0);          /* pure white card */
+  --surface-2:     oklch(0.96 0.05 70);   /* pale peach */
+  --surface-3:     oklch(0.92 0.07 75);   /* yellow cream */
+  --surface-input: oklch(1 0 0);
+  --surface-hover: oklch(0.95 0.06 70);
+
+  --border-subtle:  oklch(0.78 0.04 80);  /* tan */
+  --border-default: oklch(0.2 0.02 280);  /* near-black */
+  --border-strong:  oklch(0.1 0.02 280);  /* true black */
+
+  --text-primary: oklch(0.18 0.03 280);
+  --text-default: oklch(0.24 0.03 280);
+  --text-muted:   oklch(0.42 0.04 285);
+  --text-subtle:  oklch(0.55 0.04 285);
+
+  --accent:        oklch(0.66 0.26 5);    /* hot pink/magenta */
+  --accent-strong: oklch(0.58 0.26 5);
+  --accent-soft:   oklch(0.66 0.26 5 / 0.15);
+  --accent-text:   oklch(1 0 0);
+
+  --ok:   oklch(0.75 0.15 165);   /* mint */
+  --warn: oklch(0.83 0.16 90);    /* lemon */
+  --err:  oklch(0.65 0.25 30);    /* coral red */
+  --info: oklch(0.74 0.15 220);   /* cyan */
+
+  /* Chunky offset shadows — the Memphis tell */
+  --shadow-card: 3px 3px 0 oklch(0.2 0.02 280);
+  --shadow-pop:  6px 6px 0 oklch(0.1 0.02 280);
+
+  --kbd-shadow: 2px 2px 0 var(--border-default);
+  --brand-grad: linear-gradient(135deg, var(--accent), oklch(0.78 0.16 240));
+
+  /* Subtle dot grid on app background */
+  --pattern-app:
+    radial-gradient(circle at 1px 1px, oklch(0.5 0.04 285 / 0.18) 1px, transparent 0);
+  --pattern-canvas:
+    repeating-linear-gradient(0deg, transparent 0 23px, oklch(0.5 0.04 285 / 0.06) 23px 24px);
+  --shape-decoration: block;
+}

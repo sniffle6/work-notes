@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Work Notes v3 — themed (Memphis ’86)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="themes.css" />
+<link rel="stylesheet" href="app-v2.css" />
+<link rel="stylesheet" href="app-v2-extra.css" />
+<link rel="stylesheet" href="theme-picker.css" />
+<link rel="stylesheet" href="memphis.css" />
+<style>
+  html, body { height: 100%; }
+  body { background: #f0eee9; }
+</style>
+</head>
+<body data-theme="memphis">
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="data-v2.jsx"></script>
+<script type="text/babel" src="inbox-screen-v2.jsx"></script>
+<script type="text/babel" src="other-screens.jsx"></script>
+<script type="text/babel" src="today-people-v2.jsx"></script>
+<script type="text/babel" src="theme-switcher.jsx"></script>
+
+<script type="text/babel">
+  const { DesignCanvas, DCSection, DCArtboard } = window;
+
+  function Themed({ theme, children }) {
+    // Wrapper that pins this artboard to a specific theme regardless of the global tweak.
+    return <div className="app-theme-wrap" data-theme={theme} style={{ width: "100%", height: "100%" }}>{children}</div>;
+  }
+
+  function App() {
+    return (
+      <>
+        <ThemeTweaks />
+        <DesignCanvas>
+          <DCSection id="memphis" title="Memphis ’86 theme" subtitle="Hot pink + cyan + mint + lemon on cream · chunky black borders · offset shadows · Space Grotesk display">
+            <DCArtboard id="m-inbox" label="01 · Inbox · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><InboxScreen initialSelectedId="n1" /></Themed>
+            </DCArtboard>
+            <DCArtboard id="m-actions" label="02 · Actions mode · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><InboxScreen initialMode="actions" initialSelectedId="n1" /></Themed>
+            </DCArtboard>
+            <DCArtboard id="m-today" label="03 · Today · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><TodayView /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="appearance" title="Theme system" subtitle="Settings → Appearance · ThemePicker swatches · same shell, different tokens">
+            <DCArtboard id="settings" label="04 · Settings · Appearance" width={1280} height={800}>
+              <Themed theme="memphis"><SettingsSheetV3 theme="memphis" /></Themed>
+            </DCArtboard>
+            <DCArtboard id="settings-dark" label="05 · Settings · Dark" width={1280} height={800}>
+              <Themed theme="dark"><SettingsSheetV3 theme="dark" /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="capture" title="Capture · Memphis" subtitle="Quick capture popup gets the full Memphis treatment">
+            <DCArtboard id="m-qc" label="06 · Quick capture · Memphis" width={520} height={400}>
+              <Themed theme="memphis"><QuickCapture /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="states-m" title="States · Memphis" subtitle="Parse failed, reparse expanded">
+            <DCArtboard id="m-failed" label="07 · Parse failed · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><InboxScreen initialSelectedId="n4" initialFilter="failed" /></Themed>
+            </DCArtboard>
+            <DCArtboard id="m-reparse" label="08 · Reparse with feedback · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><InboxScreen initialSelectedId="n1" initialReparseOpen={true} /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="people" title="People · Memphis" subtitle="Per-coworker view, full theme">
+            <DCArtboard id="m-people" label="09 · People — Maria · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><PeopleView initialSelected="Maria" /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="onboarding" title="First run · Memphis" subtitle="Confetti shapes only fire under Memphis — the dark theme stays minimal">
+            <DCArtboard id="m-onboard" label="10 · Onboarding · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><EmptyStateScreen /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="keyboard" title="Keyboard layer" subtitle="? cheatsheet — same content, themed">
+            <DCArtboard id="m-kb" label="11 · Cheatsheet · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><KeyboardOverlay /></Themed>
+            </DCArtboard>
+            <DCArtboard id="d-kb" label="12 · Cheatsheet · Dark" width={1280} height={800}>
+              <Themed theme="dark"><KeyboardOverlay /></Themed>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="side-by-side" title="Side-by-side" subtitle="Same artboard, theme A vs theme B — token-driven, zero component branches">
+            <DCArtboard id="sxs-dark" label="13 · Inbox · Dark" width={1280} height={800}>
+              <Themed theme="dark"><InboxScreen initialSelectedId="n1" /></Themed>
+            </DCArtboard>
+            <DCArtboard id="sxs-memphis" label="14 · Inbox · Memphis" width={1280} height={800}>
+              <Themed theme="memphis"><InboxScreen initialSelectedId="n1" /></Themed>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+/* Theme picker — used in Settings → Appearance. Theme-agnostic. */
+
+.tp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  max-width: 520px;
+}
+
+.tp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-1);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  position: relative;
+  transition: border-color 0.12s, transform 0.08s;
+}
+.tp-card:hover { border-color: var(--border-default); }
+.tp-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.tp-preview {
+  display: grid;
+  grid-template-columns: 50px 1fr;
+  height: 96px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.tp-card[data-theme="dark"] .tp-preview { background: #11151c; }
+.tp-card[data-theme="dark"] .tp-preview-sb { background: #1b212b; border-right: 1px solid #334052; }
+.tp-card[data-theme="dark"] .tp-preview-line { background: oklch(0.5 0.008 250); }
+.tp-card[data-theme="dark"] .tp-preview-line.short { background: oklch(0.4 0.008 250); }
+
+.tp-card[data-theme="memphis"] .tp-preview { background: oklch(0.97 0.02 80); }
+.tp-card[data-theme="memphis"] .tp-preview-sb {
+  background: #fff;
+  border-right: 1.5px solid #121315;
+}
+.tp-card[data-theme="memphis"] .tp-preview-line { background: #121315; opacity: 0.45; }
+.tp-card[data-theme="memphis"] .tp-preview-line.short { background: #121315; opacity: 0.25; }
+
+.tp-preview-content {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+.tp-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tp-preview-dot {
+  width: 10px; height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  flex-shrink: 0;
+}
+.tp-preview-line {
+  height: 4px;
+  flex: 1;
+  border-radius: 999px;
+}
+.tp-preview-line.short { width: 50%; flex: none; }
+
+.tp-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 2px;
+}
+.tp-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+.tp-palette {
+  display: flex;
+  gap: 3px;
+}
+.tp-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.tp-check {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 999px;
+  border: 1.5px solid var(--border-default);
+}
+
+/* Memphis variant — chunky border + offset shadow */
+[data-theme="memphis"] .tp-card {
+  border: 1.5px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .tp-card.selected {
+  box-shadow: 3px 3px 0 var(--border-default);
+  border-color: var(--accent);
+}
+[data-theme="memphis"] .tp-preview { border: 1.5px solid var(--border-default); border-radius: 7px; }
