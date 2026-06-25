@@ -13,9 +13,13 @@ export type ThemeToken =
   | "status.warning"
   | "status.error";
 
+export type ThemeMode = "dark" | "light";
+
 export type ThemeDefinition = {
   id: string;
   label: string;
+  family: string;
+  mode: ThemeMode;
   compact: boolean;
   tokens: Record<ThemeToken, string>;
 };

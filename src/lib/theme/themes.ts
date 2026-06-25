@@ -5,6 +5,8 @@ export { toCssVariables } from "./applyTheme";
 export const darkCompactTheme: ThemeDefinition = {
   id: "dark-compact",
   label: "Dark Compact",
+  family: "dark-compact",
+  mode: "dark",
   compact: true,
   tokens: {
     "app.bg": "#11151c",
@@ -26,6 +28,8 @@ export const darkCompactTheme: ThemeDefinition = {
 export const memphisTheme: ThemeDefinition = {
   id: "memphis",
   label: "Memphis '86",
+  family: "memphis",
+  mode: "light",
   compact: true,
   tokens: {
     "app.bg": "#f6f0d8",
@@ -44,7 +48,58 @@ export const memphisTheme: ThemeDefinition = {
   },
 };
 
-export const themes = [darkCompactTheme, memphisTheme] as const;
+export const everforestDarkTheme: ThemeDefinition = {
+  id: "everforest-dark",
+  label: "Everforest Dark",
+  family: "everforest",
+  mode: "dark",
+  compact: true,
+  tokens: {
+    "app.bg": "#232a2e",
+    "surface.1": "#2d353b",
+    "surface.2": "#343f44",
+    "surface.input": "#272e33",
+    "border.default": "#4f585e",
+    "border.strong": "#7a8478",
+    "text.primary": "#d3c6aa",
+    "text.muted": "#859289",
+    "accent.primary": "#a7c080",
+    "accent.hot": "#83c092",
+    "status.success": "#a7c080",
+    "status.warning": "#dbbc7f",
+    "status.error": "#e67e80",
+  },
+};
+
+export const everforestLightTheme: ThemeDefinition = {
+  id: "everforest-light",
+  label: "Everforest Light",
+  family: "everforest",
+  mode: "light",
+  compact: true,
+  tokens: {
+    "app.bg": "#f2efdf",
+    "surface.1": "#fdf6e3",
+    "surface.2": "#efebd4",
+    "surface.input": "#fffbef",
+    "border.default": "#ddd8be",
+    "border.strong": "#a6b0a0",
+    "text.primary": "#5c6a72",
+    "text.muted": "#939f91",
+    "accent.primary": "#8da101",
+    "accent.hot": "#35a77c",
+    "status.success": "#8da101",
+    "status.warning": "#dfa000",
+    "status.error": "#f85552",
+  },
+};
+
+export const themes = [
+  darkCompactTheme,
+  memphisTheme,
+  everforestDarkTheme,
+  everforestLightTheme,
+] as const;
 
 export function getThemeById(id: string | null | undefined): ThemeDefinition {
   return themes.find((theme) => theme.id === id || (id === "dark" && theme.id === "dark-compact")) ?? darkCompactTheme;
