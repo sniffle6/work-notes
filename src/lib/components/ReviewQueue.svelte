@@ -127,7 +127,9 @@
 
   .queue-list {
     display: grid;
+    flex: 1;
     gap: 8px;
+    min-height: 0;
     padding: 10px;
     overflow: auto;
   }

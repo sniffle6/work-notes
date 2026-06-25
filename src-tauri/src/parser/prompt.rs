@@ -3,6 +3,14 @@ pub fn build_parse_prompt(raw_note: &str) -> String {
 }
 
 pub fn build_parse_prompt_with_feedback(raw_note: &str, feedback: Option<&str>) -> String {
+    build_parse_prompt_with_context(raw_note, feedback, &[])
+}
+
+pub fn build_parse_prompt_with_context(
+    raw_note: &str,
+    feedback: Option<&str>,
+    linked_workspace_paths: &[String],
+) -> String {
     let rules = [
         "You clean and organize a raw workplace note.",
         "Return only JSON matching the provided schema.",
@@ -20,7 +28,22 @@ pub fn build_parse_prompt_with_feedback(raw_note: &str, feedback: Option<&str>) 
         "Use tags for people, projects, topics, urgency, category, and custom labels.",
         "Extract action items when the note implies work to do.",
         "Set requiresReview true for due dates, owners, commitments, or inferred obligations.",
+        "If linked repo or directory context is provided, inspect it only when it is useful for understanding the note or checking a task.",
+        "Do not claim repo facts unless you inspected the linked context or the raw note explicitly states them.",
     ];
+
+    let linked_context = if linked_workspace_paths.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nLinked repos/directories available for optional inspection:\n{}\n",
+            linked_workspace_paths
+                .iter()
+                .map(|path| format!("- {path}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
 
     let feedback = feedback
         .map(str::trim)
@@ -34,8 +57,9 @@ pub fn build_parse_prompt_with_feedback(raw_note: &str, feedback: Option<&str>) 
         .unwrap_or_default();
 
     format!(
-        "{}\n\nRaw note:\n{}\n{}",
+        "{}\n{}\nRaw note:\n{}\n{}",
         rules.join("\n"),
+        linked_context,
         raw_note,
         feedback
     )
@@ -43,7 +67,9 @@ pub fn build_parse_prompt_with_feedback(raw_note: &str, feedback: Option<&str>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{build_parse_prompt, build_parse_prompt_with_feedback};
+    use super::{
+        build_parse_prompt, build_parse_prompt_with_context, build_parse_prompt_with_feedback,
+    };
 
     #[test]
     fn build_parse_prompt_includes_parser_rules_and_raw_note() {
@@ -68,6 +94,8 @@ mod tests {
             "Use tags for people, projects, topics, urgency, category, and custom labels.",
             "Extract action items when the note implies work to do.",
             "Set requiresReview true for due dates, owners, commitments, or inferred obligations.",
+            "If linked repo or directory context is provided, inspect it only when it is useful for understanding the note or checking a task.",
+            "Do not claim repo facts unless you inspected the linked context or the raw note explicitly states them.",
         ] {
             assert!(prompt.contains(rule), "missing parser rule: {rule}");
         }
@@ -87,5 +115,21 @@ mod tests {
         assert!(prompt.contains("Treat Robert as the requester and tag this as research."));
         assert!(prompt
             .contains("Use the feedback to revise the title, Markdown cleaned note, tags, summary, and actions."));
+    }
+
+    #[test]
+    fn build_parse_prompt_with_context_lists_linked_workspaces() {
+        let prompt = build_parse_prompt_with_context(
+            "Review this task against the local checkout.",
+            None,
+            &[
+                "C:\\code\\product".to_string(),
+                "D:\\scratch\\other".to_string(),
+            ],
+        );
+
+        assert!(prompt.contains("Linked repos/directories available for optional inspection:"));
+        assert!(prompt.contains("- C:\\code\\product"));
+        assert!(prompt.contains("- D:\\scratch\\other"));
     }
 }

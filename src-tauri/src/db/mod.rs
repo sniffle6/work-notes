@@ -81,5 +81,22 @@ mod tests {
                 .unwrap();
             assert_eq!(exists, 1, "{table} should exist");
         }
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(action_items)")
+            .unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            columns.iter().any(|column| column == "followup_state"),
+            "action_items.followup_state should exist"
+        );
+        assert!(
+            columns.iter().any(|column| column == "followup_lane"),
+            "action_items.followup_lane should exist"
+        );
     }
 }

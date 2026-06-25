@@ -246,8 +246,9 @@
     display: flex;
     flex-direction: column;
     width: 348px;
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     border-right: 1px solid var(--color-border-default);
     background: color-mix(in srgb, var(--color-app-bg) 86%, var(--color-surface-1));
     overflow: hidden;
@@ -720,7 +721,7 @@
   @media (max-width: 980px) {
     .inbox-list {
       width: 100%;
-      min-height: 360px;
+      min-height: 0;
       border-right: 0;
       border-bottom: 1px solid var(--color-border-default);
     }

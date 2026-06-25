@@ -5,6 +5,7 @@
   "windows": ["main", "quick-capture"],
   "permissions": [
     "core:default",
+    "dialog:allow-open",
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",

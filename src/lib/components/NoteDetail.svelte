@@ -14,6 +14,9 @@
   let reparseFeedback = $state("");
   let reparseOpen = $state(false);
   let showRaw = $state(false);
+  let followupOpen = $state(false);
+  let followupText = $state("");
+  let followupLane = $state("");
   let currentNoteId = $state<string | null>(null);
   let reparseFeedbackInput = $state<HTMLTextAreaElement | null>(null);
 
@@ -31,6 +34,7 @@
     dismissAction: string;
     completeAction: string;
     reopenAction: string;
+    createFollowup: { text: string; lane: string | null; done: () => void };
   }>();
 
   $effect(() => {
@@ -40,6 +44,9 @@
       reparseFeedback = "";
       reparseOpen = false;
       showRaw = false;
+      followupOpen = false;
+      followupText = "";
+      followupLane = "";
     }
   });
 
@@ -109,6 +116,35 @@
     }
   }
 
+  function openFollowupForm() {
+    followupOpen = true;
+  }
+
+  function dispatchCreateFollowup(event: SubmitEvent) {
+    event.preventDefault();
+
+    const text = followupText.trim();
+    if (!text) {
+      return;
+    }
+
+    const noteId = currentNoteId;
+    const lane = followupLane.trim() || null;
+
+    dispatch("createFollowup", {
+      text,
+      lane,
+      done: () => {
+        if (currentNoteId !== noteId) {
+          return;
+        }
+        followupText = "";
+        followupLane = "";
+        followupOpen = false;
+      },
+    });
+  }
+
   function actionMeta(action: ActionItem): string {
     return [action.owner ? `@${action.owner}` : null, action.dueDate ? formatDue(action.dueDate) : null]
       .filter(Boolean)
@@ -160,6 +196,9 @@
             Delete permanently
           </button>
         {:else}
+          <button class="ghost-button" type="button" onclick={openFollowupForm} disabled={loading}>
+            Add follow-up
+          </button>
           <button class="delete-button" type="button" onclick={() => dispatch("deleteNote")} disabled={loading}>
             Archive
           </button>
@@ -169,6 +208,34 @@
 
     <div class="detail-scroll">
       <h1>{note.title}</h1>
+
+      {#if followupOpen}
+        <form class="followup-form" aria-label="Manual follow-up" onsubmit={dispatchCreateFollowup}>
+          <div class="followup-fields">
+            <label>
+              <span>Follow-up</span>
+              <input
+                bind:value={followupText}
+                aria-label="Follow-up text"
+                disabled={loading}
+                placeholder="What needs to happen?"
+              />
+            </label>
+            <label>
+              <span>Lane</span>
+              <input
+                bind:value={followupLane}
+                aria-label="Follow-up lane"
+                disabled={loading}
+                placeholder="Optional"
+              />
+            </label>
+          </div>
+          <button class="primary-action" type="submit" disabled={loading || !followupText.trim()}>
+            Create follow-up
+          </button>
+        </form>
+      {/if}
 
       {#if note.parseStatus === "failed"}
         <div class="detail-banner error">
@@ -356,8 +423,9 @@
     display: flex;
     flex: 1;
     flex-direction: column;
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     color: var(--color-text-primary);
     background: var(--color-app-bg);
     overflow: hidden;
@@ -555,7 +623,8 @@
 
   .summary-block span,
   .section-head span,
-  .reparse-dialog label span {
+  .reparse-dialog label span,
+  .followup-form label span {
     display: inline-flex;
     color: var(--color-accent-primary);
     font-size: 11px;
@@ -686,6 +755,49 @@
   .reparse-dialog label {
     display: grid;
     gap: 7px;
+  }
+
+  .followup-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 10px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-surface-1) 86%, transparent);
+  }
+
+  .followup-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 180px);
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .followup-form label {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .followup-form input {
+    width: 100%;
+    min-width: 0;
+    min-height: 30px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 6px;
+    outline: none;
+    padding: 0 9px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-input);
+    font: inherit;
+    font-size: 13px;
+  }
+
+  .followup-form input:focus {
+    border-color: var(--color-accent-primary);
   }
 
   .reparse-dialog textarea {
@@ -908,6 +1020,11 @@
       grid-row: auto;
       grid-column: auto;
       justify-self: start;
+    }
+
+    .followup-form,
+    .followup-fields {
+      grid-template-columns: 1fr;
     }
   }
 </style>

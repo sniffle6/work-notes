@@ -74,6 +74,32 @@ describe("AppShell", () => {
     expect(navigate.mock.calls[0][0].detail).toBe("actions");
   });
 
+  it("marks follow-ups active and emits followups navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [
+          { label: "Inbox", value: "3" },
+          { label: "Needs review", value: "2" },
+          { label: "Follow-ups", value: "4" },
+        ],
+        activeView: "followups",
+      },
+      events: { navigate },
+    });
+
+    const followups = screen.getByRole("button", { name: "Follow-ups" });
+    await fireEvent.click(followups);
+
+    expect(followups.getAttribute("aria-current")).toBe("page");
+    expect(followups.textContent).toContain("4");
+    expect(navigate.mock.calls[0][0].detail).toBe("followups");
+  });
+
   it("marks people active and emits people navigation", async () => {
     const navigate = vi.fn();
 
@@ -93,5 +119,25 @@ describe("AppShell", () => {
 
     expect(people.getAttribute("aria-current")).toBe("page");
     expect(navigate.mock.calls[0][0].detail).toBe("people");
+  });
+
+  it("uses nav icons without fake keyboard hints", () => {
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [
+          { label: "Inbox", value: "1" },
+          { label: "Needs review", value: "0" },
+          { label: "Follow-ups", value: "0" },
+        ],
+      },
+    });
+
+    const primaryNav = screen.getByRole("navigation", { name: "Primary" });
+
+    expect(primaryNav.querySelectorAll("svg")).toHaveLength(7);
+    expect(primaryNav.querySelector("kbd")).toBeNull();
   });
 });

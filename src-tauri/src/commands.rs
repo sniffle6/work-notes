@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
 use crate::domain::{
-    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, InboxFilters, Note, NoteId,
-    NoteListItem, ParseStatus, ReviewStatus, Tag, TagAssignment, TagId, TagKind,
+    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState,
+    InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus, Tag, TagAssignment, TagId,
+    TagKind,
 };
 use crate::repositories::RepositoryError;
 use crate::services::actions::ActionItemService;
@@ -228,6 +229,8 @@ pub struct ActionItemDto {
     pub status: ActionStatus,
     pub source: String,
     pub confidence: Option<f64>,
+    pub followup_state: Option<FollowupState>,
+    pub followup_lane: Option<String>,
 }
 
 impl From<ActionItem> for ActionItemDto {
@@ -241,6 +244,46 @@ impl From<ActionItem> for ActionItemDto {
             status: action_item.status,
             source: action_item.source,
             confidence: action_item.confidence,
+            followup_state: action_item.followup_state,
+            followup_lane: action_item.followup_lane,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowupItemDto {
+    pub id: String,
+    pub note_id: String,
+    pub note_title: String,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub status: ActionStatus,
+    pub source: String,
+    pub confidence: Option<f64>,
+    pub followup_state: Option<FollowupState>,
+    pub followup_lane: Option<String>,
+    pub tags: Vec<TagAssignmentDto>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<FollowupItem> for FollowupItemDto {
+    fn from(item: FollowupItem) -> Self {
+        Self {
+            id: item.id.to_string(),
+            note_id: item.note_id.to_string(),
+            note_title: item.note_title,
+            text: item.text,
+            owner: item.owner,
+            due_date: item.due_date,
+            status: item.status,
+            source: item.source,
+            confidence: item.confidence,
+            followup_state: item.followup_state,
+            followup_lane: item.followup_lane,
+            tags: item.tags.into_iter().map(Into::into).collect(),
+            created_at: item.created_at,
         }
     }
 }
@@ -284,6 +327,28 @@ pub struct InboxFiltersDto {
     #[serde(default)]
     pub include_archived: bool,
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateManualFollowupDto {
+    pub note_id: String,
+    pub text: String,
+    pub lane_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFollowupStateDto {
+    pub id: String,
+    pub state: FollowupState,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFollowupLaneDto {
+    pub id: String,
+    pub lane_override: Option<String>,
 }
 
 impl TryFrom<InboxFiltersDto> for InboxFilters {
@@ -450,10 +515,58 @@ pub async fn list_suggested_actions(
     state: tauri::State<'_, AppState>,
     limit: Option<u32>,
 ) -> Result<Vec<ActionReviewItemDto>, CommandError> {
-    let items = ActionItemService::new(state.repositories.clone())
-        .list_suggested(limit.unwrap_or(100))?;
+    let items =
+        ActionItemService::new(state.repositories.clone()).list_suggested(limit.unwrap_or(100))?;
 
     Ok(items.into_iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+pub async fn list_followups(
+    state: tauri::State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<FollowupItemDto>, CommandError> {
+    let items =
+        ActionItemService::new(state.repositories.clone()).list_followups(limit.unwrap_or(200))?;
+
+    Ok(items.into_iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+pub async fn create_manual_followup(
+    state: tauri::State<'_, AppState>,
+    input: CreateManualFollowupDto,
+) -> Result<ActionItemDto, CommandError> {
+    let note_id = parse_note_id(&input.note_id)?;
+    let action = ActionItemService::new(state.repositories.clone()).create_manual_followup(
+        note_id,
+        &input.text,
+        input.lane_override.as_deref(),
+    )?;
+
+    Ok(action.into())
+}
+
+#[tauri::command]
+pub async fn update_followup_state(
+    state: tauri::State<'_, AppState>,
+    input: UpdateFollowupStateDto,
+) -> Result<(), CommandError> {
+    let action_id = parse_action_item_id(&input.id)?;
+    ActionItemService::new(state.repositories.clone())
+        .update_followup_state(action_id, input.state)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_followup_lane(
+    state: tauri::State<'_, AppState>,
+    input: UpdateFollowupLaneDto,
+) -> Result<(), CommandError> {
+    let action_id = parse_action_item_id(&input.id)?;
+    ActionItemService::new(state.repositories.clone())
+        .update_followup_lane(action_id, input.lane_override.as_deref())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -503,8 +616,13 @@ fn parse_action_item_id(id: &str) -> Result<ActionItemId, CommandError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{ActionReviewItemDto, AppSettingsDto, CommandError, NoteListItemDto};
-    use crate::domain::{ActionItemId, ActionReviewItem, NoteId, ParseStatus, ReviewStatus};
+    use crate::commands::{
+        ActionReviewItemDto, AppSettingsDto, CommandError, FollowupItemDto, NoteListItemDto,
+    };
+    use crate::domain::{
+        ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState, NoteId,
+        ParseStatus, ReviewStatus,
+    };
     use crate::services::ServiceError;
     use chrono::Utc;
     use serde_json::json;
@@ -566,6 +684,35 @@ mod tests {
     }
 
     #[test]
+    fn followup_item_dto_serializes_camel_case_fields() {
+        let item = FollowupItem {
+            id: ActionItemId::new(),
+            note_id: NoteId::new(),
+            note_title: "Kiosk 7 telemetry IDs".to_string(),
+            text: "Bring serial list into the Tuesday sync.".to_string(),
+            owner: Some("Maya".to_string()),
+            due_date: None,
+            status: ActionStatus::Accepted,
+            source: "parser".to_string(),
+            confidence: Some(0.82),
+            followup_state: Some(FollowupState::Waiting),
+            followup_lane: Some("Ops".to_string()),
+            tags: Vec::new(),
+            created_at: Utc::now(),
+        };
+
+        let serialized = serde_json::to_value(FollowupItemDto::from(item)).unwrap();
+
+        assert!(serialized.get("id").is_some());
+        assert!(serialized.get("noteId").is_some());
+        assert!(serialized.get("noteTitle").is_some());
+        assert!(serialized.get("dueDate").is_some());
+        assert!(serialized.get("followupState").is_some());
+        assert!(serialized.get("followupLane").is_some());
+        assert!(serialized.get("createdAt").is_some());
+    }
+
+    #[test]
     fn settings_dto_accepts_camel_case_fields() {
         let settings: AppSettingsDto = serde_json::from_value(json!({
             "launchAtStartup": true,
@@ -574,13 +721,21 @@ mod tests {
             "theme": "dark",
             "parserTimeoutSeconds": 45,
             "parserMaxRetries": 4,
-            "codexCommandPath": "codex"
+            "codexCommandPath": "codex",
+            "linkedWorkspacePaths": ["C:\\code\\work-notes", "D:\\scratch\\demo"]
         }))
         .unwrap();
 
         assert_eq!(settings.parser_timeout_seconds, 45);
         assert_eq!(settings.parser_max_retries, 4);
         assert_eq!(settings.codex_command_path, "codex");
+        assert_eq!(
+            settings.linked_workspace_paths,
+            vec![
+                "C:\\code\\work-notes".to_string(),
+                "D:\\scratch\\demo".to_string(),
+            ]
+        );
     }
 
     #[test]

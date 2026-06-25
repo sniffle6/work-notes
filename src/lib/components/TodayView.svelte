@@ -209,7 +209,8 @@
     display: flex;
     flex-direction: column;
     gap: 26px;
-    min-height: 100vh;
+    height: 100%;
+    min-height: 0;
     padding: 28px 36px 60px;
     color: var(--color-text-primary);
     background: var(--color-app-bg);

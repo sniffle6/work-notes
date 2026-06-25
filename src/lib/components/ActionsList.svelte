@@ -130,8 +130,9 @@
   .actions-list {
     display: flex;
     flex-direction: column;
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     border-right: 1px solid var(--color-border-default);
     background: var(--color-surface-1);
     overflow: hidden;
@@ -215,6 +216,7 @@
 
   .actions-scroll {
     flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 8px;
   }

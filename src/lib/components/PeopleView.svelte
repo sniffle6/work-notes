@@ -282,19 +282,23 @@
   .people-view {
     display: grid;
     grid-template-columns: 320px minmax(0, 1fr);
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     color: var(--color-text-primary);
     background: var(--color-app-bg);
+    overflow: hidden;
   }
 
   .people-list {
     display: flex;
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     flex-direction: column;
     border-right: 1px solid var(--color-border-default);
     background: var(--color-surface-1);
+    overflow: hidden;
   }
 
   .people-list-head {
@@ -416,6 +420,7 @@
 
   .people-scroll {
     flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 2px 0;
   }
@@ -518,9 +523,13 @@
   }
 
   .person-detail {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     background: var(--color-app-bg);
+    overflow: hidden;
   }
 
   .detail-head {
@@ -536,7 +545,9 @@
   }
 
   .detail-scroll {
+    flex: 1;
     max-width: 820px;
+    min-height: 0;
     padding: 22px 28px 60px;
     overflow: auto;
   }
@@ -702,16 +713,16 @@
   @media (max-width: 920px) {
     .people-view {
       grid-template-columns: 1fr;
+      grid-template-rows: minmax(220px, 42vh) minmax(0, 1fr);
     }
 
     .people-list {
-      min-height: auto;
       border-right: 0;
       border-bottom: 1px solid var(--color-border-default);
     }
 
     .people-scroll {
-      max-height: 260px;
+      max-height: none;
     }
 
     .person-cols {

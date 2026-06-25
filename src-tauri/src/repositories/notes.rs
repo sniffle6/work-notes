@@ -107,14 +107,26 @@ impl NoteRepository {
         let mut connection = self.db.connection()?;
         let transaction = connection.transaction()?;
 
-        transaction.execute("DELETE FROM note_tags WHERE note_id = ?1", params![&id_text])?;
+        transaction.execute(
+            "DELETE FROM note_tags WHERE note_id = ?1",
+            params![&id_text],
+        )?;
         transaction.execute(
             "DELETE FROM action_items WHERE note_id = ?1",
             params![&id_text],
         )?;
-        transaction.execute("DELETE FROM parse_jobs WHERE note_id = ?1", params![&id_text])?;
-        transaction.execute("DELETE FROM parse_runs WHERE note_id = ?1", params![&id_text])?;
-        transaction.execute("DELETE FROM notes_fts WHERE note_id = ?1", params![&id_text])?;
+        transaction.execute(
+            "DELETE FROM parse_jobs WHERE note_id = ?1",
+            params![&id_text],
+        )?;
+        transaction.execute(
+            "DELETE FROM parse_runs WHERE note_id = ?1",
+            params![&id_text],
+        )?;
+        transaction.execute(
+            "DELETE FROM notes_fts WHERE note_id = ?1",
+            params![&id_text],
+        )?;
         let changed = transaction.execute("DELETE FROM notes WHERE id = ?1", params![&id_text])?;
 
         if changed == 0 {
@@ -535,9 +547,7 @@ mod tests {
             .expect("record parse run");
 
         notes.archive(note.id).expect("archive note");
-        notes
-            .permanently_delete(note.id)
-            .expect("delete note");
+        notes.permanently_delete(note.id).expect("delete note");
 
         assert!(notes.get(note.id).expect("get deleted note").is_none());
 

@@ -72,8 +72,9 @@ Settings include:
 - `codexCommandPath`: defaults to `codex.cmd` on Windows.
 - `parserTimeoutSeconds`: defaults to `90`.
 - `parserMaxRetries`: defaults to `3`.
+- `linkedWorkspacePaths`: optional local repo or directory paths that the parser agent may inspect when a note needs repo context.
 
-The background worker reads persisted parser settings before processing jobs, so command path, timeout, and retry count changes affect later jobs without an app restart.
+The background worker reads persisted parser settings before processing jobs, so command path, timeout, retry count, and linked workspace changes affect later jobs without an app restart.
 
 ## Theme Template
 
