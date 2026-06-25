@@ -101,12 +101,17 @@ surface.input   #fffbef
 border.default  #ddd8be
 border.strong   #a6b0a0
 text.primary    #5c6a72
-text.muted      #939f91
-accent.primary  #8da101
+text.muted      #626e66
+accent.primary  #5c6b00
 accent.hot      #35a77c
 status.success  #8da101
 status.warning  #dfa000
-status.error    #f85552
+status.error    #cf2f2b
+
+(Contrast pass: `text.muted`, `accent.primary`, and `status.error` were darkened
+from the canonical Everforest medium values so accent buttons, muted text, and
+error text clear WCAG AA 4.5:1 against the light surfaces. The accent/muted/error
+hues are preserved, just deepened.)
 ```
 
 ## UI Shape
