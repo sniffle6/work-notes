@@ -1,0 +1,524 @@
+/* Work Notes — Memphis theme overlay
+   Only kicks in under [data-theme="memphis"]. Pure additive layer on
+   top of app-v2.css + app-v2-extra.css — never duplicate base layout
+   here, only chrome (borders, shadows, fills, decorations). */
+
+[data-theme="memphis"] {
+  font-family: var(--font-display);
+  color-scheme: light;
+}
+
+/* App background gets the dot grid */
+[data-theme="memphis"] .app {
+  background-color: var(--bg-app);
+  background-image: var(--pattern-app);
+  background-size: 12px 12px;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────── */
+[data-theme="memphis"] .sidebar {
+  background: var(--surface-1);
+  border-right: var(--border-w-strong) solid var(--border-default);
+  position: relative;
+}
+[data-theme="memphis"] .sidebar::after {
+  /* small triangle decoration */
+  content: "";
+  position: absolute;
+  top: 18px; right: -1px;
+  width: 0; height: 0;
+  border-style: solid;
+  border-width: 8px 0 8px 12px;
+  border-color: transparent transparent transparent var(--accent);
+  transform: translate(50%, 0);
+  pointer-events: none;
+}
+[data-theme="memphis"] .sb-mark {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  border-radius: 7px;
+}
+[data-theme="memphis"] .sb-app { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.025em; }
+[data-theme="memphis"] .sb-workspace { color: var(--accent-strong); }
+
+[data-theme="memphis"] .capture-btn {
+  background: var(--accent);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+  border-radius: 10px;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+[data-theme="memphis"] .capture-btn:hover {
+  background: var(--accent);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--border-default);
+}
+[data-theme="memphis"] .capture-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--border-default);
+}
+[data-theme="memphis"] .capture-btn-label { color: var(--accent-text); font-weight: 700; }
+[data-theme="memphis"] .capture-btn-icon {
+  background: var(--accent-text);
+  color: var(--accent);
+  border: 1.5px solid var(--accent-text);
+}
+[data-theme="memphis"] .capture-btn-kbd .kbd {
+  background: oklch(1 0 0 / 0.22);
+  color: var(--accent-text);
+  border-color: oklch(1 0 0 / 0.35);
+  border-bottom-width: 2px;
+}
+
+[data-theme="memphis"] .sb-nav-item.active {
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .sb-nav-item.active .sb-nav-count {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+[data-theme="memphis"] .sb-section-label { color: var(--text-muted); font-weight: 700; }
+
+[data-theme="memphis"] .sb-footer {
+  background: var(--surface-2);
+  border-top: 1.5px solid var(--border-default);
+}
+[data-theme="memphis"] .parser-dot {
+  background: var(--ok);
+  border: 1.5px solid var(--border-default);
+  width: 9px; height: 9px;
+  box-shadow: none;
+}
+
+/* ─── Inbox list ──────────────────────────────────────────────── */
+[data-theme="memphis"] .inbox-list {
+  background: var(--bg-canvas);
+  background-image: var(--pattern-canvas);
+  border-right: var(--border-w-strong) solid var(--border-default);
+}
+[data-theme="memphis"] .il-scroll {
+  /* Make room so the 3-4px offset card shadows don't get clipped by the
+     scroller's implicit overflow-x: auto. */
+  padding: 8px 10px 16px;
+}
+[data-theme="memphis"] .actions-scroll {
+  padding: 6px 10px 16px;
+}
+[data-theme="memphis"] .il-head { border-bottom: 1.5px solid var(--border-default); }
+[data-theme="memphis"] .il-mode {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  border-radius: 8px;
+  padding: 2px;
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .il-mode-btn { border-radius: 5px; font-weight: 600; }
+[data-theme="memphis"] .il-mode-btn.active {
+  background: var(--info);
+  color: var(--border-strong);
+  box-shadow: none;
+}
+[data-theme="memphis"] .il-mode-btn.active .il-mode-count {
+  background: var(--border-default);
+  color: oklch(1 0 0);
+}
+[data-theme="memphis"] .il-search {
+  background: var(--surface-input);
+  border: 1.5px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .il-search:focus-within { border-color: var(--accent); }
+[data-theme="memphis"] .il-filter {
+  border: 1.5px solid transparent;
+  font-weight: 600;
+}
+[data-theme="memphis"] .il-filter.active {
+  background: var(--surface-3);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+[data-theme="memphis"] .il-card {
+  background: var(--surface-1);
+  margin: 0 0 8px;
+  padding: 12px 14px 13px;
+  border: 1.5px solid var(--border-default);
+  border-left: 1.5px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 var(--border-default);
+}
+[data-theme="memphis"] .il-card + .il-card { border-top: 1.5px solid var(--border-default); }
+[data-theme="memphis"] .il-card:hover { background: var(--surface-2); }
+[data-theme="memphis"] .il-card.selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--border-default);
+}
+[data-theme="memphis"] .il-card-title { font-family: var(--font-display); }
+[data-theme="memphis"] .il-card-top { color: var(--text-muted); font-weight: 600; }
+
+[data-theme="memphis"] .tag2 {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+[data-theme="memphis"] .tag2.on,
+[data-theme="memphis"] .tag2:hover {
+  background: var(--info);
+  border-color: var(--border-default);
+  color: var(--border-strong);
+}
+[data-theme="memphis"] .tag2.mini { border-width: 1px; }
+
+/* ─── Note detail ─────────────────────────────────────────────── */
+[data-theme="memphis"] .note-detail {
+  background: var(--bg-app);
+  background-image: var(--pattern-app);
+  background-size: 12px 12px;
+  position: relative;
+}
+[data-theme="memphis"] .nd-head { border-bottom: 1.5px solid var(--border-default); background: var(--surface-1); }
+[data-theme="memphis"] .nd-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+[data-theme="memphis"] .nd-review-btn {
+  background: var(--ok);
+  color: var(--border-strong);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  border-radius: 7px;
+  font-weight: 700;
+}
+[data-theme="memphis"] .nd-review-btn:hover {
+  background: var(--ok);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--border-default);
+}
+[data-theme="memphis"] .nd-review-btn .kbd {
+  background: oklch(1 0 0 / 0.5);
+  border-color: var(--border-default);
+  color: var(--border-strong);
+}
+
+[data-theme="memphis"] .icon-btn {
+  border: 1.5px solid var(--border-default);
+  background: var(--surface-1);
+  border-radius: 7px;
+}
+[data-theme="memphis"] .icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--border-strong);
+}
+
+[data-theme="memphis"] .nd-banner {
+  border: 1.5px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 var(--border-default);
+}
+[data-theme="memphis"] .nd-banner.err { background: oklch(0.92 0.1 30); color: var(--border-strong); }
+[data-theme="memphis"] .nd-banner.err .nd-banner-title { color: var(--border-strong); }
+[data-theme="memphis"] .nd-banner.err .nd-banner-sub { color: var(--text-default); }
+[data-theme="memphis"] .nd-banner.err .nd-banner-btn {
+  background: var(--err);
+  color: oklch(1 0 0);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  border-radius: 6px;
+}
+[data-theme="memphis"] .nd-banner.info { background: oklch(0.93 0.1 220); color: var(--border-strong); }
+[data-theme="memphis"] .nd-banner.info .nd-banner-title { color: var(--border-strong); }
+[data-theme="memphis"] .nd-banner.info .nd-banner-sub { color: var(--text-default); }
+
+[data-theme="memphis"] .nd-summary {
+  border-left: 4px solid var(--accent);
+  background: var(--surface-2);
+  padding: 10px 14px;
+  border-radius: 0 10px 10px 0;
+  margin-bottom: 22px;
+}
+[data-theme="memphis"] .nd-summary p { font-family: var(--font-display); font-weight: 500; }
+[data-theme="memphis"] .nd-eyebrow { color: var(--accent-strong); }
+
+[data-theme="memphis"] .nd-tabs {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .nd-tab.active {
+  background: var(--warn);
+  color: var(--border-strong);
+  box-shadow: none;
+}
+
+[data-theme="memphis"] .nd-cleaned { font-weight: 450; }
+[data-theme="memphis"] .nd-raw {
+  background: var(--surface-2);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+}
+
+[data-theme="memphis"] .nd-reparse {
+  background: var(--surface-2);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+  border-radius: 10px;
+}
+[data-theme="memphis"] .nd-reparse-btn {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+[data-theme="memphis"] .nd-action {
+  border-radius: 8px;
+}
+[data-theme="memphis"] .nd-action:hover { background: var(--surface-2); }
+[data-theme="memphis"] .nd-action-check {
+  border: 1.5px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-1);
+}
+[data-theme="memphis"] .nd-action-check:hover { background: var(--ok); border-color: var(--border-default); color: var(--border-strong); }
+[data-theme="memphis"] .nd-action-check.checked { background: var(--ok); color: var(--border-strong); }
+[data-theme="memphis"] .al-owner { color: var(--accent-strong); }
+[data-theme="memphis"] .al-due.tone-err { color: var(--err); }
+[data-theme="memphis"] .al-due.tone-warn { color: oklch(0.5 0.16 65); }
+
+/* ─── Actions / Today / People ────────────────────────────────── */
+[data-theme="memphis"] .al-check {
+  border: 1.5px solid var(--border-default);
+  background: var(--surface-1);
+  border-radius: 4px;
+}
+[data-theme="memphis"] .al-check:hover { background: var(--ok); border-color: var(--border-default); color: var(--border-strong); }
+[data-theme="memphis"] .al-group-head { color: var(--accent-strong); font-weight: 700; }
+[data-theme="memphis"] .al-group-count { background: var(--surface-3); border: 1.5px solid var(--border-default); }
+
+[data-theme="memphis"] .today-pane {
+  background: var(--bg-app);
+  background-image: var(--pattern-app);
+  background-size: 12px 12px;
+  position: relative;
+}
+[data-theme="memphis"] .today-pane::before {
+  /* Big decorative circle in the corner */
+  content: "";
+  position: absolute;
+  top: 18px; right: 28px;
+  width: 96px; height: 96px;
+  border-radius: 999px;
+  background: var(--info);
+  border: 2px solid var(--border-default);
+  box-shadow: 4px 4px 0 var(--border-default);
+  z-index: 0;
+  pointer-events: none;
+}
+[data-theme="memphis"] .today-pane::after {
+  /* squiggle */
+  content: "";
+  position: absolute;
+  top: 78px; right: 142px;
+  width: 64px; height: 24px;
+  background: no-repeat center/contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 24' fill='none' stroke='%23121315' stroke-width='3' stroke-linecap='round'><path d='M3 12 q 8 -12 16 0 t 16 0 t 16 0 t 16 0' /></svg>");
+  pointer-events: none;
+  z-index: 0;
+}
+[data-theme="memphis"] .today-head, [data-theme="memphis"] .today-section { position: relative; z-index: 1; }
+[data-theme="memphis"] .today-head h1 { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .today-eyebrow { color: var(--accent-strong); }
+[data-theme="memphis"] .today-section-head h2 { color: var(--accent-strong); }
+[data-theme="memphis"] .today-section-count { background: var(--surface-3); border: 1.5px solid var(--border-default); }
+[data-theme="memphis"] .today-action,
+[data-theme="memphis"] .today-note {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 2px 2px 0 var(--border-default);
+  margin-bottom: 6px;
+}
+[data-theme="memphis"] .today-day {
+  border: 1.5px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--border-default);
+  background: var(--surface-1);
+}
+[data-theme="memphis"] .today-day.is-today { background: var(--warn); }
+[data-theme="memphis"] .today-day-count { font-family: var(--font-display); font-weight: 700; }
+
+[data-theme="memphis"] .people-list {
+  background: var(--bg-canvas);
+  background-image: var(--pattern-canvas);
+  border-right: 1.5px solid var(--border-default);
+}
+[data-theme="memphis"] .person-row.selected { background: var(--surface-3); border-left-color: var(--accent); }
+[data-theme="memphis"] .person-avatar { border: 1.5px solid var(--border-default); }
+[data-theme="memphis"] .person-pending { background: var(--accent); color: var(--accent-text); border: 1px solid var(--border-default); }
+
+[data-theme="memphis"] .person-detail {
+  background: var(--bg-app);
+  background-image: var(--pattern-app);
+  background-size: 12px 12px;
+}
+[data-theme="memphis"] .person-detail-name { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .person-col {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--border-default);
+  padding: 16px;
+}
+
+/* ─── Quick Capture · Memphis ─────────────────────────────────── */
+[data-theme="memphis"] .qc-stage {
+  background:
+    radial-gradient(circle at 18% 22%, var(--info) 0 60px, transparent 61px),
+    radial-gradient(circle at 78% 18%, var(--warn) 0 38px, transparent 39px),
+    radial-gradient(circle at 12% 78%, var(--ok) 0 30px, transparent 31px),
+    var(--bg-app);
+}
+[data-theme="memphis"] .qc-window {
+  border: 2px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 6px 6px 0 var(--border-default);
+}
+[data-theme="memphis"] .qc-titlebar {
+  background: var(--accent);
+  border-bottom: 1.5px solid var(--border-default);
+}
+[data-theme="memphis"] .qc-title-text { color: var(--accent-text); font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .qc-dot { background: var(--accent-text); box-shadow: none; }
+[data-theme="memphis"] .qc-tray-hint, [data-theme="memphis"] .qc-close { color: oklch(1 0 0 / 0.85); }
+[data-theme="memphis"] .qc-body textarea {
+  border: 1.5px solid var(--border-default);
+  border-radius: 8px;
+}
+[data-theme="memphis"] .qc-body textarea:focus { box-shadow: 3px 3px 0 var(--border-default); }
+[data-theme="memphis"] .qc-hint-row {
+  background: var(--info);
+  color: var(--border-strong);
+  border: 1.5px solid var(--border-default);
+  border-radius: 8px;
+}
+[data-theme="memphis"] .qc-hint-row strong { color: var(--border-strong); }
+[data-theme="memphis"] .qc-save {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+/* ─── Settings · Memphis ──────────────────────────────────────── */
+[data-theme="memphis"] .settings-backdrop {
+  background: oklch(0.85 0.05 80 / 0.6);
+}
+[data-theme="memphis"] .settings-sheet {
+  background: var(--bg-app);
+  border: 2px solid var(--border-default);
+  border-radius: 14px;
+  box-shadow: 6px 6px 0 var(--border-default);
+}
+[data-theme="memphis"] .ss-head h1 { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .ss-nav { background: var(--surface-1); border-right: 1.5px solid var(--border-default); }
+[data-theme="memphis"] .ss-nav-item.active {
+  background: var(--surface-3);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+}
+[data-theme="memphis"] .ss-section-head h2 { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .ss-field input,
+[data-theme="memphis"] .ss-field select,
+[data-theme="memphis"] .ss-hotkey,
+[data-theme="memphis"] .ss-path,
+[data-theme="memphis"] .ss-num {
+  background: var(--surface-input);
+  border: 1.5px solid var(--border-default);
+  border-radius: 7px;
+}
+[data-theme="memphis"] .toggle.on { background: var(--accent); }
+
+/* ─── kbd ─────────────────────────────────────────────────────── */
+[data-theme="memphis"] .kbd {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  color: var(--text-primary);
+  font-weight: 700;
+  box-shadow: 1px 1px 0 var(--border-default);
+  border-bottom-width: 1.5px;
+}
+
+/* ─── Empty / onboarding · Memphis ───────────────────────────── */
+[data-theme="memphis"] .il-empty-illu {
+  background: var(--info);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+  color: var(--border-strong);
+}
+[data-theme="memphis"] .onboarding {
+  position: relative;
+}
+[data-theme="memphis"] .onboarding::after {
+  /* confetti */
+  content: "";
+  position: absolute;
+  top: 36px; right: 24px;
+  width: 220px; height: 180px;
+  background:
+    no-repeat 0 0/40px 40px url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><polygon points='20,4 36,36 4,36' fill='%23ec4899' stroke='%23121315' stroke-width='3'/></svg>"),
+    no-repeat 110px 18px/52px 52px url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 52 52'><circle cx='26' cy='26' r='22' fill='%2349c5e3' stroke='%23121315' stroke-width='3'/></svg>"),
+    no-repeat 64px 92px/64px 64px url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><g fill='%23121315'><circle cx='8' cy='8' r='3'/><circle cx='24' cy='8' r='3'/><circle cx='40' cy='8' r='3'/><circle cx='56' cy='8' r='3'/><circle cx='8' cy='24' r='3'/><circle cx='24' cy='24' r='3'/><circle cx='40' cy='24' r='3'/><circle cx='56' cy='24' r='3'/><circle cx='8' cy='40' r='3'/><circle cx='24' cy='40' r='3'/><circle cx='40' cy='40' r='3'/><circle cx='56' cy='40' r='3'/><circle cx='8' cy='56' r='3'/><circle cx='24' cy='56' r='3'/><circle cx='40' cy='56' r='3'/><circle cx='56' cy='56' r='3'/></g></svg>"),
+    no-repeat 170px 90px/40px 80px url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 80' fill='none' stroke='%23121315' stroke-width='4' stroke-linecap='round'><path d='M6 10 q14 -10 28 0 q-14 10 0 20 q14 10 -14 20 q-14 10 0 20'/></svg>");
+  z-index: 0;
+  pointer-events: none;
+}
+[data-theme="memphis"] .onboarding > * { position: relative; z-index: 1; }
+[data-theme="memphis"] .onboarding h1 { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .onb-eyebrow { color: var(--accent-strong); }
+[data-theme="memphis"] .onb-step-num {
+  background: var(--warn);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 2px 2px 0 var(--border-default);
+  color: var(--border-strong);
+  font-weight: 700;
+}
+[data-theme="memphis"] .onb-primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+  font-weight: 700;
+}
+[data-theme="memphis"] .onb-secondary {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border-default);
+  box-shadow: 3px 3px 0 var(--border-default);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ─── Keyboard cheatsheet · Memphis ──────────────────────────── */
+[data-theme="memphis"] .kb-backdrop { background: oklch(0.85 0.05 80 / 0.55); }
+[data-theme="memphis"] .kb-sheet {
+  background: var(--surface-1);
+  border: 2px solid var(--border-default);
+  border-radius: 14px;
+  box-shadow: 6px 6px 0 var(--border-default);
+}
+[data-theme="memphis"] .kb-head h1 { font-family: var(--font-display); font-weight: 700; }
+[data-theme="memphis"] .kb-group-title { color: var(--accent-strong); border-color: var(--border-default); }
+[data-theme="memphis"] .kb-foot { background: var(--surface-2); border-top: 1.5px solid var(--border-default); }

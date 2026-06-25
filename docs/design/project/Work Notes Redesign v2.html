@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Work Notes v2 — calmer & action-first</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="app-v2.css" />
+<link rel="stylesheet" href="app-v2-extra.css" />
+<style>
+  html, body { height: 100%; }
+  body { background: #f0eee9; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="data-v2.jsx"></script>
+<script type="text/babel" src="inbox-screen-v2.jsx"></script>
+<script type="text/babel" src="other-screens.jsx"></script>
+<script type="text/babel" src="today-people-v2.jsx"></script>
+
+<script type="text/babel">
+  const { DesignCanvas, DCSection, DCArtboard } = window;
+
+  function App() {
+    return (
+      <DesignCanvas>
+        <DCSection id="hero" title="v2 · Notes mode" subtitle="Calmer cards, lead-with-summary, prominent Mark reviewed (R)">
+          <DCArtboard id="inbox-default" label="01 · Inbox · Maria selected" width={1280} height={800}>
+            <InboxScreen initialSelectedId="n1" />
+          </DCArtboard>
+          <DCArtboard id="inbox-pinned" label="02 · Pinned note · reviewed" width={1280} height={800}>
+            <InboxScreen initialSelectedId="n3" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="actions" title="v2 · Actions mode" subtitle="Same shell, action items become primary objects. Grouped by Due bucket.">
+          <DCArtboard id="actions-list" label="03 · Actions · grouped by due date" width={1280} height={800}>
+            <InboxScreen initialMode="actions" initialSelectedId="n1" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="today" title="v2 · Today" subtitle="What's due, what was captured, what's coming this week">
+          <DCArtboard id="today" label="04 · Today" width={1280} height={800}>
+            <TodayView />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="people" title="v2 · People" subtitle="Per-coworker view · what you owe them vs. what they owe you">
+          <DCArtboard id="people" label="05 · People — Maria" width={1280} height={800}>
+            <PeopleView initialSelected="Maria" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="states" title="States" subtitle="Parsing, failed, reparse">
+          <DCArtboard id="parsing" label="06 · Background parsing" width={1280} height={800}>
+            <InboxScreen initialSelectedId="n6" />
+          </DCArtboard>
+          <DCArtboard id="failed" label="07 · Parse failed · retry" width={1280} height={800}>
+            <InboxScreen initialSelectedId="n4" initialFilter="failed" />
+          </DCArtboard>
+          <DCArtboard id="reparse" label="08 · Reparse with feedback" width={1280} height={800}>
+            <InboxScreen initialSelectedId="n1" initialReparseOpen={true} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="keyboard" title="Keyboard layer" subtitle="? overlay — the &quot;advanced when needed&quot; surface">
+          <DCArtboard id="keyboard" label="09 · ? cheatsheet overlay" width={1280} height={800}>
+            <KeyboardOverlay />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="capture" title="Quick capture & settings" subtitle="Carried from v1 — capture window, settings sheet">
+          <DCArtboard id="qc" label="10 · Quick capture popup" width={480} height={360}>
+            <QuickCapture />
+          </DCArtboard>
+          <DCArtboard id="settings" label="11 · Settings · Capture & parser" width={1280} height={800}>
+            <SettingsSheet />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="onboarding" title="First run" subtitle="Zero notes — teach capture in three steps">
+          <DCArtboard id="empty" label="12 · Empty state · onboarding" width={1280} height={800}>
+            <EmptyStateScreen />
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
