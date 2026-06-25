@@ -3,9 +3,11 @@ import { derived, get, writable } from "svelte/store";
 import {
   acceptActionItem,
   completeActionItem,
+  createManualFollowup,
   dismissActionItem,
   getNote,
   getSettings,
+  listFollowups,
   listInbox,
   listSuggestedActions,
   reopenActionItem,
@@ -16,12 +18,22 @@ import {
   permanentlyDeleteNote,
   saveCaptureNote,
   saveSettings,
+  updateFollowupLane as updateFollowupLaneApi,
+  updateFollowupState as updateFollowupStateApi,
 } from "$lib/api";
-import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
+import type {
+  ActionReviewItem,
+  AppSettings,
+  FollowupItem,
+  FollowupState,
+  InboxFilters,
+  NoteDetail,
+  NoteListItem,
+} from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
-export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people";
+export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups";
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -36,6 +48,10 @@ type WorkNotesApi = {
   dismissActionItem: typeof dismissActionItem;
   completeActionItem: typeof completeActionItem;
   reopenActionItem: typeof reopenActionItem;
+  listFollowups: typeof listFollowups;
+  createManualFollowup: typeof createManualFollowup;
+  updateFollowupState: typeof updateFollowupStateApi;
+  updateFollowupLane: typeof updateFollowupLaneApi;
   listSuggestedActions: typeof listSuggestedActions;
   getSettings: typeof getSettings;
   saveSettings: typeof saveSettings;
@@ -54,6 +70,10 @@ const defaultApi: WorkNotesApi = {
   dismissActionItem,
   completeActionItem,
   reopenActionItem,
+  listFollowups,
+  createManualFollowup,
+  updateFollowupState: updateFollowupStateApi,
+  updateFollowupLane: updateFollowupLaneApi,
   listSuggestedActions,
   getSettings,
   saveSettings,
@@ -65,10 +85,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const viewMode = writable<InboxViewMode>("inbox");
   const selectedNote = writable<NoteDetail | null>(null);
   const suggestedActions = writable<ActionReviewItem[]>([]);
+  const followups = writable<FollowupItem[]>([]);
   const settings = writable<AppSettings | null>(null);
   const loadingInbox = writable(false);
   const loadingNote = writable(false);
   const loadingSuggestedActions = writable(false);
+  const loadingFollowups = writable(false);
   const savingCapture = writable(false);
   const savingSettings = writable(false);
   const busyActionId = writable<string | null>(null);
@@ -167,6 +189,19 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       error.set(errorMessage(unknownError, "Could not load suggested actions."));
     } finally {
       loadingSuggestedActions.set(false);
+    }
+  }
+
+  async function loadFollowups(limit = 200): Promise<void> {
+    loadingFollowups.set(true);
+    error.set(null);
+
+    try {
+      followups.set(await api.listFollowups(limit));
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not load follow-ups."));
+    } finally {
+      loadingFollowups.set(false);
     }
   }
 
@@ -288,6 +323,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await loadSuggestedActions(500);
   }
 
+  async function showFollowups(): Promise<void> {
+    viewMode.set("followups");
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    await loadFollowups();
+  }
+
   async function loadArchive(): Promise<void> {
     await showArchive();
   }
@@ -344,6 +385,44 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function reopenAction(actionItemId: string): Promise<void> {
     await updateAction(actionItemId, api.reopenActionItem, false);
+  }
+
+  async function createFollowupFromSelectedNote(
+    text: string,
+    lane?: string | null,
+  ): Promise<void> {
+    const note = get(selectedNote);
+    const trimmed = text.trim();
+    if (!note || !trimmed) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.createManualFollowup(note.id, trimmed, normalizeLane(lane));
+      selectedNote.set(await api.getNote(note.id));
+      await loadInbox();
+      await loadFollowups();
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not create follow-up."));
+      throw unknownError;
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function updateFollowupState(
+    actionItemId: string,
+    state: FollowupState,
+  ): Promise<void> {
+    await updateFollowup(actionItemId, () => api.updateFollowupState(actionItemId, state));
+  }
+
+  async function updateFollowupLane(actionItemId: string, lane?: string | null): Promise<void> {
+    const nextLane = normalizeLane(lane);
+    await updateFollowup(actionItemId, () => api.updateFollowupLane(actionItemId, nextLane));
   }
 
   async function loadSettings(): Promise<void> {
@@ -421,11 +500,48 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       if (refreshSuggestedActions) {
         await loadSuggestedActions();
       }
+      if (get(viewMode) === "followups") {
+        await loadFollowups();
+      }
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not update action."));
     } finally {
       busyActionId.set(null);
     }
+  }
+
+  async function updateFollowup(actionItemId: string, update: () => Promise<void>): Promise<void> {
+    const shouldRefreshSelectedNote = selectedNoteHasAction(actionItemId);
+
+    busyActionId.set(actionItemId);
+    error.set(null);
+
+    try {
+      await update();
+      await loadFollowups();
+      if (shouldRefreshSelectedNote) {
+        const note = get(selectedNote);
+        if (note) {
+          selectedNote.set(await api.getNote(note.id));
+        }
+      }
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not update follow-up."));
+    } finally {
+      busyActionId.set(null);
+    }
+  }
+
+  function selectedNoteHasAction(actionItemId: string): boolean {
+    const note = get(selectedNote);
+    if (!note) {
+      return false;
+    }
+
+    return (
+      note.actionItems.some((action) => action.id === actionItemId) ||
+      get(followups).some((item) => item.id === actionItemId && item.noteId === note.id)
+    );
   }
 
   return {
@@ -435,10 +551,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     filteredInbox,
     selectedNote,
     suggestedActions,
+    followups,
     settings,
     loadingInbox,
     loadingNote,
     loadingSuggestedActions,
+    loadingFollowups,
     savingCapture,
     savingSettings,
     busyActionId,
@@ -447,6 +565,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     loadInbox,
     loadArchive,
     loadSuggestedActions,
+    loadFollowups,
     selectNote,
     saveCapture,
     showCapturedNote,
@@ -458,12 +577,16 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showActions,
     showToday,
     showPeople,
+    showFollowups,
     restoreSelectedNote,
     permanentlyDeleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,
     completeAction,
     reopenAction,
+    createFollowupFromSelectedNote,
+    updateFollowupState,
+    updateFollowupLane,
     loadSettings,
     persistSettings,
     updateFilters,
@@ -480,6 +603,10 @@ function errorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function normalizeLane(lane?: string | null): string | null {
+  return lane?.trim() || null;
 }
 
 function isNotFoundError(error: unknown): boolean {

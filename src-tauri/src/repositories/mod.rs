@@ -61,7 +61,7 @@ pub(crate) fn u32_from_i64(field: &'static str, value: i64) -> RepositoryResult<
 #[cfg(test)]
 mod tests {
     use crate::db::Database;
-    use crate::domain::{ActionStatus, ParseStatus, ReviewStatus, TagKind};
+    use crate::domain::{ActionStatus, FollowupState, ParseStatus, ReviewStatus, TagKind};
 
     use super::{ActionItemRepository, NoteRepository, ParseJobRepository, TagRepository};
 
@@ -223,6 +223,7 @@ mod tests {
         let note_actions = actions.list_for_note(note.id).unwrap();
         assert_eq!(note_actions.len(), 1);
         assert_eq!(note_actions[0].status, ActionStatus::Accepted);
+        assert_eq!(note_actions[0].followup_state, Some(FollowupState::Open));
     }
 
     #[test]
@@ -322,5 +323,60 @@ mod tests {
             .set_status(older_action.id, ActionStatus::Dismissed)
             .unwrap();
         assert!(!actions.has_suggested_for_note(older.id).unwrap());
+    }
+
+    #[test]
+    fn action_repository_lists_followups_with_lanes_and_tags() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let tags = TagRepository::new(db.clone());
+        let actions = ActionItemRepository::new(db);
+
+        let project_note = notes.create_raw_note("Front desk printer").unwrap();
+        let project = tags.upsert("Front desk", TagKind::Project).unwrap();
+        tags.apply_to_note(project_note.id, project.id, "parser", Some(0.9))
+            .unwrap();
+
+        let accepted = actions
+            .create(
+                project_note.id,
+                "Check printer alignment",
+                Some("Rina"),
+                None,
+                ActionStatus::Accepted,
+                "parser",
+                Some(0.8),
+            )
+            .unwrap();
+        actions
+            .set_followup_state(accepted.id, FollowupState::Waiting)
+            .unwrap();
+        actions
+            .set_followup_lane(accepted.id, Some("Facilities"))
+            .unwrap();
+
+        let manual = actions
+            .create_manual_followup(project_note.id, "Ask Rina for a sample badge", Some("Ops"))
+            .unwrap();
+
+        let suggested = actions
+            .create_suggested(project_note.id, "Not accepted yet", None, None, Some(0.5))
+            .unwrap();
+
+        let items = actions.list_followups(100).unwrap();
+
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![manual.id, accepted.id]
+        );
+        assert_eq!(items[0].followup_lane.as_deref(), Some("Ops"));
+        assert_eq!(items[0].followup_state, Some(FollowupState::Open));
+        assert_eq!(items[0].source, "user");
+        assert_eq!(items[1].followup_lane.as_deref(), Some("Facilities"));
+        assert_eq!(items[1].followup_state, Some(FollowupState::Waiting));
+        assert_eq!(items[1].source, "parser");
+        assert_eq!(items[1].tags[0].tag.name, "Front desk");
+        assert_eq!(items[1].tags[0].tag.kind, TagKind::Project);
+        assert!(!items.iter().any(|item| item.id == suggested.id));
     }
 }

@@ -51,6 +51,8 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           status TEXT NOT NULL,
           source TEXT NOT NULL,
           confidence REAL,
+          followup_state TEXT,
+          followup_lane TEXT,
           FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
 
@@ -102,6 +104,23 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
     ensure_column(connection, "parse_jobs", "feedback", "feedback TEXT")?;
     ensure_column(connection, "parse_runs", "feedback", "feedback TEXT")?;
     ensure_column(connection, "notes", "title", "title TEXT")?;
+    ensure_column(
+        connection,
+        "action_items",
+        "followup_state",
+        "followup_state TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "action_items",
+        "followup_lane",
+        "followup_lane TEXT",
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_action_items_status_followup_state
+         ON action_items(status, followup_state)",
+        [],
+    )?;
     connection.execute(
         "UPDATE notes
          SET title = CASE

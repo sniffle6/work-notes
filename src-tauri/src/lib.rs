@@ -20,6 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = windowing::show_main_window(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let project_dirs = directories::ProjectDirs::from("com", "aweber", "Work Notes")
@@ -63,6 +64,10 @@ pub fn run() {
             commands::complete_action_item,
             commands::reopen_action_item,
             commands::list_suggested_actions,
+            commands::list_followups,
+            commands::create_manual_followup,
+            commands::update_followup_state,
+            commands::update_followup_lane,
             commands::get_settings,
             commands::save_settings,
             commands::hide_quick_capture

@@ -32,8 +32,11 @@ Settings that affect later jobs:
 - `codexCommandPath`
 - `parserTimeoutSeconds`
 - `parserMaxRetries`
+- `linkedWorkspacePaths`
 
 The background worker reads persisted settings as it processes jobs, so settings changes do not require restarting the app.
+
+When `linkedWorkspacePaths` contains existing directories, the parser prompt lists them as optional repo/directory context and the Codex process runs from the first existing linked directory. The parser must inspect linked context only when useful and must not claim repo facts unless the raw note states them or the linked context was inspected.
 
 ## Output Shape
 

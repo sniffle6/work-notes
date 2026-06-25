@@ -44,6 +44,7 @@ pub struct ParserProviderConfig {
     pub codex_command_path: String,
     pub schema_path: String,
     pub timeout_seconds: u64,
+    pub linked_workspace_paths: Vec<String>,
 }
 
 impl Default for ParserProviderConfig {
@@ -54,6 +55,7 @@ impl Default for ParserProviderConfig {
             codex_command_path: DEFAULT_CODEX_PROGRAM.to_string(),
             schema_path: "schemas/parse-note.schema.json".to_string(),
             timeout_seconds: DEFAULT_PARSER_TIMEOUT_SECONDS,
+            linked_workspace_paths: Vec::new(),
         }
     }
 }
@@ -63,6 +65,7 @@ impl ParserProviderConfig {
         Self {
             codex_command_path: settings.codex_command_path.clone(),
             timeout_seconds: settings.parser_timeout_seconds,
+            linked_workspace_paths: settings.linked_workspace_paths.clone(),
             ..Self::default()
         }
     }
@@ -178,7 +181,8 @@ impl ParseQueue {
         let provider = CodexParserProvider::new()
             .program(provider_config.codex_command_path)
             .schema_path(provider_config.schema_path)
-            .timeout(Duration::from_secs(provider_config.timeout_seconds));
+            .timeout(Duration::from_secs(provider_config.timeout_seconds))
+            .linked_workspace_paths(provider_config.linked_workspace_paths);
 
         let Some(job) = self.claim_next()? else {
             return Ok(false);
@@ -563,9 +567,30 @@ mod tests {
         TagKind as ParserTagKind,
     };
     use crate::services::parse_queue::{ParseQueue, ParseQueueConfig, ParserProviderConfig};
+    use crate::services::settings::AppSettings;
 
     fn test_repositories() -> AppRepositories {
         AppRepositories::new(Database::in_memory().unwrap())
+    }
+
+    #[test]
+    fn parser_provider_config_includes_linked_workspaces_from_settings() {
+        let mut settings = AppSettings::default();
+        settings.codex_command_path = "codex-test".to_string();
+        settings.parser_timeout_seconds = 123;
+        settings.linked_workspace_paths = vec![
+            "C:\\code\\product".to_string(),
+            "D:\\scratch\\other".to_string(),
+        ];
+
+        let config = ParserProviderConfig::from_settings(&settings);
+
+        assert_eq!(config.codex_command_path, "codex-test");
+        assert_eq!(config.timeout_seconds, 123);
+        assert_eq!(
+            config.linked_workspace_paths,
+            settings.linked_workspace_paths
+        );
     }
 
     #[test]

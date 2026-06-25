@@ -1,6 +1,6 @@
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, EventTarget, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 use super::{
@@ -38,7 +38,11 @@ pub fn hide_quick_capture_window(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn focus_note_textarea(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(QUICK_CAPTURE_WINDOW_LABEL) {
-        window.emit(FOCUS_NOTE_TEXTAREA_EVENT, ())?;
+        window.emit_to(
+            EventTarget::webview_window(QUICK_CAPTURE_WINDOW_LABEL),
+            FOCUS_NOTE_TEXTAREA_EVENT,
+            (),
+        )?;
     }
 
     Ok(())

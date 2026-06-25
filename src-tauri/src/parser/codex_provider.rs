@@ -1,5 +1,5 @@
 use super::{
-    prompt::build_parse_prompt_with_feedback,
+    prompt::build_parse_prompt_with_context,
     types::{ParserError, ParserOutput, ParserProvider, ParserResult},
     validate::validate_parser_json,
 };
@@ -76,6 +76,7 @@ pub struct CodexParserProvider {
     program: String,
     schema_path: String,
     timeout: Duration,
+    linked_workspace_paths: Vec<PathBuf>,
 }
 
 impl Default for CodexParserProvider {
@@ -84,6 +85,7 @@ impl Default for CodexParserProvider {
             program: DEFAULT_CODEX_PROGRAM.to_string(),
             schema_path: DEFAULT_SCHEMA_PATH.to_string(),
             timeout: DEFAULT_TIMEOUT,
+            linked_workspace_paths: Vec::new(),
         }
     }
 }
@@ -105,6 +107,11 @@ impl CodexParserProvider {
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn linked_workspace_paths(mut self, paths: Vec<String>) -> Self {
+        self.linked_workspace_paths = paths.into_iter().map(PathBuf::from).collect();
         self
     }
 
@@ -142,13 +149,28 @@ impl CodexParserProvider {
             .schema_path(schema_path)
             .output_path(output_arg)
             .build();
+        let active_workspace_paths = self.active_linked_workspace_paths();
+        let prompt_workspace_paths = active_workspace_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let working_dir = active_workspace_paths.first().map(PathBuf::as_path);
 
         run_codex_command(
             &command,
-            &build_parse_prompt_with_feedback(raw_note, feedback),
+            &build_parse_prompt_with_context(raw_note, feedback, &prompt_workspace_paths),
             self.timeout,
+            working_dir,
         )?;
         read_parser_result(output_path)
+    }
+
+    fn active_linked_workspace_paths(&self) -> Vec<PathBuf> {
+        self.linked_workspace_paths
+            .iter()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .collect()
     }
 }
 
@@ -231,25 +253,30 @@ fn run_codex_command(
     command: &CodexCommandSpec,
     stdin_body: &str,
     timeout: Duration,
+    working_dir: Option<&Path>,
 ) -> Result<(), CodexParserError> {
-    let mut child = Command::new(&command.program)
+    let mut process = Command::new(&command.program);
+    process
         .args(&command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| {
-            if source.kind() == io::ErrorKind::NotFound {
-                CodexParserError::MissingCommand {
-                    program: command.program.clone(),
-                }
-            } else {
-                CodexParserError::Io {
-                    context: "spawn codex parser command",
-                    source,
-                }
+        .stderr(Stdio::piped());
+    if let Some(working_dir) = working_dir {
+        process.current_dir(working_dir);
+    }
+
+    let mut child = process.spawn().map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            CodexParserError::MissingCommand {
+                program: command.program.clone(),
             }
-        })?;
+        } else {
+            CodexParserError::Io {
+                context: "spawn codex parser command",
+                source,
+            }
+        }
+    })?;
     let stderr_reader = child.stderr.take().map(|mut pipe| {
         thread::spawn(move || {
             let mut stderr = String::new();
@@ -381,7 +408,8 @@ fn read_parser_result(output_path: PathBuf) -> Result<ParserOutput, CodexParserE
 #[cfg(test)]
 mod tests {
     use super::{
-        default_schema_arg_path, CodexCommandBuilder, DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH,
+        default_schema_arg_path, CodexCommandBuilder, CodexParserProvider, DEFAULT_CODEX_PROGRAM,
+        DEFAULT_SCHEMA_PATH,
     };
 
     #[test]
@@ -428,6 +456,21 @@ mod tests {
                 "parse-result.json",
                 "-",
             ]
+        );
+    }
+
+    #[test]
+    fn linked_workspace_paths_only_include_existing_directories() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let missing = temp_dir.path().join("missing");
+        let provider = CodexParserProvider::new().linked_workspace_paths(vec![
+            temp_dir.path().display().to_string(),
+            missing.display().to_string(),
+        ]);
+
+        assert_eq!(
+            provider.active_linked_workspace_paths(),
+            vec![temp_dir.path().to_path_buf()]
         );
     }
 }

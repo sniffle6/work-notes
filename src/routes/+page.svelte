@@ -6,6 +6,7 @@
   import { hideQuickCapture } from "$lib/api";
   import ActionsList from "$lib/components/ActionsList.svelte";
   import AppShell from "$lib/components/AppShell.svelte";
+  import FollowupsView from "$lib/components/FollowupsView.svelte";
   import InboxList from "$lib/components/InboxList.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
   import PeopleView from "$lib/components/PeopleView.svelte";
@@ -27,10 +28,12 @@
     viewMode,
     selectedNote,
     suggestedActions,
+    followups,
     settings,
     loadingInbox,
     loadingNote,
     loadingSuggestedActions,
+    loadingFollowups,
     savingCapture,
     savingSettings,
     busyActionId,
@@ -56,6 +59,7 @@
   const metrics = $derived([
     { label: "Inbox", value: String($inbox.length) },
     { label: "Needs review", value: String($suggestedActions.length) },
+    { label: "Follow-ups", value: String($followups.filter((item) => item.status !== "done").length) },
     { label: "Parse failed", value: String($inbox.filter((note) => note.parseStatus === "failed").length) },
   ]);
   const topTags = $derived(
@@ -91,6 +95,10 @@
     };
 
     void listen("quick-capture:focus-note-textarea", async () => {
+      if (currentWindowLabel !== "quick-capture") {
+        return;
+      }
+
       quickCaptureOpen = true;
       await tick();
       await quickCapturePanel?.focusNoteInput();
@@ -105,6 +113,11 @@
 
         if (get(viewMode) === "people") {
           void workNotes.showPeople();
+          return;
+        }
+
+        if (get(viewMode) === "followups") {
+          void workNotes.showFollowups();
           return;
         }
 
@@ -219,6 +232,11 @@
       return;
     }
 
+    if (event.detail === "followups") {
+      await workNotes.showFollowups();
+      return;
+    }
+
     await workNotes.showInbox();
   }
 
@@ -230,6 +248,22 @@
   async function openNoteFromPeople(noteId: string) {
     await workNotes.showInbox();
     await workNotes.selectNote(noteId);
+  }
+
+  async function openNoteFromFollowup(noteId: string) {
+    await workNotes.showInbox();
+    await workNotes.selectNote(noteId);
+  }
+
+  async function createFollowupFromNote(
+    event: CustomEvent<{ text: string; lane: string | null; done: () => void }>,
+  ) {
+    try {
+      await workNotes.createFollowupFromSelectedNote(event.detail.text, event.detail.lane);
+      event.detail.done();
+    } catch {
+      // The store exposes the error; keep the form open so the user can retry.
+    }
   }
 
   async function restoreSelectedNote() {
@@ -292,7 +326,18 @@
       <p class="app-error">{$error}</p>
     {/if}
 
-    {#if $viewMode === "today"}
+    {#if $viewMode === "followups"}
+      <FollowupsView
+        followups={$followups}
+        loading={$loadingFollowups}
+        busyActionId={$busyActionId}
+        on:openNote={(event) => void openNoteFromFollowup(event.detail)}
+        on:updateState={(event) => void workNotes.updateFollowupState(event.detail.id, event.detail.state)}
+        on:updateLane={(event) => void workNotes.updateFollowupLane(event.detail.id, event.detail.lane)}
+        on:complete={(event) => void workNotes.completeAction(event.detail)}
+        on:reopen={(event) => void workNotes.reopenAction(event.detail)}
+      />
+    {:else if $viewMode === "today"}
       <TodayView
         notes={$inbox}
         actions={$suggestedActions}
@@ -359,6 +404,7 @@
             on:dismissAction={(event) => void workNotes.dismissSuggestedAction(event.detail)}
             on:completeAction={(event) => void workNotes.completeAction(event.detail)}
             on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
+            on:createFollowup={(event) => void createFollowupFromNote(event)}
           />
         </div>
       </div>
@@ -391,13 +437,17 @@
 
 <style>
   :global(html) {
+    height: 100%;
     min-height: 100%;
+    overflow: hidden;
   }
 
   :global(body) {
+    height: 100%;
     min-height: 100%;
     margin: 0;
     background: var(--color-app-bg);
+    overflow: hidden;
   }
 
   :global(*) {
@@ -407,15 +457,18 @@
   .workspace-grid {
     display: grid;
     grid-template-columns: 348px minmax(0, 1fr);
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .detail-stack {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -460,6 +513,7 @@
   @media (max-width: 980px) {
     .workspace-grid {
       grid-template-columns: 1fr;
+      grid-template-rows: minmax(220px, 42vh) minmax(0, 1fr);
     }
   }
 </style>

@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 import type { NoteDetail as NoteDetailType } from "$lib/types";
 import NoteDetail from "./NoteDetail.svelte";
@@ -80,6 +81,44 @@ describe("NoteDetail", () => {
 
     expect(restoreNote).toHaveBeenCalledTimes(1);
     expect(permanentlyDeleteNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches manual follow-up text and lane without clearing until done", async () => {
+    const createFollowup = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: noteDetail() },
+      events: { createFollowup },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Add follow-up" }));
+
+    const textInput = screen.getByLabelText<HTMLInputElement>("Follow-up text");
+    const laneInput = screen.getByLabelText<HTMLInputElement>("Follow-up lane");
+
+    await fireEvent.input(textInput, { target: { value: "  Send Robert the AI feasibility summary.  " } });
+    await fireEvent.input(laneInput, { target: { value: "  Waiting  " } });
+    await fireEvent.click(screen.getByRole("button", { name: "Create follow-up" }));
+
+    expect(createFollowup).toHaveBeenCalledTimes(1);
+    expect(createFollowup.mock.calls[0][0].detail.text).toBe("Send Robert the AI feasibility summary.");
+    expect(createFollowup.mock.calls[0][0].detail.lane).toBe("Waiting");
+    expect(textInput.value).toBe("  Send Robert the AI feasibility summary.  ");
+    expect(laneInput.value).toBe("  Waiting  ");
+
+    createFollowup.mock.calls[0][0].detail.done();
+    await tick();
+
+    expect(screen.queryByLabelText("Follow-up text")).toBeNull();
+  });
+
+  it("does not show manual follow-up creation for archived notes", () => {
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), isArchived: true } },
+    });
+
+    expect(screen.queryByRole("button", { name: "Add follow-up" })).toBeNull();
+    expect(screen.queryByLabelText("Follow-up text")).toBeNull();
   });
 
   it("dispatches action accept and dismiss from suggested action rows", async () => {

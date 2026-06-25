@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
-import type { ActionReviewItem, AppSettings, InboxFilters, NoteDetail, NoteListItem } from "$lib/types";
+import type {
+  ActionItem,
+  ActionReviewItem,
+  AppSettings,
+  FollowupItem,
+  FollowupState,
+  InboxFilters,
+  NoteDetail,
+  NoteListItem,
+} from "$lib/types";
 import { createWorkNotesStore } from "./inbox";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
@@ -422,6 +431,100 @@ describe("createWorkNotesStore", () => {
     expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
   });
 
+  it("enters follow-ups view and loads follow-ups", async () => {
+    const item = followup({ id: "followup-1" });
+    const api = testApi({
+      listFollowups: vi.fn().mockResolvedValue([item]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showArchive();
+    await store.showFollowups();
+
+    expect(get(store.viewMode)).toBe("followups");
+    expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
+    expect(api.listFollowups).toHaveBeenLastCalledWith(200);
+    expect(get(store.followups)).toEqual([item]);
+    expect(get(store.loadingFollowups)).toBe(false);
+  });
+
+  it("refreshes follow-ups after accepting when follow-ups view is active", async () => {
+    const accepted = followup({ id: "action-1", status: "accepted" });
+    const api = testApi({
+      listFollowups: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([accepted]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showFollowups();
+    await store.acceptSuggestedAction("action-1");
+
+    expect(api.acceptActionItem).toHaveBeenCalledWith("action-1");
+    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(get(store.followups)).toEqual([accepted]);
+  });
+
+  it("creates a manual follow-up from the selected note and refreshes the board", async () => {
+    const source = note({ id: "note-1" });
+    const created = followup({
+      id: "manual-1",
+      noteId: "note-1",
+      text: "Ask Jordan for the export sample.",
+      source: "user",
+      followupLane: "Waiting",
+    });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([source]),
+      listFollowups: vi.fn().mockResolvedValue([created]),
+      getNote: vi
+        .fn()
+        .mockResolvedValueOnce({ ...source, actionItems: [] })
+        .mockResolvedValue({ ...source, actionItems: [created] }),
+      createManualFollowup: vi.fn().mockResolvedValue(created),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.createFollowupFromSelectedNote("  Ask Jordan for the export sample.  ", "  Waiting  ");
+
+    expect(api.createManualFollowup).toHaveBeenCalledWith(
+      "note-1",
+      "Ask Jordan for the export sample.",
+      "Waiting",
+    );
+    expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+    expect(api.listInbox).toHaveBeenCalled();
+    expect(api.listFollowups).toHaveBeenLastCalledWith(200);
+    expect(get(store.selectedNote)?.actionItems.map((item) => item.id)).toEqual(["manual-1"]);
+    expect(get(store.followups)).toEqual([created]);
+  });
+
+  it("updates follow-up state and lane", async () => {
+    const current = followup({ id: "action-1", followupState: "open", followupLane: null });
+    const waiting = followup({ id: "action-1", followupState: "waiting", followupLane: null });
+    const assignedLane = followup({ id: "action-1", followupState: "waiting", followupLane: "Vendor" });
+    const api = testApi({
+      getNote: vi.fn().mockResolvedValue({ ...note(), actionItems: [current] }),
+      listFollowups: vi
+        .fn()
+        .mockResolvedValueOnce([waiting])
+        .mockResolvedValueOnce([assignedLane]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.updateFollowupState("action-1", "waiting");
+    await store.updateFollowupLane("action-1", "  Vendor  ");
+
+    expect(api.updateFollowupState).toHaveBeenCalledWith("action-1", "waiting");
+    expect(api.updateFollowupLane).toHaveBeenCalledWith("action-1", "Vendor");
+    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(api.getNote).toHaveBeenCalledTimes(3);
+    expect(get(store.followups)).toEqual([assignedLane]);
+  });
+
   it("refreshes selected note, inbox, and suggested queue after accepting an action", async () => {
     const api = testApi({
       listInbox: vi.fn().mockResolvedValue([note({ suggestedActionItemCount: 0 })]),
@@ -472,6 +575,16 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     completeActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     reopenActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    listFollowups: vi.fn<(limit?: number) => Promise<FollowupItem[]>>().mockResolvedValue([]),
+    createManualFollowup: vi
+      .fn<(noteId: string, text: string, lane?: string | null) => Promise<ActionItem>>()
+      .mockResolvedValue(followup()),
+    updateFollowupState: vi
+      .fn<(actionItemId: string, state: FollowupState) => Promise<void>>()
+      .mockResolvedValue(undefined),
+    updateFollowupLane: vi
+      .fn<(actionItemId: string, lane?: string | null) => Promise<void>>()
+      .mockResolvedValue(undefined),
     listSuggestedActions: vi.fn<(limit?: number) => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
     saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
@@ -493,12 +606,32 @@ function reviewItem(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem
   };
 }
 
+function followup(overrides: Partial<FollowupItem> = {}): FollowupItem {
+  return {
+    id: "action-1",
+    noteId: "note-1",
+    noteTitle: "Kiosk 7 telemetry IDs",
+    text: "Bring serial list into the Tuesday sync.",
+    owner: "Maya",
+    dueDate: null,
+    status: "accepted",
+    source: "parser",
+    confidence: 0.82,
+    followupState: "open",
+    followupLane: null,
+    tags: [{ id: "tag-maya", name: "Maya", kind: "person", source: "ai", confidence: 0.94 }],
+    createdAt: "2026-05-20T13:42:00.000Z",
+    ...overrides,
+  };
+}
+
 function settings(): AppSettings {
   return {
     hotkey: "Ctrl+Shift+Space",
     parserTimeoutSeconds: 30,
     parserMaxRetries: 3,
     codexCommandPath: "codex",
+    linkedWorkspacePaths: [],
     selectedTheme: "dark-compact",
   };
 }

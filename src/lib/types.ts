@@ -10,6 +10,10 @@ export type ActionStatus = "suggested" | "accepted" | "dismissed" | "done";
 
 export type ActionItemStatus = ActionStatus;
 
+export type FollowupState = "open" | "waiting" | "blocked";
+
+export type FollowupDisplayState = FollowupState | "done";
+
 export type Tag = {
   id: string;
   name: string;
@@ -29,6 +33,8 @@ export type ActionItem = {
   source: "parser" | "user" | string;
   confidence?: number | null;
   noteTitle?: string;
+  followupState?: FollowupState | null;
+  followupLane?: string | null;
 };
 
 export type ActionReviewItem = {
@@ -40,6 +46,28 @@ export type ActionReviewItem = {
   dueDate?: string | null;
   confidence?: number | null;
   createdAt: string;
+};
+
+export type FollowupItem = {
+  id: string;
+  noteId: string;
+  noteTitle: string;
+  text: string;
+  owner?: string | null;
+  dueDate?: string | null;
+  status: Extract<ActionStatus, "accepted" | "done">;
+  source: "parser" | "user" | string;
+  confidence?: number | null;
+  followupState?: FollowupState | null;
+  followupLane?: string | null;
+  tags: Tag[];
+  createdAt: string;
+};
+
+export type FollowupLane = {
+  name: string;
+  activeCount: number;
+  followups: FollowupItem[];
 };
 
 export type NoteListItem = {
@@ -78,6 +106,7 @@ export type AppSettings = {
   parserTimeoutSeconds: number;
   parserMaxRetries?: number;
   codexCommandPath: string;
+  linkedWorkspacePaths?: string[];
   selectedTheme: string;
   launchAtStartup?: boolean;
   minimizeToTray?: boolean;

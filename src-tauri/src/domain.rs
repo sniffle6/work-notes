@@ -207,6 +207,36 @@ impl ActionStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowupState {
+    Open,
+    Waiting,
+    Blocked,
+}
+
+impl FollowupState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Waiting => "waiting",
+            Self::Blocked => "blocked",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Result<Self, DomainError> {
+        match value {
+            "open" => Ok(Self::Open),
+            "waiting" => Ok(Self::Waiting),
+            "blocked" => Ok(Self::Blocked),
+            _ => Err(DomainError::InvalidEnum {
+                field: "followup_state",
+                value: value.to_string(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub id: NoteId,
     pub title: String,
@@ -275,6 +305,8 @@ pub struct ActionItem {
     pub status: ActionStatus,
     pub source: String,
     pub confidence: Option<f64>,
+    pub followup_state: Option<FollowupState>,
+    pub followup_lane: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -286,6 +318,23 @@ pub struct ActionReviewItem {
     pub owner: Option<String>,
     pub due_date: Option<String>,
     pub confidence: Option<f64>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FollowupItem {
+    pub id: ActionItemId,
+    pub note_id: NoteId,
+    pub note_title: String,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub status: ActionStatus,
+    pub source: String,
+    pub confidence: Option<f64>,
+    pub followup_state: Option<FollowupState>,
+    pub followup_lane: Option<String>,
+    pub tags: Vec<TagAssignment>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -312,4 +361,29 @@ pub struct ParseRun {
     pub parsed_json: String,
     pub feedback: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DomainError, FollowupState};
+
+    #[test]
+    fn followup_state_round_trips_db_values() {
+        assert_eq!(FollowupState::from_db("open").unwrap(), FollowupState::Open);
+        assert_eq!(
+            FollowupState::from_db("waiting").unwrap(),
+            FollowupState::Waiting
+        );
+        assert_eq!(
+            FollowupState::from_db("blocked").unwrap(),
+            FollowupState::Blocked
+        );
+        assert!(matches!(
+            FollowupState::from_db("done"),
+            Err(DomainError::InvalidEnum {
+                field: "followup_state",
+                value
+            }) if value == "done"
+        ));
+    }
 }

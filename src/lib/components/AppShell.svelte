@@ -1,4 +1,11 @@
 <script lang="ts">
+  import ArchiveIcon from "@lucide/svelte/icons/archive";
+  import CalendarDays from "@lucide/svelte/icons/calendar-days";
+  import Flag from "@lucide/svelte/icons/flag";
+  import Hash from "@lucide/svelte/icons/hash";
+  import InboxIcon from "@lucide/svelte/icons/inbox";
+  import ListChecks from "@lucide/svelte/icons/list-checks";
+  import Users from "@lucide/svelte/icons/users";
   import { createEventDispatcher } from "svelte";
   import type { Snippet } from "svelte";
   import type { InboxViewMode } from "$lib/stores/inbox";
@@ -48,6 +55,7 @@
   const hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
   const inboxMetric = $derived(metrics.find((metric) => metric.label === "Inbox")?.value ?? "0");
   const actionsMetric = $derived(metrics.find((metric) => metric.label === "Needs review")?.value ?? "0");
+  const followupsMetric = $derived(metrics.find((metric) => metric.label === "Follow-ups")?.value ?? "0");
 
   function navigate(view: InboxViewMode) {
     dispatch("navigate", view);
@@ -56,100 +64,107 @@
 
 <div class="app-shell" class:theme-memphis={themeId === "memphis"} data-theme={themeId} style={themeStyle}>
   <aside class="sidebar" aria-label="Workspace">
-    <div class="brand-block">
-      <div class="brand-mark" aria-hidden="true">WN</div>
-      <div class="brand-copy">
-        <p>{workspace}</p>
-        <h1>{title}</h1>
+    <div class="sidebar-scroll">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">WN</div>
+        <div class="brand-copy">
+          <p>{workspace}</p>
+          <h1>{title}</h1>
+        </div>
       </div>
-    </div>
 
-    <button class="capture-button" type="button" onclick={() => dispatch("newNote")}>
-      <span class="capture-icon" aria-hidden="true">+</span>
-      <span>{subtitle ? "New note" : "Capture"}</span>
-      <span class="key-row" aria-hidden="true"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span>
-    </button>
+      <button class="capture-button" type="button" onclick={() => dispatch("newNote")}>
+        <span class="capture-icon" aria-hidden="true">+</span>
+        <span>{subtitle ? "New note" : "Capture"}</span>
+        <span class="key-row" aria-hidden="true"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span>
+      </button>
 
-    <nav class="nav-stack" aria-label="Primary">
-      <button
-        class:active={activeView === "inbox"}
-        type="button"
-        aria-current={activeView === "inbox" ? "page" : undefined}
-        aria-label="Inbox"
-        onclick={() => navigate("inbox")}
-      >
-        <span aria-hidden="true">I</span>
-        <span>Inbox</span>
-        <strong aria-hidden="true">{inboxMetric}</strong>
-      </button>
-      <button
-        class:active={activeView === "today"}
-        type="button"
-        aria-current={activeView === "today" ? "page" : undefined}
-        aria-label="Today"
-        onclick={() => navigate("today")}
-      >
-        <span aria-hidden="true">T</span>
-        <span>Today</span>
-        <kbd aria-hidden="true">2</kbd>
-      </button>
-      <button
-        class:active={activeView === "actions"}
-        type="button"
-        aria-current={activeView === "actions" ? "page" : undefined}
-        aria-label="Actions"
-        onclick={() => navigate("actions")}
-      >
-        <span aria-hidden="true">A</span>
-        <span>Actions</span>
-        <strong aria-hidden="true">{actionsMetric}</strong>
-      </button>
-      <a href="/">
-        <span aria-hidden="true">#</span>
-        <span>Tags</span>
-        <kbd>4</kbd>
-      </a>
-      <button
-        class:active={activeView === "people"}
-        type="button"
-        aria-current={activeView === "people" ? "page" : undefined}
-        aria-label="People"
-        onclick={() => navigate("people")}
-      >
-        <span aria-hidden="true">@</span>
-        <span>People</span>
-        <kbd aria-hidden="true">5</kbd>
-      </button>
-      <button
-        class:active={activeView === "archive"}
-        type="button"
-        aria-current={activeView === "archive" ? "page" : undefined}
-        aria-label="Archive"
-        onclick={() => navigate("archive")}
-      >
-        <span aria-hidden="true">Z</span>
-        <span>Archive</span>
-        <kbd aria-hidden="true">6</kbd>
-      </button>
-    </nav>
+      <nav class="nav-stack" aria-label="Primary">
+        <button
+          class:active={activeView === "inbox"}
+          type="button"
+          aria-current={activeView === "inbox" ? "page" : undefined}
+          aria-label="Inbox"
+          onclick={() => navigate("inbox")}
+        >
+          <span class="nav-icon" aria-hidden="true"><InboxIcon size={15} strokeWidth={2.2} /></span>
+          <span>Inbox</span>
+          <strong aria-hidden="true">{inboxMetric}</strong>
+        </button>
+        <button
+          class:active={activeView === "today"}
+          type="button"
+          aria-current={activeView === "today" ? "page" : undefined}
+          aria-label="Today"
+          onclick={() => navigate("today")}
+        >
+          <span class="nav-icon" aria-hidden="true"><CalendarDays size={15} strokeWidth={2.2} /></span>
+          <span>Today</span>
+        </button>
+        <button
+          class:active={activeView === "actions"}
+          type="button"
+          aria-current={activeView === "actions" ? "page" : undefined}
+          aria-label="Actions"
+          onclick={() => navigate("actions")}
+        >
+          <span class="nav-icon" aria-hidden="true"><ListChecks size={15} strokeWidth={2.2} /></span>
+          <span>Actions</span>
+          <strong aria-hidden="true">{actionsMetric}</strong>
+        </button>
+        <button
+          class:active={activeView === "followups"}
+          type="button"
+          aria-current={activeView === "followups" ? "page" : undefined}
+          aria-label="Follow-ups"
+          onclick={() => navigate("followups")}
+        >
+          <span class="nav-icon" aria-hidden="true"><Flag size={15} strokeWidth={2.2} /></span>
+          <span>Follow-ups</span>
+          <strong aria-hidden="true">{followupsMetric}</strong>
+        </button>
+        <a href="/">
+          <span class="nav-icon" aria-hidden="true"><Hash size={15} strokeWidth={2.2} /></span>
+          <span>Tags</span>
+        </a>
+        <button
+          class:active={activeView === "people"}
+          type="button"
+          aria-current={activeView === "people" ? "page" : undefined}
+          aria-label="People"
+          onclick={() => navigate("people")}
+        >
+          <span class="nav-icon" aria-hidden="true"><Users size={15} strokeWidth={2.2} /></span>
+          <span>People</span>
+        </button>
+        <button
+          class:active={activeView === "archive"}
+          type="button"
+          aria-current={activeView === "archive" ? "page" : undefined}
+          aria-label="Archive"
+          onclick={() => navigate("archive")}
+        >
+          <span class="nav-icon" aria-hidden="true"><ArchiveIcon size={15} strokeWidth={2.2} /></span>
+          <span>Archive</span>
+        </button>
+      </nav>
 
-    <div class="tag-block">
-      <p>Tags</p>
-      <div class="tag-list">
-        {#if visibleTags.length === 0}
-          <span class="quiet">No tags yet</span>
-        {:else}
-          {#each visibleTags as tag}
-            <span class="tag-chip">{tag}</span>
-          {/each}
-          {#if hiddenTagCount > 0}
-            <span class="quiet">+ {hiddenTagCount} more</span>
+      <div class="tag-block">
+        <p>Tags</p>
+        <div class="tag-list">
+          {#if visibleTags.length === 0}
+            <span class="quiet">No tags yet</span>
+          {:else}
+            {#each visibleTags as tag}
+              <span class="tag-chip">{tag}</span>
+            {/each}
+            {#if hiddenTagCount > 0}
+              <span class="quiet">+ {hiddenTagCount} more</span>
+            {/if}
           {/if}
-        {/if}
+        </div>
       </div>
     </div>
-
-    <div class="sidebar-spacer"></div>
 
     <div class="parser-footer">
       <span class="parser-dot" aria-hidden="true"></span>
@@ -172,8 +187,9 @@
   .app-shell {
     --shadow-card: 0 1px 0 color-mix(in srgb, white 5%, transparent) inset, 0 1px 3px rgba(0, 0, 0, 0.28);
     --shadow-pop: 0 24px 48px -16px rgba(0, 0, 0, 0.55);
-    min-height: 100vh;
     display: flex;
+    height: 100vh;
+    min-height: 0;
     overflow: hidden;
     color: var(--color-text-primary);
     background: var(--color-app-bg);
@@ -199,12 +215,12 @@
     display: flex;
     flex: 0 0 220px;
     flex-direction: column;
-    gap: 14px;
-    min-height: 100vh;
+    height: 100vh;
+    min-height: 0;
     min-width: 0;
-    padding: 14px 10px 10px;
     border-right: 1px solid var(--color-border-default);
     background: color-mix(in srgb, var(--color-surface-1) 86%, var(--color-app-bg));
+    overflow: hidden;
   }
 
   .theme-memphis .sidebar {
@@ -222,6 +238,16 @@
     border-style: solid;
     border-width: 8px 0 8px 12px;
     content: "";
+  }
+
+  .sidebar-scroll {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 14px 10px 10px;
+    overflow-y: auto;
   }
 
   .brand-block {
@@ -360,9 +386,9 @@
   .nav-stack a,
   .nav-stack button {
     display: grid;
-    grid-template-columns: 16px minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     min-height: 28px;
     padding: 0 9px;
     border: 1px solid transparent;
@@ -376,11 +402,25 @@
     cursor: pointer;
   }
 
+  .nav-icon {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    color: var(--color-text-muted);
+  }
+
   .nav-stack a:hover,
   .nav-stack button:hover,
   .nav-stack button.active {
     color: var(--color-text-primary);
     background: var(--color-surface-2);
+  }
+
+  .nav-stack a:hover .nav-icon,
+  .nav-stack button:hover .nav-icon,
+  .nav-stack button.active .nav-icon {
+    color: var(--color-text-primary);
   }
 
   .theme-memphis .nav-stack button.active {
@@ -444,16 +484,12 @@
     background: transparent;
   }
 
-  .sidebar-spacer {
-    flex: 1;
-  }
-
   .parser-footer {
     display: grid;
+    flex: 0 0 auto;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 9px;
-    margin: 0 -10px -10px;
     padding: 8px 12px;
     border-top: 1px solid var(--color-border-default);
     background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
@@ -517,9 +553,11 @@
 
   .content-region {
     flex: 1;
+    height: 100vh;
     min-width: 0;
-    min-height: 100vh;
+    min-height: 0;
     background: var(--color-app-bg);
+    overflow: hidden;
   }
 
   .theme-memphis .content-region {
@@ -528,10 +566,6 @@
   }
 
   @media (max-width: 860px) {
-    .app-shell {
-      overflow: auto;
-    }
-
     .sidebar {
       flex-basis: 190px;
     }

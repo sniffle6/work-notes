@@ -4,6 +4,8 @@ import type {
   ActionItem,
   ActionReviewItem,
   AppSettings,
+  FollowupItem,
+  FollowupState,
   InboxFilters,
   NoteDetail,
   NoteListItem,
@@ -108,6 +110,8 @@ let fallbackNotes: NoteDetail[] = [
         source: "parser",
         confidence: 0.78,
         noteTitle: "Visitor badge printer",
+        followupState: "open",
+        followupLane: null,
       },
     ],
   },
@@ -118,6 +122,7 @@ let fallbackSettings: AppSettings = {
   parserTimeoutSeconds: 90,
   parserMaxRetries: 3,
   codexCommandPath: "codex.cmd",
+  linkedWorkspacePaths: [],
   selectedTheme: "dark-compact",
   launchAtStartup: true,
   minimizeToTray: true,
@@ -186,6 +191,32 @@ export async function reopenActionItem(actionItemId: string): Promise<void> {
   await invokeCommand<void>("reopen_action_item", { actionId: actionItemId });
 }
 
+export async function listFollowups(limit = 200): Promise<FollowupItem[]> {
+  const followups = await invokeCommand<unknown[]>("list_followups", { limit });
+  return followups.map(normalizeFollowupItem);
+}
+
+export async function createManualFollowup(
+  noteId: string,
+  text: string,
+  lane?: string | null,
+): Promise<ActionItem> {
+  const action = await invokeCommand<unknown>("create_manual_followup", {
+    input: { noteId, text, laneOverride: lane?.trim() || null },
+  });
+  return normalizeActionItem(action);
+}
+
+export async function updateFollowupState(actionItemId: string, state: FollowupState): Promise<void> {
+  await invokeCommand<void>("update_followup_state", { input: { id: actionItemId, state } });
+}
+
+export async function updateFollowupLane(actionItemId: string, lane?: string | null): Promise<void> {
+  await invokeCommand<void>("update_followup_lane", {
+    input: { id: actionItemId, laneOverride: lane?.trim() || null },
+  });
+}
+
 export async function listSuggestedActions(limit = 100): Promise<ActionReviewItem[]> {
   const actions = await invokeCommand<unknown[]>("list_suggested_actions", { limit });
   return actions.map(normalizeActionReviewItem);
@@ -199,6 +230,25 @@ export async function getSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   const saved = await invokeCommand<unknown>("save_settings", { settings: toBackendSettings(settings) });
   return normalizeSettings(saved);
+}
+
+export async function selectLinkedWorkspaceDirectory(): Promise<string | null> {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Link repo or directory",
+  });
+
+  if (Array.isArray(selected)) {
+    return typeof selected[0] === "string" ? selected[0] : null;
+  }
+
+  return typeof selected === "string" ? selected : null;
 }
 
 export async function hideQuickCapture(): Promise<void> {
@@ -218,9 +268,14 @@ export const api = {
   dismissActionItem,
   completeActionItem,
   reopenActionItem,
+  listFollowups,
+  createManualFollowup,
+  updateFollowupState,
+  updateFollowupLane,
   listSuggestedActions,
   getSettings,
   saveSettings,
+  selectLinkedWorkspaceDirectory,
   hideQuickCapture,
 };
 
@@ -242,6 +297,7 @@ function toBackendSettings(settings: AppSettings): UnknownRecord {
     parserTimeoutSeconds: settings.parserTimeoutSeconds,
     parserMaxRetries: settings.parserMaxRetries ?? 3,
     codexCommandPath: settings.codexCommandPath,
+    linkedWorkspacePaths: settings.linkedWorkspacePaths ?? [],
     selectedTheme: settings.selectedTheme,
     theme: settings.selectedTheme,
     launchAtStartup: settings.launchAtStartup ?? false,
@@ -324,6 +380,8 @@ function normalizeActionItem(value: unknown): ActionItem {
     source: getString(record, "source") ?? "parser",
     confidence: getNumber(record, "confidence"),
     noteTitle: getString(record, "noteTitle", "note_title"),
+    followupState: normalizeFollowupState(getString(record, "followupState", "followup_state")),
+    followupLane: getNullableString(record, "followupLane", "followup_lane"),
   };
 }
 
@@ -343,6 +401,27 @@ function normalizeActionReviewItem(value: unknown): ActionReviewItem {
   };
 }
 
+function normalizeFollowupItem(value: unknown): FollowupItem {
+  const record = asRecord(value);
+  const status = normalizeActionStatus(getString(record, "status"));
+
+  return {
+    id: getString(record, "id") ?? crypto.randomUUID(),
+    noteId: getString(record, "noteId", "note_id") ?? "",
+    noteTitle: getString(record, "noteTitle", "note_title") ?? "Untitled note",
+    text: getString(record, "text") ?? "",
+    owner: getNullableString(record, "owner"),
+    dueDate: getNullableString(record, "dueDate", "due_date"),
+    status: status === "done" ? "done" : "accepted",
+    source: getString(record, "source") ?? "parser",
+    confidence: getNumber(record, "confidence"),
+    followupState: normalizeFollowupState(getString(record, "followupState", "followup_state")),
+    followupLane: getNullableString(record, "followupLane", "followup_lane"),
+    tags: getArray(record, "tags").map(normalizeTag),
+    createdAt: getString(record, "createdAt", "created_at") ?? fallbackNow,
+  };
+}
+
 function normalizeSettings(value: unknown): AppSettings {
   const record = asRecord(value);
 
@@ -355,6 +434,9 @@ function normalizeSettings(value: unknown): AppSettings {
       getNumber(record, "parserMaxRetries", "parser_max_retries") ?? fallbackSettings.parserMaxRetries,
     codexCommandPath:
       getString(record, "codexCommandPath", "codex_command_path") ?? fallbackSettings.codexCommandPath,
+    linkedWorkspacePaths: normalizeStringArray(
+      getArray(record, "linkedWorkspacePaths", "linked_workspace_paths"),
+    ),
     selectedTheme: normalizeThemeId(
       getString(record, "selectedTheme", "selected_theme", "theme") ?? fallbackSettings.selectedTheme,
     ),
@@ -458,6 +540,9 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       const action = note?.actionItems.find((item) => item.id === actionItemId);
       if (note && action && action.status === "suggested") {
         action.status = status;
+        if (status === "accepted") {
+          action.followupState = action.followupState ?? "open";
+        }
         note.suggestedActionItemCount = note.actionItems.filter((item) => item.status === "suggested").length;
         if (note.suggestedActionItemCount === 0) {
           note.reviewStatus = "reviewed";
@@ -480,6 +565,73 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       if (action && action.status === "done") {
         action.status = "accepted";
       }
+      return undefined as T;
+    }
+    case "list_followups":
+      return fallbackNotes
+        .filter((note) => !note.isArchived)
+        .flatMap((note) =>
+          note.actionItems
+            .filter((action) => action.status === "accepted" || action.status === "done")
+            .map((action) =>
+              normalizeFollowupItem({
+                ...action,
+                noteTitle: note.title,
+                tags: note.tags,
+                createdAt: note.createdAt,
+              }),
+            ),
+        )
+        .slice(0, Number(args?.limit ?? 200)) as T;
+    case "create_manual_followup": {
+      const input = asRecord(args?.input);
+      const noteId = getString(input, "noteId", "note_id") ?? "";
+      const note = fallbackNotes.find((item) => item.id === noteId);
+      const text = String(input.text ?? "").trim();
+      if (!note) {
+        throw new Error("note not found");
+      }
+      if (!text) {
+        throw new Error("follow-up text is required");
+      }
+
+      const lane = getNullableString(input, "laneOverride", "lane_override", "lane")?.trim() || null;
+      const action: ActionItem = {
+        id: `manual-${Date.now()}`,
+        noteId: note.id,
+        text,
+        owner: null,
+        dueDate: null,
+        status: "accepted",
+        source: "user",
+        confidence: null,
+        noteTitle: note.title,
+        followupState: "open",
+        followupLane: lane,
+      };
+      note.actionItems = [...note.actionItems, action];
+      note.actionItemCount = note.actionItems.length;
+      note.updatedAt = new Date().toISOString();
+      return normalizeActionItem(action) as T;
+    }
+    case "update_followup_state": {
+      const input = asRecord(args?.input);
+      const actionItemId = getString(input, "id", "actionId", "action_id") ?? "";
+      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
+      if (!action || action.status !== "accepted") {
+        throw new Error("action is not an active follow-up");
+      }
+      action.followupState = normalizeFollowupState(getString(input, "state")) ?? "open";
+      return undefined as T;
+    }
+    case "update_followup_lane": {
+      const input = asRecord(args?.input);
+      const actionItemId = getString(input, "id", "actionId", "action_id") ?? "";
+      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
+      if (!action || (action.status !== "accepted" && action.status !== "done")) {
+        throw new Error("action is not an active follow-up");
+      }
+      action.followupLane = getNullableString(input, "laneOverride", "lane_override", "lane")?.trim() || null;
       return undefined as T;
     }
     case "list_suggested_actions":
@@ -569,6 +721,27 @@ function getArray(record: UnknownRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
+function normalizeStringArray(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
+}
+
 function makeTitle(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -605,6 +778,10 @@ function normalizeActionStatus(value: string | undefined): ActionItem["status"] 
   return value === "suggested" || value === "accepted" || value === "dismissed" || value === "done"
     ? value
     : "suggested";
+}
+
+function normalizeFollowupState(value: string | undefined): FollowupState | null {
+  return value === "open" || value === "waiting" || value === "blocked" ? value : null;
 }
 
 function normalizeThemeId(value: string): string {
