@@ -18,19 +18,40 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("SettingsView", () => {
-  it("saves the Memphis theme from the appearance picker", async () => {
-    const save = vi.fn();
+  it("applies a theme immediately on card click", async () => {
+    const selectTheme = vi.fn();
 
     render(SettingsView, {
       props: { settings: settings(), open: true },
-      events: { save },
+      events: { selectTheme },
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Memphis '86" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(save.mock.calls[0][0].detail.selectedTheme).toBe("memphis");
+    expect(selectTheme).toHaveBeenCalledTimes(1);
+    expect(selectTheme.mock.calls[0][0].detail).toBe("memphis");
+  });
+
+  it("toggles between dark and light variants of the selected theme", async () => {
+    const selectTheme = vi.fn();
+
+    render(SettingsView, {
+      props: { settings: { ...settings(), selectedTheme: "everforest-dark" }, open: true },
+      events: { selectTheme },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Light" }));
+
+    expect(selectTheme.mock.calls[0][0].detail).toBe("everforest-light");
+  });
+
+  it("locks the variant toggle to what a single-variant theme provides", () => {
+    render(SettingsView, {
+      props: { settings: { ...settings(), selectedTheme: "dark-compact" }, open: true },
+    });
+
+    expect((screen.getByRole("button", { name: "Light" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Dark" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows a settings save error without closing the modal", () => {

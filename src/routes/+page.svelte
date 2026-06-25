@@ -203,6 +203,10 @@
     }
   }
 
+  function selectTheme(event: CustomEvent<string>) {
+    void workNotes.setTheme(event.detail);
+  }
+
   async function deleteSelectedNote() {
     if (typeof window !== "undefined" && !window.confirm("Archive this note?")) {
       return;
@@ -416,6 +420,7 @@
       open={settingsOpen}
       error={settingsOpen ? $error : null}
       on:save={(event) => void saveSettings(event)}
+      on:selectTheme={selectTheme}
       on:close={() => (settingsOpen = false)}
     />
 
