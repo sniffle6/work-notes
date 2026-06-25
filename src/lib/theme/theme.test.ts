@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { darkCompactTheme, getThemeById, memphisTheme, toCssVariables } from "./themes";
+import {
+  darkCompactTheme,
+  everforestDarkTheme,
+  everforestLightTheme,
+  getThemeById,
+  memphisTheme,
+  themes,
+  toCssVariables,
+} from "./themes";
 
 describe("toCssVariables", () => {
   it("maps the dark compact theme tokens to semantic CSS variables", () => {
@@ -25,5 +33,36 @@ describe("toCssVariables", () => {
       "--color-accent-primary": "#ec4899",
       "--color-accent-hot": "#49c5e3",
     });
+  });
+});
+
+describe("theme metadata", () => {
+  it("tags existing themes with family and mode", () => {
+    expect(darkCompactTheme.family).toBe("dark-compact");
+    expect(darkCompactTheme.mode).toBe("dark");
+    expect(memphisTheme.family).toBe("memphis");
+    expect(memphisTheme.mode).toBe("light");
+  });
+});
+
+describe("everforest themes", () => {
+  it("registers dark and light everforest variants", () => {
+    expect(themes).toContain(everforestDarkTheme);
+    expect(themes).toContain(everforestLightTheme);
+    expect(everforestDarkTheme.family).toBe("everforest");
+    expect(everforestDarkTheme.mode).toBe("dark");
+    expect(everforestLightTheme.mode).toBe("light");
+  });
+
+  it("defines all thirteen tokens for each everforest variant", () => {
+    const tokenKeys = Object.keys(darkCompactTheme.tokens);
+    expect(Object.keys(everforestDarkTheme.tokens).sort()).toEqual(tokenKeys.sort());
+    expect(Object.keys(everforestLightTheme.tokens).sort()).toEqual(tokenKeys.sort());
+  });
+
+  it("resolves everforest ids and falls back for unknown ids", () => {
+    expect(getThemeById("everforest-dark")).toBe(everforestDarkTheme);
+    expect(getThemeById("everforest-light")).toBe(everforestLightTheme);
+    expect(getThemeById("does-not-exist")).toBe(darkCompactTheme);
   });
 });

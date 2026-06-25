@@ -447,6 +447,24 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
+  async function setTheme(themeId: string): Promise<void> {
+    const previous = get(settings);
+    if (!previous || previous.selectedTheme === themeId) {
+      return;
+    }
+
+    const next = { ...previous, selectedTheme: themeId };
+    settings.set(next);
+    error.set(null);
+
+    try {
+      settings.set(await api.saveSettings(next));
+    } catch (unknownError) {
+      settings.set(previous);
+      error.set(errorMessage(unknownError, "Could not change theme."));
+    }
+  }
+
   async function updateFilters(nextFilters: Partial<InboxFilters>): Promise<void> {
     filters.update((current) => createInboxFilters({ ...current, ...nextFilters }));
     await loadInbox();
@@ -589,6 +607,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     updateFollowupLane,
     loadSettings,
     persistSettings,
+    setTheme,
     updateFilters,
   };
 }

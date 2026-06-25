@@ -401,6 +401,56 @@ describe("createWorkNotesStore", () => {
     expect(get(store.error)).toBe("bad hotkey");
   });
 
+  it("applies a theme optimistically before persistence resolves", async () => {
+    let resolveSave: (value: AppSettings) => void = () => {};
+    const api = testApi({
+      getSettings: vi.fn().mockResolvedValue(settings()),
+      saveSettings: vi.fn(
+        () => new Promise<AppSettings>((resolve) => (resolveSave = resolve)),
+      ),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    const pending = store.setTheme("everforest-dark");
+    expect(get(store.settings)?.selectedTheme).toBe("everforest-dark");
+
+    resolveSave({ ...settings(), selectedTheme: "everforest-dark" });
+    await pending;
+    expect(get(store.settings)?.selectedTheme).toBe("everforest-dark");
+  });
+
+  it("persists the last saved settings merged with the new theme", async () => {
+    const api = testApi({
+      getSettings: vi.fn().mockResolvedValue({ ...settings(), codexCommandPath: "codex.cmd" }),
+      saveSettings: vi.fn((next: AppSettings) => Promise.resolve(next)),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    await store.setTheme("everforest-light");
+
+    expect(api.saveSettings).toHaveBeenCalledWith({
+      ...settings(),
+      codexCommandPath: "codex.cmd",
+      selectedTheme: "everforest-light",
+    });
+  });
+
+  it("reverts the theme and reports an error when saving fails", async () => {
+    const api = testApi({
+      getSettings: vi.fn().mockResolvedValue(settings()),
+      saveSettings: vi.fn().mockRejectedValue(new Error("disk full")),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    await store.setTheme("everforest-dark");
+
+    expect(get(store.settings)?.selectedTheme).toBe("dark-compact");
+    expect(get(store.error)).toBe("disk full");
+  });
+
   it("loads suggested actions into review queue state", async () => {
     const api = testApi({
       listSuggestedActions: vi.fn().mockResolvedValue([reviewItem({ id: "action-queued" })]),

@@ -3,13 +3,17 @@
   import Check from "@lucide/svelte/icons/check";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Keyboard from "@lucide/svelte/icons/keyboard";
+  import Moon from "@lucide/svelte/icons/moon";
   import Palette from "@lucide/svelte/icons/palette";
+  import Sun from "@lucide/svelte/icons/sun";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import X from "@lucide/svelte/icons/x";
   import { createEventDispatcher } from "svelte";
   import { selectLinkedWorkspaceDirectory } from "$lib/api";
   import type { AppSettings } from "$lib/types";
   import { themes } from "$lib/theme/themes";
+  import { groupThemeFamilies, resolveVariant, modeOf, familyOf, type ThemeFamily } from "$lib/theme/families";
+  import type { ThemeDefinition } from "$lib/theme/tokens";
 
   type Props = {
     settings: AppSettings | null;
@@ -19,7 +23,6 @@
   };
 
   type SettingsSection = "appearance" | "capture" | "parser";
-  type ThemeOption = (typeof themes)[number];
 
   let { settings, saving = false, open = true, error = null }: Props = $props();
   let activeSection = $state<SettingsSection>("appearance");
@@ -36,6 +39,7 @@
   const dispatch = createEventDispatcher<{
     save: AppSettings;
     close: void;
+    selectTheme: string;
   }>();
 
   $effect(() => {
@@ -97,7 +101,7 @@
     return paths;
   }
 
-  function themePreviewStyle(theme: ThemeOption): string {
+  function themePreviewStyle(theme: ThemeDefinition): string {
     const tokens = theme.tokens;
 
     return [
@@ -110,6 +114,30 @@
       `--preview-accent: ${tokens["accent.primary"]}`,
       `--preview-hot: ${tokens["accent.hot"]}`,
     ].join("; ");
+  }
+
+  const families = groupThemeFamilies(themes);
+  let selectedMode = $derived(modeOf(selectedTheme));
+  let selectedFamily = $derived(familyOf(selectedTheme));
+  let selectedFamilyObject = $derived(families.find((family) => family.family === selectedFamily));
+
+  function applyTheme(themeId: string): void {
+    if (themeId === selectedTheme) {
+      return;
+    }
+    selectedTheme = themeId;
+    dispatch("selectTheme", themeId);
+  }
+
+  function selectFamily(family: ThemeFamily): void {
+    applyTheme(resolveVariant(family, selectedMode).id);
+  }
+
+  function applyVariant(mode: "dark" | "light"): void {
+    const target = selectedFamilyObject?.[mode];
+    if (target) {
+      applyTheme(target.id);
+    }
   }
 </script>
 
@@ -180,29 +208,59 @@
                 </div>
               </div>
 
+              <div class="variant-toggle" role="group" aria-label="Theme mode">
+                <button
+                  class:active={selectedMode === "dark"}
+                  type="button"
+                  aria-pressed={selectedMode === "dark"}
+                  disabled={!selectedFamilyObject?.dark}
+                  onclick={() => applyVariant("dark")}
+                >
+                  <Moon size={14} strokeWidth={2.2} aria-hidden="true" />
+                  <span>Dark</span>
+                </button>
+                <button
+                  class:active={selectedMode === "light"}
+                  type="button"
+                  aria-pressed={selectedMode === "light"}
+                  disabled={!selectedFamilyObject?.light}
+                  onclick={() => applyVariant("light")}
+                >
+                  <Sun size={14} strokeWidth={2.2} aria-hidden="true" />
+                  <span>Light</span>
+                </button>
+              </div>
+
               <div class="theme-grid" aria-label="Theme">
-                {#each themes as theme}
+                {#each families as family}
+                  {@const previewVariant = resolveVariant(family, selectedMode)}
                   <button
-                    class:active={selectedTheme === theme.id}
+                    class:active={family.family === selectedFamily}
                     class="theme-card"
                     type="button"
-                    aria-label={theme.label}
-                    aria-pressed={selectedTheme === theme.id}
-                    onclick={() => (selectedTheme = theme.id)}
+                    aria-label={family.label}
+                    aria-pressed={family.family === selectedFamily}
+                    onclick={() => selectFamily(family)}
                   >
-                    <span class="theme-preview" style={themePreviewStyle(theme)}>
-                      <span class="preview-sidebar"></span>
+                    <span class="theme-preview" style={themePreviewStyle(previewVariant)}>
+                      <span class="preview-sidebar">
+                        <span class="preview-nav"></span>
+                        <span class="preview-nav"></span>
+                        <span class="preview-nav"></span>
+                      </span>
                       <span class="preview-content">
-                        <span class="preview-line strong"></span>
-                        <span class="preview-line"></span>
-                        <span class="preview-line short"></span>
-                        <span class="preview-chip"></span>
+                        <span class="preview-note">
+                          <span class="preview-line strong"></span>
+                          <span class="preview-line"></span>
+                          <span class="preview-line short"></span>
+                          <span class="preview-button">Accent</span>
+                        </span>
                       </span>
                     </span>
                     <span class="theme-meta">
-                      <strong>{theme.label}</strong>
-                      {#if selectedTheme === theme.id}
-                        <span class="selected-badge"><Check size={13} strokeWidth={2.5} />Selected</span>
+                      <strong>{family.label}</strong>
+                      {#if family.family === selectedFamily}
+                        <span class="selected-badge"><Check size={13} strokeWidth={2.5} />In use</span>
                       {/if}
                     </span>
                   </button>
@@ -594,6 +652,40 @@
     gap: 12px;
   }
 
+  .variant-toggle {
+    display: inline-flex;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 3px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 8px;
+    background: var(--color-surface-1);
+  }
+
+  .variant-toggle button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .variant-toggle button.active {
+    background: var(--color-surface-2);
+    color: var(--color-text-primary);
+  }
+
+  .variant-toggle button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   .theme-card {
     display: grid;
     gap: 10px;
@@ -648,12 +740,32 @@
     width: 62%;
   }
 
-  .preview-chip {
-    width: 56px;
-    height: 14px;
-    margin-top: 4px;
+  .preview-nav {
+    height: 8px;
+    margin: 8px 8px 0;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--preview-accent) 80%, var(--preview-surface-2));
+    background: var(--preview-muted);
+  }
+
+  .preview-note {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--preview-border);
+    border-radius: 6px;
+    background: var(--preview-surface-2);
+  }
+
+  .preview-button {
+    align-self: flex-start;
+    margin-top: 2px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--preview-accent);
+    color: var(--preview-bg);
+    font-size: 9px;
+    font-weight: 800;
   }
 
   .theme-meta,
