@@ -295,7 +295,7 @@
 
 <svelte:head>
   <title>Work Notes</title>
-  <meta name="color-scheme" content={themeId === "memphis" ? "light" : "dark"} />
+  <meta name="color-scheme" content={currentTheme.mode} />
 </svelte:head>
 
 {#if isQuickCaptureWindow}
