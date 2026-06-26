@@ -160,7 +160,7 @@ impl CodexParserProvider {
 
         run_codex_command(
             &command,
-            &build_parse_prompt_with_context(raw_note, feedback, &prompt_workspace_paths),
+            &build_parse_prompt_with_context(raw_note, feedback, &prompt_workspace_paths, &[]),
             self.timeout,
             working_dir,
         )?;
