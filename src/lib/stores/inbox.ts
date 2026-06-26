@@ -13,6 +13,7 @@ import {
   reopenActionItem,
   retryParse,
   retryParseWithFeedback,
+  updateNoteCleaned,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -41,6 +42,7 @@ type WorkNotesApi = {
   getNote: typeof getNote;
   retryParse: typeof retryParse;
   retryParseWithFeedback: typeof retryParseWithFeedback;
+  updateNoteCleaned: typeof updateNoteCleaned;
   deleteNote: typeof deleteNote;
   restoreNote: typeof restoreNote;
   permanentlyDeleteNote: typeof permanentlyDeleteNote;
@@ -63,6 +65,7 @@ const defaultApi: WorkNotesApi = {
   getNote,
   retryParse,
   retryParseWithFeedback,
+  updateNoteCleaned,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -249,6 +252,31 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       selectedNote.set(await api.getNote(note.id));
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not reparse note."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function saveCleanedEdits(fields: {
+    title: string;
+    summary: string;
+    cleanedText: string;
+  }): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.updateNoteCleaned(note.id, fields);
+      await loadInbox();
+      selectedNote.set(await api.getNote(note.id));
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not save edits."));
+      throw unknownError;
     } finally {
       loadingNote.set(false);
     }
@@ -589,6 +617,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showCapturedNote,
     retrySelectedParse,
     retrySelectedParseWithFeedback,
+    saveCleanedEdits,
     deleteSelectedNote,
     showInbox,
     showArchive,

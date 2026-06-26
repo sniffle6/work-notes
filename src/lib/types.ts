@@ -90,6 +90,7 @@ export type NoteListItem = {
 export type NoteDetail = NoteListItem & {
   actionItems: ActionItem[];
   parseError?: string | null;
+  cleanedEdited?: boolean;
 };
 
 export type InboxFilters = {

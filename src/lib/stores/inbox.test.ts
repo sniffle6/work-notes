@@ -162,6 +162,21 @@ describe("createWorkNotesStore", () => {
     expect(api.getNote).toHaveBeenLastCalledWith("note-1");
   });
 
+  it("saves cleaned edits and reloads the selected note", async () => {
+    const api = testApi();
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.saveCleanedEdits({ title: "New title", summary: "New summary", cleanedText: "New body" });
+
+    expect(api.updateNoteCleaned).toHaveBeenCalledWith("note-1", {
+      title: "New title",
+      summary: "New summary",
+      cleanedText: "New body",
+    });
+    expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+  });
+
   it("archives the selected note and clears the selection", async () => {
     const api = testApi({
       listInbox: vi.fn().mockResolvedValue([]),
@@ -618,6 +633,9 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     retryParseWithFeedback: vi
       .fn<(noteId: string, feedback: string) => Promise<void>>()
       .mockResolvedValue(undefined),
+    updateNoteCleaned: vi
+      .fn<(noteId: string, fields: { title: string; summary: string; cleanedText: string }) => Promise<NoteDetail>>()
+      .mockResolvedValue(detail),
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     restoreNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     permanentlyDeleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
