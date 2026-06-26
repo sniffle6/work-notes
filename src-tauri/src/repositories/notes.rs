@@ -258,6 +258,47 @@ impl NoteRepository {
         Ok(())
     }
 
+    pub fn update_cleaned_by_user(
+        &self,
+        id: NoteId,
+        title: &str,
+        cleaned_text: &str,
+        summary: &str,
+    ) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+
+        let raw_text = transaction
+            .query_row(
+                "SELECT raw_text FROM notes WHERE id = ?1",
+                [id_text.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            })?;
+
+        transaction.execute(
+            "UPDATE notes
+             SET title = ?2, cleaned_text = ?3, summary = ?4, cleaned_edited = 1, updated_at = ?5
+             WHERE id = ?1",
+            params![id_text, normalize_title(title), cleaned_text, summary, now],
+        )?;
+        replace_fts(
+            &transaction,
+            &id_text,
+            &raw_text,
+            Some(cleaned_text),
+            Some(summary),
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn set_parse_status(&self, id: NoteId, status: ParseStatus) -> RepositoryResult<()> {
         self.update_status(id, "parse_status", status.as_str())
     }
@@ -519,6 +560,27 @@ mod tests {
         let note = notes.create_raw_note("test note").expect("create note");
         let stored = notes.get(note.id).expect("get note").expect("note exists");
         assert!(!stored.cleaned_edited);
+    }
+
+    #[test]
+    fn update_cleaned_by_user_sets_fields_and_marks_edited() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("original note").expect("create note");
+        let id = note.id;
+        notes
+            .apply_cleaned_note(id, "Parsed Title", "## Parsed body", "Parsed summary")
+            .expect("apply cleaned note");
+
+        notes
+            .update_cleaned_by_user(id, "My Title", "## Edited body", "Edited summary")
+            .expect("update cleaned by user");
+
+        let stored = notes.get(id).expect("get note").expect("note exists");
+        assert_eq!(stored.title, "My Title");
+        assert_eq!(stored.cleaned_text.as_deref(), Some("## Edited body"));
+        assert_eq!(stored.summary.as_deref(), Some("Edited summary"));
+        assert!(stored.cleaned_edited);
     }
 
     #[test]

@@ -444,6 +444,23 @@ pub async fn retry_parse_with_feedback(
 }
 
 #[tauri::command]
+pub async fn update_note_cleaned(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+    title: String,
+    cleaned_text: String,
+    summary: String,
+) -> Result<NoteDetailDto, CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    state
+        .repositories
+        .notes
+        .update_cleaned_by_user(note_id, &title, &cleaned_text, &summary)?;
+    let detail = SearchService::new(state.repositories.clone()).get_note(note_id)?;
+    Ok(detail.into())
+}
+
+#[tauri::command]
 pub async fn delete_note(
     state: tauri::State<'_, AppState>,
     note_id: String,
