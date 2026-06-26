@@ -333,7 +333,7 @@ impl ParserResultSink for RepositoryParserResultSink<'_> {
         )?;
         self.transaction.execute(
             "UPDATE notes
-             SET title = ?2, cleaned_text = ?3, summary = ?4, updated_at = ?5
+             SET title = ?2, cleaned_text = ?3, summary = ?4, cleaned_edited = 0, updated_at = ?5
              WHERE id = ?1",
             params![
                 note_id_text,
@@ -668,6 +668,33 @@ mod tests {
         assert_eq!(stored.raw_text, "raw note");
         assert_eq!(stored.cleaned_text, None);
         assert_eq!(stored.parse_status, ParseStatus::Failed);
+    }
+
+    #[test]
+    fn successful_parse_resets_cleaned_edited_flag() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        let note_id = note.id;
+        repositories.parse_jobs.enqueue(note_id).unwrap();
+
+        repositories
+            .notes
+            .update_cleaned_by_user(note_id, "User Title", "user body", "user summary")
+            .expect("mark edited");
+        assert!(
+            repositories.notes.get(note_id).unwrap().unwrap().cleaned_edited,
+            "precondition: note is user-edited"
+        );
+
+        ParseQueue::new(repositories.clone())
+            .process_next_with_provider(&StaticProvider)
+            .expect("process parse");
+
+        let stored = repositories.notes.get(note_id).unwrap().unwrap();
+        assert!(!stored.cleaned_edited, "parser write reclaims ownership");
     }
 
     #[test]

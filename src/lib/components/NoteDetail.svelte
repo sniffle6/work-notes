@@ -2,6 +2,7 @@
   import { createEventDispatcher, tick } from "svelte";
   import type { ActionItem, NoteDetail, ParseStatus, ReviewStatus } from "$lib/types";
 
+  import CleanedEditor from "./CleanedEditor.svelte";
   import MarkdownView from "./MarkdownView.svelte";
 
   type Props = {
@@ -14,6 +15,9 @@
   let reparseFeedback = $state("");
   let reparseOpen = $state(false);
   let showRaw = $state(false);
+  let editing = $state(false);
+  let reparseConfirmOpen = $state(false);
+  let pendingReparse = $state<{ kind: "retry" } | { kind: "feedback"; feedback: string } | null>(null);
   let followupOpen = $state(false);
   let followupText = $state("");
   let followupLane = $state("");
@@ -35,6 +39,7 @@
     completeAction: string;
     reopenAction: string;
     createFollowup: { text: string; lane: string | null; done: () => void };
+    saveCleaned: { title: string; summary: string; cleanedText: string; done: () => void };
   }>();
 
   $effect(() => {
@@ -44,6 +49,9 @@
       reparseFeedback = "";
       reparseOpen = false;
       showRaw = false;
+      editing = false;
+      reparseConfirmOpen = false;
+      pendingReparse = null;
       followupOpen = false;
       followupText = "";
       followupLane = "";
@@ -109,11 +117,57 @@
 
   function dispatchReparseWithFeedback() {
     const feedback = reparseFeedback.trim();
-    if (feedback) {
+    if (!feedback) {
+      return;
+    }
+    reparseOpen = false;
+    if (note?.cleanedEdited) {
+      pendingReparse = { kind: "feedback", feedback };
+      reparseConfirmOpen = true;
+    } else {
       dispatch("reparseWithFeedback", feedback);
       reparseFeedback = "";
-      reparseOpen = false;
     }
+  }
+
+  function startEdit() {
+    editing = true;
+  }
+
+  function onEditorSave(event: CustomEvent<{ title: string; summary: string; cleanedText: string }>) {
+    dispatch("saveCleaned", {
+      title: event.detail.title,
+      summary: event.detail.summary,
+      cleanedText: event.detail.cleanedText,
+      done: () => {
+        editing = false;
+      },
+    });
+  }
+
+  function requestRetry() {
+    if (note?.cleanedEdited) {
+      pendingReparse = { kind: "retry" };
+      reparseConfirmOpen = true;
+    } else {
+      dispatch("retryParse");
+    }
+  }
+
+  function confirmReparse() {
+    if (pendingReparse?.kind === "retry") {
+      dispatch("retryParse");
+    } else if (pendingReparse?.kind === "feedback") {
+      dispatch("reparseWithFeedback", pendingReparse.feedback);
+      reparseFeedback = "";
+    }
+    pendingReparse = null;
+    reparseConfirmOpen = false;
+  }
+
+  function cancelReparseConfirm() {
+    pendingReparse = null;
+    reparseConfirmOpen = false;
   }
 
   function openFollowupForm() {
@@ -183,7 +237,10 @@
       </div>
       <div class="header-actions">
         {#if note.parseStatus === "failed"}
-          <button class="ghost-button" type="button" onclick={() => dispatch("retryParse")} disabled={loading}>Retry</button>
+          <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Retry</button>
+        {/if}
+        {#if note.parseStatus === "parsed"}
+          <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Reparse</button>
         {/if}
         <button class="ghost-button" type="button" onclick={openReparseDialog} disabled={loading}>
           Reparse with feedback
@@ -241,7 +298,7 @@
         <div class="detail-banner error">
           <strong>Parser failed</strong>
           <span>{note.parseError ?? "Parser failed. Raw note text is still saved."}</span>
-          <button type="button" onclick={() => dispatch("retryParse")} disabled={loading}>Retry</button>
+          <button type="button" onclick={requestRetry} disabled={loading}>Retry</button>
         </div>
       {:else if note.parseStatus === "parsing"}
         <div class="detail-banner info">
@@ -267,12 +324,24 @@
       <section class="note-body" aria-label={showRaw ? "Raw note" : "Cleaned note"}>
         {#if showRaw}
           <pre>{note.rawText}</pre>
+        {:else if editing}
+          <CleanedEditor
+            title={note.title}
+            summary={note.summary ?? ""}
+            cleanedText={note.cleanedText ?? ""}
+            on:save={onEditorSave}
+            on:cancel={() => (editing = false)}
+          />
+        {:else if note.cleanedText}
+          <div class="cleaned-toolbar">
+            {#if note.cleanedEdited}
+              <span class="edited-indicator">edited</span>
+            {/if}
+            <button class="ghost-button" type="button" onclick={startEdit} disabled={loading}>Edit</button>
+          </div>
+          <MarkdownView markdown={note.cleanedText} />
         {:else}
-          {#if note.cleanedText}
-            <MarkdownView markdown={note.cleanedText} />
-          {:else}
-            <p>Waiting for parser output.</p>
-          {/if}
+          <p>Waiting for parser output.</p>
         {/if}
       </section>
 
@@ -412,6 +481,20 @@
           <button class="primary-action" type="button" onclick={dispatchReparseWithFeedback} disabled={loading || !reparseFeedback.trim()}>
             Send feedback
           </button>
+        </footer>
+      </div>
+    {/if}
+
+    {#if reparseConfirmOpen}
+      <div class="reparse-backdrop" aria-hidden="true" onclick={cancelReparseConfirm}></div>
+      <div class="reparse-dialog" role="dialog" aria-modal="true" aria-labelledby="reparse-confirm-title">
+        <header>
+          <h2 id="reparse-confirm-title">Discard manual edits?</h2>
+        </header>
+        <p>This note has manual edits. Reparsing will replace them with new parser output.</p>
+        <footer>
+          <button class="secondary-action" type="button" onclick={cancelReparseConfirm}>Keep my edits</button>
+          <button class="primary-action" type="button" onclick={confirmReparse}>Discard & reparse</button>
         </footer>
       </div>
     {/if}
@@ -1000,6 +1083,24 @@
     color: var(--color-text-muted);
     font-size: 12.5px;
     line-height: 1.45;
+  }
+
+  .cleaned-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .edited-indicator {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
   }
 
   @media (max-width: 700px) {

@@ -132,6 +132,7 @@ pub struct NoteDetailDto {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub cleaned_edited: bool,
     pub tags: Vec<TagAssignmentDto>,
     pub action_items: Vec<ActionItemDto>,
     pub parse_error: Option<String>,
@@ -152,6 +153,7 @@ impl From<NoteDetail> for NoteDetailDto {
             parse_status: note.parse_status,
             review_status: note.review_status,
             is_archived: note.is_archived,
+            cleaned_edited: note.cleaned_edited,
             tags: detail.tags.into_iter().map(Into::into).collect(),
             action_items: detail.action_items.into_iter().map(Into::into).collect(),
             parse_error: detail.parse_error,
@@ -173,6 +175,7 @@ impl From<Note> for NoteDetailDto {
             parse_status: note.parse_status,
             review_status: note.review_status,
             is_archived: note.is_archived,
+            cleaned_edited: note.cleaned_edited,
             tags: Vec::new(),
             action_items: Vec::new(),
             parse_error: None,
@@ -438,6 +441,23 @@ pub async fn retry_parse_with_feedback(
     )
     .retry_note_with_feedback(note_id, &feedback)?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn update_note_cleaned(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+    title: String,
+    cleaned_text: String,
+    summary: String,
+) -> Result<NoteDetailDto, CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    state
+        .repositories
+        .notes
+        .update_cleaned_by_user(note_id, &title, &cleaned_text, &summary)?;
+    let detail = SearchService::new(state.repositories.clone()).get_note(note_id)?;
+    Ok(detail.into())
 }
 
 #[tauri::command]

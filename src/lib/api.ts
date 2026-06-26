@@ -163,6 +163,19 @@ export async function retryParseWithFeedback(noteId: string, feedback: string): 
   await invokeCommand<void>("retry_parse_with_feedback", { noteId, feedback });
 }
 
+export async function updateNoteCleaned(
+  noteId: string,
+  fields: { title: string; summary: string; cleanedText: string },
+): Promise<NoteDetail> {
+  const note = await invokeCommand<unknown>("update_note_cleaned", {
+    noteId,
+    title: fields.title,
+    cleanedText: fields.cleanedText,
+    summary: fields.summary,
+  });
+  return normalizeNoteDetail(note);
+}
+
 export async function deleteNote(noteId: string): Promise<void> {
   await invokeCommand<void>("delete_note", { noteId });
 }
@@ -261,6 +274,7 @@ export const api = {
   getNote,
   retryParse,
   retryParseWithFeedback,
+  updateNoteCleaned,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -349,6 +363,7 @@ function normalizeNoteDetail(value: unknown): NoteDetail {
     suggestedActionItemCount: actionItems.filter((item) => item.status === "suggested").length,
     actionItemCount: actionItems.length || base.actionItemCount,
     parseError: getNullableString(record, "parseError", "parse_error", "lastError", "last_error"),
+    cleanedEdited: getBoolean(record, "cleanedEdited", "cleaned_edited") ?? false,
   };
 }
 
@@ -496,6 +511,17 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
         note.updatedAt = new Date().toISOString();
       }
       return undefined as T;
+    }
+    case "update_note_cleaned": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.title = String(args?.title ?? note.title);
+        note.cleanedText = String(args?.cleanedText ?? note.cleanedText ?? "");
+        note.summary = String(args?.summary ?? note.summary ?? "");
+        note.cleanedEdited = true;
+        note.updatedAt = new Date().toISOString();
+      }
+      return normalizeNoteDetail(note ?? fallbackNotes[0]) as T;
     }
     case "delete_note": {
       const note = fallbackNotes.find((item) => item.id === args?.noteId);
