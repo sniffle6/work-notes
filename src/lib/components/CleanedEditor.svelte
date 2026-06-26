@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, untrack } from "svelte";
 
   type Props = {
     title: string;
@@ -9,9 +9,9 @@
 
   let { title, summary, cleanedText }: Props = $props();
 
-  let titleValue = $state(title);
-  let summaryValue = $state(summary);
-  let bodyValue = $state(cleanedText);
+  let titleValue = $state(untrack(() => title));
+  let summaryValue = $state(untrack(() => summary));
+  let bodyValue = $state(untrack(() => cleanedText));
 
   const dispatch = createEventDispatcher<{
     save: { title: string; summary: string; cleanedText: string };
