@@ -1,4 +1,5 @@
 pub mod codex_provider;
+pub mod directives;
 pub mod fake_provider;
 pub mod prompt;
 pub mod result_applier;
@@ -9,6 +10,7 @@ pub use codex_provider::{
     CodexCommandBuilder, CodexCommandSpec, CodexParserError, CodexParserProvider,
     DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH, DEFAULT_TIMEOUT,
 };
+pub use directives::{extract_directives, ExtractedNote};
 pub use fake_provider::FakeParserProvider;
 pub use prompt::{build_parse_prompt, build_parse_prompt_with_feedback};
 pub use result_applier::{
