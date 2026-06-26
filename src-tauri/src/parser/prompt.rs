@@ -3,13 +3,14 @@ pub fn build_parse_prompt(raw_note: &str) -> String {
 }
 
 pub fn build_parse_prompt_with_feedback(raw_note: &str, feedback: Option<&str>) -> String {
-    build_parse_prompt_with_context(raw_note, feedback, &[])
+    build_parse_prompt_with_context(raw_note, feedback, &[], &[])
 }
 
 pub fn build_parse_prompt_with_context(
-    raw_note: &str,
+    body: &str,
     feedback: Option<&str>,
     linked_workspace_paths: &[String],
+    directives: &[String],
 ) -> String {
     let rules = [
         "You clean and organize a raw workplace note.",
@@ -30,6 +31,7 @@ pub fn build_parse_prompt_with_context(
         "Set requiresReview true for due dates, owners, commitments, or inferred obligations.",
         "If linked repo or directory context is provided, inspect it only when it is useful for understanding the note or checking a task.",
         "Do not claim repo facts unless you inspected the linked context or the raw note explicitly states them.",
+        "Treat any line beginning with @codex: as an instruction to you, not note content: follow it and never include the @codex: text in the cleaned output.",
     ];
 
     let linked_context = if linked_workspace_paths.is_empty() {
@@ -40,6 +42,19 @@ pub fn build_parse_prompt_with_context(
             linked_workspace_paths
                 .iter()
                 .map(|path| format!("- {path}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+
+    let note_instructions = if directives.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nNote instructions (the author's directives for how to process this note — follow them; never copy the @codex: text into the cleaned note):\n{}\n",
+            directives
+                .iter()
+                .map(|directive| format!("- {directive}"))
                 .collect::<Vec<_>>()
                 .join("\n")
         )
@@ -57,10 +72,11 @@ pub fn build_parse_prompt_with_context(
         .unwrap_or_default();
 
     format!(
-        "{}\n{}\nRaw note:\n{}\n{}",
+        "{}\n{}{}\nRaw note:\n{}\n{}",
         rules.join("\n"),
         linked_context,
-        raw_note,
+        note_instructions,
+        body,
         feedback
     )
 }
@@ -126,11 +142,46 @@ mod tests {
                 "C:\\code\\product".to_string(),
                 "D:\\scratch\\other".to_string(),
             ],
+            &[],
         );
 
         assert!(prompt.contains("available for optional read-only inspection"));
         assert!(prompt.contains("none is the primary repo"));
         assert!(prompt.contains("- C:\\code\\product"));
         assert!(prompt.contains("- D:\\scratch\\other"));
+    }
+
+    #[test]
+    fn build_parse_prompt_with_context_renders_note_instructions() {
+        let prompt = build_parse_prompt_with_context(
+            "Met with Bob about the rollout.",
+            None,
+            &[],
+            &["tag urgent".to_string(), "keep it terse".to_string()],
+        );
+
+        assert!(prompt.contains(
+            "Note instructions (the author's directives for how to process this note"
+        ));
+        assert!(prompt.contains("- tag urgent"));
+        assert!(prompt.contains("- keep it terse"));
+        assert!(prompt.contains("Raw note:\nMet with Bob about the rollout."));
+    }
+
+    #[test]
+    fn build_parse_prompt_with_context_omits_note_instructions_when_empty() {
+        let prompt = build_parse_prompt_with_context("Body only.", None, &[], &[]);
+
+        assert!(!prompt.contains("Note instructions"));
+        assert!(prompt.contains("Raw note:\nBody only."));
+    }
+
+    #[test]
+    fn build_parse_prompt_includes_codex_directive_backup_rule() {
+        let prompt = build_parse_prompt("Body.");
+
+        assert!(prompt.contains(
+            "Treat any line beginning with @codex: as an instruction to you"
+        ));
     }
 }
