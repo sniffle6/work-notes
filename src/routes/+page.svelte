@@ -270,6 +270,21 @@
     }
   }
 
+  async function saveCleanedFromNote(
+    event: CustomEvent<{ title: string; summary: string; cleanedText: string; done: () => void }>,
+  ) {
+    try {
+      await workNotes.saveCleanedEdits({
+        title: event.detail.title,
+        summary: event.detail.summary,
+        cleanedText: event.detail.cleanedText,
+      });
+      event.detail.done();
+    } catch {
+      // The store exposes the error; keep the editor open so the user can retry.
+    }
+  }
+
   async function restoreSelectedNote() {
     await workNotes.restoreSelectedNote();
   }
@@ -409,6 +424,7 @@
             on:completeAction={(event) => void workNotes.completeAction(event.detail)}
             on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
             on:createFollowup={(event) => void createFollowupFromNote(event)}
+            on:saveCleaned={(event) => void saveCleanedFromNote(event)}
           />
         </div>
       </div>

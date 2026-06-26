@@ -152,6 +152,73 @@ describe("NoteDetail", () => {
     expect(completeAction.mock.calls[0][0].detail).toBe("action-accepted");
     expect(reopenAction.mock.calls[0][0].detail).toBe("action-done");
   });
+
+  it("shows an Edit button only when cleaned output exists", () => {
+    const { unmount } = render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsed", cleanedText: "## Body", parseError: null } },
+    });
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    unmount();
+
+    render(NoteDetail, { props: { note: { ...noteDetail(), parseStatus: "parsed", cleanedText: null } } });
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("dispatches saveCleaned with edited values and closes on done", async () => {
+    const saveCleaned = vi.fn();
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsed", cleanedText: "## Body", parseError: null } },
+      events: { saveCleaned },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await fireEvent.input(screen.getByLabelText("Edit title"), { target: { value: "Edited title" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(saveCleaned).toHaveBeenCalledTimes(1);
+    expect(saveCleaned.mock.calls[0][0].detail.title).toBe("Edited title");
+
+    saveCleaned.mock.calls[0][0].detail.done();
+    await tick();
+    expect(screen.queryByLabelText("Edit title")).toBeNull();
+  });
+
+  it("confirms before reparsing a user-edited note", async () => {
+    const retryParse = vi.fn();
+    render(NoteDetail, {
+      props: {
+        note: {
+          ...noteDetail(),
+          parseStatus: "parsed",
+          cleanedText: "## Body",
+          parseError: null,
+          cleanedEdited: true,
+        },
+      },
+      events: { retryParse },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reparse" }));
+    expect(retryParse).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Discard manual edits?" })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Discard & reparse" }));
+    expect(retryParse).toHaveBeenCalledTimes(1);
+  });
+
+  it("reparses an unedited note without confirmation", async () => {
+    const retryParse = vi.fn();
+    render(NoteDetail, {
+      props: {
+        note: { ...noteDetail(), parseStatus: "parsed", cleanedText: "## Body", parseError: null, cleanedEdited: false },
+      },
+      events: { retryParse },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reparse" }));
+    expect(retryParse).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "Discard manual edits?" })).toBeNull();
+  });
 });
 
 function noteDetail(): NoteDetailType {
