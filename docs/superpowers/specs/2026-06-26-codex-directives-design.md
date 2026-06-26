@@ -21,8 +21,9 @@ In scope:
 - A new pure, unit-tested extraction module that splits a raw note into a
   `body` (content to clean) and an ordered list of `directives` (instructions),
   using a paragraph-bounded `@codex:` marker.
-- Wiring the extraction into the parse-prompt builder so the agent cleans only
-  the body and receives directives as a separate "Note instructions" section.
+- Wiring the extraction into the parse path: the provider extracts, then passes
+  the body and directives to the prompt builder, so the agent cleans only the
+  body and receives directives as a separate "Note instructions" section.
 - One backup prompt rule.
 - Updating `docs/parser-contract.md` to document directive extraction.
 
@@ -103,13 +104,17 @@ Registered in `src-tauri/src/parser/mod.rs`.
 
 ### Prompt builder: `src-tauri/src/parser/prompt.rs`
 
-`build_parse_prompt_with_context` calls `extract_directives` on the incoming
-raw note, then:
+The prompt builder renders a prompt from parts it is handed; it does not parse
+the note. `build_parse_prompt_with_context` gains an explicit `directives`
+parameter:
 
-- Uses `extracted.body` (not the original raw note) for the `Raw note:`
-  section, so directive lines are never presented as content.
-- When `extracted.directives` is non-empty, renders a new section before the
-  raw note:
+```text
+build_parse_prompt_with_context(body: &str, feedback: Option<&str>, linked_workspace_paths: &[String], directives: &[String]) -> String
+```
+
+- `body` is rendered verbatim under `Raw note:`.
+- When `directives` is non-empty, a new section is rendered before the raw
+  note:
 
   ```text
   Note instructions (the author's directives for how to process this note — follow them; never copy the @codex: text into the cleaned note):
@@ -117,14 +122,29 @@ raw note, then:
   - <directive 2>
   ```
 
-- When there are no directives, no section is rendered and behavior is
-  unchanged (body == original note).
+- When `directives` is empty, no section is rendered and behavior is unchanged.
 
 The existing `feedback` (reparse) section is unchanged and continues to render
 independently, so note directives and reparse feedback coexist.
 
-Because extraction happens inside the prompt builder, the `CodexParserProvider`
-call sites are unchanged — they still pass the raw note.
+The thin convenience wrappers `build_parse_prompt(raw)` and
+`build_parse_prompt_with_feedback(raw, feedback)` pass an empty directives
+slice (`&[]`), so their existing behavior and tests are unchanged.
+
+### Orchestration: `src-tauri/src/parser/codex_provider.rs`
+
+The provider is the seam where note splitting and prompt rendering meet. In
+`parse_output_with_feedback`, before building the prompt, it extracts once and
+passes the orthogonal parts to the builder:
+
+```text
+let extracted = extract_directives(raw_note);
+build_parse_prompt_with_context(&extracted.body, feedback, &prompt_workspace_paths, &extracted.directives)
+```
+
+This keeps all `@codex:` marker knowledge inside `directives.rs`: the prompt
+builder only ever sees directive-shaped inputs, never raw marker syntax, so
+changing the marker later touches only the extraction module and its tests.
 
 ### New backup rule
 
@@ -152,8 +172,8 @@ Treat any line beginning with @codex: as an instruction to you, not note content
 ```text
 note.raw_text
   -> CodexParserProvider.parse_output_with_feedback(raw_text, feedback)
-     -> build_parse_prompt_with_context(raw_text, feedback, linked_paths)
-        -> extract_directives(raw_text) => { body, directives }
+     -> extract_directives(raw_text) => { body, directives }
+     -> build_parse_prompt_with_context(body, feedback, linked_paths, directives)
         -> prompt = rules
                   + linked_context (if any)
                   + Note instructions section (if directives non-empty)
@@ -194,14 +214,18 @@ Extraction unit tests (`directives.rs`):
 
 Prompt tests (`prompt.rs`):
 
-- With directives: prompt contains the "Note instructions" header and each
-  directive as a `- ` line, and the `Raw note:` section contains the body
-  without the directive text.
-- Without directives: no "Note instructions" header; `Raw note:` contains the
-  full note (unchanged behavior).
+- Given a non-empty `directives` slice: the prompt contains the "Note
+  instructions" header and each directive as a `- ` line, and the `Raw note:`
+  section contains the passed `body`.
+- Given an empty `directives` slice: no "Note instructions" header; the
+  `Raw note:` section contains the passed text unchanged (existing behavior).
 - The backup rule string is present in the rules array.
 - The two existing inspection rules and the reparse-feedback behavior are
   unchanged.
+
+The provider's one-line glue (extract once, pass `body` and `directives` to the
+builder) is left to the composition of the two tested seams above; it adds no
+branching of its own.
 
 ## Documentation
 
@@ -215,7 +239,11 @@ the no-invent/no-unverified-repo-claim rules.
 
 1. Add the pure `directives.rs` extraction module with its unit tests; register
    it in `parser/mod.rs`.
-2. Wire `extract_directives` into `build_parse_prompt_with_context`: render the
-   "Note instructions" section, clean only the body, add the backup rule;
-   update prompt tests.
-3. Update `docs/parser-contract.md`.
+2. Add the `directives: &[String]` parameter to
+   `build_parse_prompt_with_context`, render the "Note instructions" section
+   from it, add the backup rule, and have the `build_parse_prompt` /
+   `build_parse_prompt_with_feedback` wrappers pass `&[]`; update prompt tests.
+3. In `CodexParserProvider::parse_output_with_feedback`, call
+   `extract_directives` on the raw note and pass `body` and `directives` into
+   the prompt builder.
+4. Update `docs/parser-contract.md`.
