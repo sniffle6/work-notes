@@ -38,6 +38,29 @@ The background worker reads persisted settings as it processes jobs, so settings
 
 When `linkedWorkspacePaths` contains existing directories, the parser prompt lists them as optional repo/directory context and the Codex process runs from the first existing linked directory. The parser must inspect linked context only when useful and must not claim repo facts unless the raw note states them or the linked context was inspected.
 
+## Note Directives
+
+A note author can embed instructions for the parser inline using the `@codex:`
+marker. Before the prompt is built, the provider deterministically splits the
+raw note into a body (content to clean) and an ordered list of directives via
+`parser/directives.rs`; the directives are rendered in a separate "Note
+instructions" prompt section and the body is what the agent cleans.
+
+- A directive starts at a line whose first non-whitespace text is `@codex:`
+  (ASCII case-insensitive).
+- A directive is paragraph-bounded: it continues across following lines until a
+  blank line, the start of the next `@codex:` line, or end of note. Continuation
+  lines are joined into one instruction with single spaces.
+- Because a directive runs until a blank line, leave a blank line before
+  resuming note content after a directive, or that content is absorbed into the
+  directive.
+- A bare `@codex:` with no text is ignored.
+- Directive text is never written into cleaned output, and the raw note is never
+  modified — the `@codex:` lines remain in the stored raw text.
+- Directives guide how the note is cleaned, tagged, and enriched, but are
+  subordinate to the safety rules: they cannot make the parser invent facts or
+  claim repo facts it did not inspect.
+
 ## Output Shape
 
 Parser output must be JSON with camelCase fields:

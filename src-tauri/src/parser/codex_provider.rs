@@ -1,4 +1,5 @@
 use super::{
+    directives::extract_directives,
     prompt::build_parse_prompt_with_context,
     types::{ParserError, ParserOutput, ParserProvider, ParserResult},
     validate::validate_parser_json,
@@ -158,9 +159,16 @@ impl CodexParserProvider {
             .collect::<Vec<_>>();
         let working_dir = active_workspace_paths.first().map(PathBuf::as_path);
 
+        let extracted = extract_directives(raw_note);
+
         run_codex_command(
             &command,
-            &build_parse_prompt_with_context(raw_note, feedback, &prompt_workspace_paths, &[]),
+            &build_parse_prompt_with_context(
+                &extracted.body,
+                feedback,
+                &prompt_workspace_paths,
+                &extracted.directives,
+            ),
             self.timeout,
             working_dir,
         )?;
