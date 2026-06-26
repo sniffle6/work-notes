@@ -146,7 +146,7 @@ impl NoteRepository {
         let record = connection
             .query_row(
                 "SELECT id, title, raw_text, cleaned_text, summary, created_at, updated_at,
-                        capture_source, parse_status, review_status, is_archived
+                        capture_source, parse_status, review_status, is_archived, cleaned_edited
                  FROM notes
                  WHERE id = ?1",
                 [id_text],
@@ -376,6 +376,7 @@ struct NoteRecord {
     parse_status: String,
     review_status: String,
     is_archived: i64,
+    cleaned_edited: i64,
 }
 
 impl NoteRecord {
@@ -392,6 +393,7 @@ impl NoteRecord {
             parse_status: row.get(8)?,
             review_status: row.get(9)?,
             is_archived: row.get(10)?,
+            cleaned_edited: row.get(11)?,
         })
     }
 
@@ -408,6 +410,7 @@ impl NoteRecord {
             parse_status: ParseStatus::from_db(&self.parse_status)?,
             review_status: ReviewStatus::from_db(&self.review_status)?,
             is_archived: self.is_archived != 0,
+            cleaned_edited: self.cleaned_edited != 0,
         })
     }
 }
@@ -507,6 +510,15 @@ mod tests {
         let db = Database::in_memory().unwrap();
         let notes = NoteRepository::new(db.clone());
         (db, notes)
+    }
+
+    #[test]
+    fn new_note_defaults_to_not_cleaned_edited() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("test note").expect("create note");
+        let stored = notes.get(note.id).expect("get note").expect("note exists");
+        assert!(!stored.cleaned_edited);
     }
 
     #[test]

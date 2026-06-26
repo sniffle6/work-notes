@@ -249,6 +249,7 @@ pub struct Note {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub cleaned_edited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

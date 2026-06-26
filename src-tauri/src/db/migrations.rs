@@ -116,6 +116,12 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
         "followup_lane",
         "followup_lane TEXT",
     )?;
+    ensure_column(
+        connection,
+        "notes",
+        "cleaned_edited",
+        "cleaned_edited INTEGER NOT NULL DEFAULT 0",
+    )?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_action_items_status_followup_state
          ON action_items(status, followup_state)",
