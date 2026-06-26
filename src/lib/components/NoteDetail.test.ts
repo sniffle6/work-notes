@@ -219,6 +219,23 @@ describe("NoteDetail", () => {
     expect(retryParse).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: "Discard manual edits?" })).toBeNull();
   });
+
+  it("closes the editor when the selected note changes", async () => {
+    const { rerender } = render(NoteDetail, {
+      props: {
+        note: { ...noteDetail(), id: "note-a", parseStatus: "parsed", cleanedText: "## A", parseError: null },
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Edit title")).toBeTruthy();
+
+    await rerender({
+      note: { ...noteDetail(), id: "note-b", parseStatus: "parsed", cleanedText: "## B", parseError: null },
+    });
+
+    expect(screen.queryByLabelText("Edit title")).toBeNull();
+  });
 });
 
 function noteDetail(): NoteDetailType {

@@ -49,6 +49,9 @@
       reparseFeedback = "";
       reparseOpen = false;
       showRaw = false;
+      editing = false;
+      reparseConfirmOpen = false;
+      pendingReparse = null;
       followupOpen = false;
       followupText = "";
       followupLane = "";
