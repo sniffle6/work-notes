@@ -584,6 +584,24 @@ mod tests {
     }
 
     #[test]
+    fn update_cleaned_by_user_with_empty_title_defaults_to_untitled_note() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("original note").expect("create note");
+        let id = note.id;
+        notes
+            .apply_cleaned_note(id, "Parsed Title", "## Parsed body", "Parsed summary")
+            .expect("apply cleaned note");
+
+        notes
+            .update_cleaned_by_user(id, "", "body", "summary")
+            .expect("update cleaned by user");
+
+        let stored = notes.get(id).expect("get note").expect("note exists");
+        assert_eq!(stored.title, "Untitled note");
+    }
+
+    #[test]
     fn restore_archived_note_returns_it_to_default_inbox() {
         let (db, notes) = setup_notes();
         let _keep_db_alive = db;

@@ -220,6 +220,19 @@ describe("NoteDetail", () => {
     expect(screen.queryByRole("dialog", { name: "Discard manual edits?" })).toBeNull();
   });
 
+  it("hides the Reparse button on a failed note and shows it on a parsed note", () => {
+    const { unmount } = render(NoteDetail, {
+      props: { note: { ...noteDetail() } },
+    });
+    expect(screen.queryByRole("button", { name: "Reparse" })).toBeNull();
+    unmount();
+
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsed", cleanedText: "## Body", parseError: null } },
+    });
+    expect(screen.getByRole("button", { name: "Reparse" })).toBeTruthy();
+  });
+
   it("closes the editor when the selected note changes", async () => {
     const { rerender } = render(NoteDetail, {
       props: {

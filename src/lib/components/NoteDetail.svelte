@@ -239,7 +239,9 @@
         {#if note.parseStatus === "failed"}
           <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Retry</button>
         {/if}
-        <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Reparse</button>
+        {#if note.parseStatus === "parsed"}
+          <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Reparse</button>
+        {/if}
         <button class="ghost-button" type="button" onclick={openReparseDialog} disabled={loading}>
           Reparse with feedback
         </button>
