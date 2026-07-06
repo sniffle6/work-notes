@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { withRetry } from "$lib/retry";
 import type {
   ActionItem,
   ActionReviewItem,
@@ -132,9 +133,25 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// Idempotent read commands that are safe to retry. On a cold/racy startup
+// (notably the relaunch after a Windows auto-update), the webview can fire
+// these before the Rust backend has finished managing app state, so the first
+// call rejects. Retrying lets the UI self-heal instead of sitting empty until
+// a manual restart. Writes are never retried — they could apply twice.
+const RETRYABLE_READ_COMMANDS = new Set([
+  "list_inbox",
+  "list_suggested_actions",
+  "get_settings",
+  "list_followups",
+]);
+
 async function invokeCommand<T>(command: string, args?: UnknownRecord): Promise<T> {
   if (!isTauriRuntime()) {
     return fallbackCommand<T>(command, args);
+  }
+
+  if (RETRYABLE_READ_COMMANDS.has(command)) {
+    return withRetry(() => invoke<T>(command, args), { attempts: 5, delayMs: 400 });
   }
 
   return invoke<T>(command, args);
