@@ -35,7 +35,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,5 +44,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/sniffle6/work-notes/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyNjU5MjIzNDM5RjE1RTUKUldUbEZaOURJNUpsY3R4NVZWNldYOG82Nk5qQmowMm5JQ2tEYUxLdS9QeVZNL1d1ZTdQMC9hSEYK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
