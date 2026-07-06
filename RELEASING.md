@@ -6,10 +6,13 @@ in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`), and the CI secrets
 
 ## Cut a release
 
-1. Bump the version to the same value in all three files:
-   - `src-tauri/tauri.conf.json` (`version`) — source of truth
-   - `src-tauri/Cargo.toml` (`package.version`)
-   - `package.json` (`version`)
+1. Bump the version everywhere it must stay in sync, in one step:
+   ```
+   node scripts/bump-version.mjs X.Y.Z
+   ```
+   This updates `src-tauri/tauri.conf.json` (the updater's source of truth),
+   `src-tauri/Cargo.toml`, `package.json`, and `src-tauri/Cargo.lock` together,
+   and writes nothing if any file fails to match (no half-bumped releases).
 2. Commit: `git commit -am "chore: release vX.Y.Z"`
 3. Push the release commit to the branch, then tag and push the tag:
    ```
