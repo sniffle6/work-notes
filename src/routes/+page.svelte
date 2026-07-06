@@ -129,6 +129,11 @@
           return;
         }
 
+        if (get(viewMode) === "tags") {
+          void workNotes.showTags();
+          return;
+        }
+
         if (event.payload.noteId) {
           void workNotes.showCapturedNote(event.payload.noteId);
           void workNotes.loadSuggestedActions();
