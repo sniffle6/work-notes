@@ -14,7 +14,8 @@
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
   import TodayView from "$lib/components/TodayView.svelte";
-  import { NOTE_CAPTURED_EVENT, type NoteCapturedPayload } from "$lib/events";
+  import { runUpdateCheck, createTauriUpdaterPort } from "$lib/updater";
+  import { NOTE_CAPTURED_EVENT, CHECK_FOR_UPDATES_EVENT, type NoteCapturedPayload } from "$lib/events";
   import { createWorkNotesStore, type InboxViewMode } from "$lib/stores/inbox";
   import type { AppSettings } from "$lib/types";
   import { toCssVariables } from "$lib/theme/applyTheme";
@@ -105,6 +106,8 @@
     }).then(registerUnlisten);
 
     if (currentWindowLabel !== "quick-capture") {
+      void runUpdateCheck(createTauriUpdaterPort(), { silent: true });
+
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
         if (get(viewMode) === "today") {
           void workNotes.showToday();
