@@ -37,16 +37,12 @@ Tauri's updater refuses any update whose minisign signature was not produced by 
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"   # powers relaunch() after install
 ```
-`src-tauri/src/lib.rs` — register both plugins, guarded so mobile still compiles:
+`src-tauri/src/lib.rs` — add both plugins inline to the existing fluent `tauri::Builder::default()` chain, right next to the current desktop-only plugins (`global_shortcut`, `single_instance`), matching the codebase's established registration style:
 ```rust
-#[cfg(desktop)]
-{
-    builder = builder
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init());
-}
+.plugin(tauri_plugin_updater::Builder::new().build())
+.plugin(tauri_plugin_process::init())
 ```
-(Adapt to the existing builder chain; the existing desktop-only plugins — global-shortcut, single-instance — can move under the same guard for correctness, but that is optional and out of scope unless trivial.)
+The project is desktop-only and already registers `global_shortcut`/`single_instance` inline without `#[cfg(desktop)]` guards. **Follow that existing pattern** — do not introduce a `let mut builder = …; #[cfg(desktop)] { builder = builder… }` refactor just to add these two. That would fight the current convention for no benefit and hurt locality.
 
 ### Config — `src-tauri/tauri.conf.json`
 ```jsonc
@@ -75,19 +71,52 @@ Add to `permissions`:
 ```
 
 ### Frontend
-- npm deps: `@tauri-apps/plugin-updater`, `@tauri-apps/plugin-process`.
-- New module `src/lib/updater.ts`:
-  - `runUpdateCheck({ silent }): Promise<void>`
-    - `const update = await check();`
-    - If `update` is null: when `silent` is false, show "You're up to date."; when silent, do nothing.
-    - If an update exists: show dialog *"Work Notes vX.Y.Z is available — Install & restart? / Later"*. On confirm: `await update.downloadAndInstall(); await relaunch();`
-    - Wrap in try/catch; on error, log and (if not silent) surface a non-blocking "Update check failed" message. A failed/absent network must never block app startup.
-  - **Startup**: call `runUpdateCheck({ silent: true })` once on app mount (main window), non-blocking.
-  - **Manual**: listen for a `check-for-updates` event (emitted by the tray) and call `runUpdateCheck({ silent: false })`.
+
+npm deps: `@tauri-apps/plugin-updater`, `@tauri-apps/plugin-process`.
+
+New module `src/lib/updater.ts`. Designed as a **deep module tested through its interface**: the decision logic (a small state machine over check → prompt → install → relaunch, plus error/silent branches) is the thing worth testing, and it must be testable without Tauri IPC. So the module separates a pure-ish **decision core** from a thin **Tauri-backed adapter** at an injected seam.
+
+**Seam — `UpdaterPort`** (the interface the core depends on; everything Tauri-specific hides behind it):
+```ts
+interface UpdaterPort {
+  check: () => Promise<UpdateHandle | null>;   // UpdateHandle.downloadAndInstall()
+  confirm: (message: string) => Promise<boolean>;
+  relaunch: () => Promise<void>;
+  notify: (message: string) => void;           // "up to date" / "check failed"
+}
+```
+
+**Core — deep, returns a result instead of firing side effects into the void:**
+```ts
+type UpdateOutcome =
+  | { kind: 'none' }            // no update, silent
+  | { kind: 'up-to-date' }      // no update, user was told
+  | { kind: 'installing' }      // user confirmed; install + relaunch invoked
+  | { kind: 'declined' }        // update existed; user chose Later
+  | { kind: 'error'; error: unknown };
+
+async function runUpdateCheck(port: UpdaterPort, opts: { silent: boolean }): Promise<UpdateOutcome>;
+```
+Behaviour:
+- `check()` returns null → `silent` ? `{none}` : `port.notify("You're up to date.")` + `{up-to-date}`.
+- update exists → `port.confirm("Work Notes vX.Y.Z is available — Install & restart?")`; on true → `handle.downloadAndInstall()` then `port.relaunch()` → `{installing}`; on false → `{declined}`.
+- anything throws → `port.notify(...)` only when `!silent`; return `{error}`. **A failed or offline check must never block startup** — the caller ignores the returned promise's timing.
+
+**Adapter — `createTauriUpdaterPort(): UpdaterPort`** wires the real plugins (`plugin-updater` `check()`, `plugin-dialog` `ask()`, `plugin-process` `relaunch()`). This is the "large adapter, small implementation" that confines *all* Tauri coupling to one spot.
+
+**Why the seam is real, not speculative:** two adapters exist — the Tauri-backed one for production and a fake `UpdaterPort` in tests. Per the deep-module rule, two adapters = a justified seam. The fake port lets the branch/state-machine logic be unit-tested by asserting the returned `UpdateOutcome` and which port methods were called — no jsdom/IPC mocking, and it satisfies the TDD-for-state-machines rule.
+
+**Wiring (two callers, one seam):**
+- **Startup:** on main-window mount, `void runUpdateCheck(createTauriUpdaterPort(), { silent: true })` — fire-and-forget, non-blocking.
+- **Manual:** subscribe to the `check-for-updates` event (from the tray) and run `runUpdateCheck(createTauriUpdaterPort(), { silent: false })`.
 
 ### Tray — `src-tauri/src/windowing/tray.rs`
 - Add a `CHECK_UPDATES_MENU_ID` item labeled **"Check for updates"** to the menu.
 - In `on_menu_event`, when that id fires: get the main window and `emit("check-for-updates", ())` to it (show the main window first if hidden so the dialog has a parent).
+
+**Seam placement (deliberate):** all update orchestration lives on the JS side; the tray is a *dumb trigger* that only fires a named event and knows nothing about updating. This keeps a single implementation of the update flow (invoked from both startup and the tray) rather than splitting logic across the Rust/JS IPC — better locality, and the prompt UX is JS-native. Running the orchestration in Rust (a `check_for_updates` command) was considered and rejected: it would smear the flow across the IPC seam (logic in Rust, prompt in JS) for no gain.
+
+**Fragile seam to note:** `"check-for-updates"` is a stringly-typed contract shared across the Rust→JS boundary — a typo on either side breaks it silently with no compile error. Define the literal once per side (a Rust `const` and a TS constant) and cover this path in the manual verification, since it is inherently integration-only (not unit-testable).
 
 ### Update UX summary
 - **On launch:** silent check; prompt only if an update is found; install on user confirm; relaunch.
@@ -132,7 +161,8 @@ Rationale for draft-then-publish: the `releases/latest/download/...` permalink o
 | `src-tauri/tauri.conf.json` | updater config, `createUpdaterArtifacts: true`, `targets: ["nsis"]` |
 | `src-tauri/capabilities/default.json` | + `updater:default`, `process:allow-restart` |
 | `src-tauri/src/windowing/tray.rs` | + "Check for updates" item that emits `check-for-updates` |
-| `src/lib/updater.ts` (new) | check / prompt / install / relaunch flow |
+| `src/lib/updater.ts` (new) | deep decision core (`runUpdateCheck` + `UpdaterPort` + `UpdateOutcome`) and the Tauri-backed adapter (`createTauriUpdaterPort`) |
+| `src/lib/updater.test.ts` (new) | unit tests of the decision core via a fake `UpdaterPort` |
 | main window startup wiring | call silent check on mount; subscribe to `check-for-updates` |
 | `package.json` | + `@tauri-apps/plugin-updater`, `@tauri-apps/plugin-process` |
 | `.github/workflows/release.yml` (new) | `tauri-action` CI on `v*` tag |
@@ -140,7 +170,9 @@ Rationale for draft-then-publish: the `releases/latest/download/...` permalink o
 
 ## Verification plan
 
-An updater cannot be proven with a single build — it needs a "from" and a "to":
+**Unit (through the interface, no Tauri):** drive `runUpdateCheck` with a fake `UpdaterPort` and assert the returned `UpdateOutcome` plus which port methods were called, for each branch: no-update/silent, no-update/loud, update+confirm (installs + relaunches), update+decline, and check-throws (silent vs loud). This is the state-machine coverage the TDD rule requires and runs in the existing vitest setup.
+
+**End-to-end:** an updater cannot be proven with a single build — it needs a "from" and a "to":
 1. Generate keys, wire everything, set version `0.1.0`.
 2. Tag `v0.1.0` → CI drafts → publish → install the resulting `-setup.exe` locally.
 3. Bump to `0.1.1`, tag `v0.1.1` → CI drafts → publish.
