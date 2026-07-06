@@ -108,6 +108,10 @@
     if (currentWindowLabel !== "quick-capture") {
       void runUpdateCheck(createTauriUpdaterPort(), { silent: true });
 
+      void listen(CHECK_FOR_UPDATES_EVENT, () => {
+        void runUpdateCheck(createTauriUpdaterPort(), { silent: false });
+      }).then(registerUnlisten);
+
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
         if (get(viewMode) === "today") {
           void workNotes.showToday();
