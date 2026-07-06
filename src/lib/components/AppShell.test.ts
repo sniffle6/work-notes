@@ -121,6 +121,27 @@ describe("AppShell", () => {
     expect(navigate.mock.calls[0][0].detail).toBe("people");
   });
 
+  it("marks tags active and emits tags navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "tags",
+      },
+      events: { navigate },
+    });
+
+    const tags = screen.getByRole("button", { name: "Tags" });
+    await fireEvent.click(tags);
+
+    expect(tags.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("tags");
+  });
+
   it("uses nav icons without fake keyboard hints", () => {
     render(AppShell, {
       props: {

@@ -123,10 +123,16 @@
           <span>Follow-ups</span>
           <strong aria-hidden="true">{followupsMetric}</strong>
         </button>
-        <a href="/">
+        <button
+          class:active={activeView === "tags"}
+          type="button"
+          aria-current={activeView === "tags" ? "page" : undefined}
+          aria-label="Tags"
+          onclick={() => navigate("tags")}
+        >
           <span class="nav-icon" aria-hidden="true"><Hash size={15} strokeWidth={2.2} /></span>
           <span>Tags</span>
-        </a>
+        </button>
         <button
           class:active={activeView === "people"}
           type="button"
@@ -383,7 +389,6 @@
     gap: 1px;
   }
 
-  .nav-stack a,
   .nav-stack button {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -410,14 +415,12 @@
     color: var(--color-text-muted);
   }
 
-  .nav-stack a:hover,
   .nav-stack button:hover,
   .nav-stack button.active {
     color: var(--color-text-primary);
     background: var(--color-surface-2);
   }
 
-  .nav-stack a:hover .nav-icon,
   .nav-stack button:hover .nav-icon,
   .nav-stack button.active .nav-icon {
     color: var(--color-text-primary);

@@ -34,7 +34,7 @@ import type {
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
-export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups";
+export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -351,6 +351,12 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await loadSuggestedActions(500);
   }
 
+  async function showTags(): Promise<void> {
+    viewMode.set("tags");
+    filters.set(createInboxFilters({ includeArchived: false }));
+    await loadInbox({ limit: 1000 });
+  }
+
   async function showFollowups(): Promise<void> {
     viewMode.set("followups");
     filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
@@ -624,6 +630,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showActions,
     showToday,
     showPeople,
+    showTags,
     showFollowups,
     restoreSelectedNote,
     permanentlyDeleteSelectedNote,

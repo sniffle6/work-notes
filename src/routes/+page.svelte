@@ -13,6 +13,7 @@
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
   import ReviewQueue from "$lib/components/ReviewQueue.svelte";
   import SettingsView from "$lib/components/SettingsView.svelte";
+  import TagsView from "$lib/components/TagsView.svelte";
   import TodayView from "$lib/components/TodayView.svelte";
   import { runUpdateCheck, createTauriUpdaterPort } from "$lib/updater";
   import { NOTE_CAPTURED_EVENT, CHECK_FOR_UPDATES_EVENT, type NoteCapturedPayload } from "$lib/events";
@@ -248,6 +249,11 @@
       return;
     }
 
+    if (event.detail === "tags") {
+      await workNotes.showTags();
+      return;
+    }
+
     await workNotes.showInbox();
   }
 
@@ -257,6 +263,11 @@
   }
 
   async function openNoteFromPeople(noteId: string) {
+    await workNotes.showInbox();
+    await workNotes.selectNote(noteId);
+  }
+
+  async function openNoteFromTags(noteId: string) {
     await workNotes.showInbox();
     await workNotes.selectNote(noteId);
   }
@@ -380,6 +391,12 @@
         loadingNotes={$loadingInbox}
         loadingActions={$loadingSuggestedActions}
         on:openNote={(event) => void openNoteFromPeople(event.detail)}
+      />
+    {:else if $viewMode === "tags"}
+      <TagsView
+        notes={$inbox}
+        loadingNotes={$loadingInbox}
+        on:openNote={(event) => void openNoteFromTags(event.detail)}
       />
     {:else}
       <div class="workspace-grid">
