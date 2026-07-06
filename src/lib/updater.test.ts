@@ -12,7 +12,11 @@ function createPort(overrides: Partial<UpdaterPort> = {}): UpdaterPort {
 }
 
 function createUpdate(): UpdateHandle {
-  return { version: "1.2.3", downloadAndInstall: vi.fn(async () => {}) };
+  return {
+    version: "1.2.3",
+    downloadAndInstall: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+  };
 }
 
 describe("runUpdateCheck", () => {
@@ -46,6 +50,35 @@ describe("runUpdateCheck", () => {
     expect(update.downloadAndInstall).not.toHaveBeenCalled();
     expect(port.relaunch).not.toHaveBeenCalled();
     expect(outcome).toEqual({ kind: "declined" });
+  });
+
+  it("closes the update when the user declines", async () => {
+    const update = createUpdate();
+    const port = createPort({ check: vi.fn(async () => update), confirm: vi.fn(async () => false) });
+    const outcome = await runUpdateCheck(port, { silent: false });
+    expect(update.close).toHaveBeenCalledOnce();
+    expect(outcome).toEqual({ kind: "declined" });
+  });
+
+  it("closes the update when install throws after confirm", async () => {
+    const update = createUpdate();
+    update.downloadAndInstall = vi.fn(async () => {
+      throw new Error("install failed");
+    });
+    const port = createPort({ check: vi.fn(async () => update), confirm: vi.fn(async () => true) });
+    const outcome = await runUpdateCheck(port, { silent: true });
+    expect(update.close).toHaveBeenCalledOnce();
+    expect(outcome.kind).toBe("error");
+  });
+
+  it("reports an install-failure message (not a check-failure message) when install throws after confirm and not silent", async () => {
+    const update = createUpdate();
+    update.downloadAndInstall = vi.fn(async () => {
+      throw new Error("install failed");
+    });
+    const port = createPort({ check: vi.fn(async () => update), confirm: vi.fn(async () => true) });
+    await runUpdateCheck(port, { silent: false });
+    expect(port.notify).toHaveBeenCalledWith("Update failed to install. Please try again later.");
   });
 
   it("passes the version into the confirm prompt", async () => {

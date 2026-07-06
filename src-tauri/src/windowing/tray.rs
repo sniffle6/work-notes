@@ -50,6 +50,9 @@ pub fn initialize_tray_menu(app: &AppHandle) -> tauri::Result<()> {
             } else if event.id() == &show_quick_capture_id {
                 let _ = show_quick_capture_window(app);
             } else if event.id() == &check_updates_id {
+                // The main window is created at startup (prepare_main_window) and only hidden
+                // on close, never destroyed, so show_main_window takes its synchronous branch
+                // and get_webview_window returns Some here.
                 let _ = show_main_window(app);
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ = window.emit(CHECK_FOR_UPDATES_EVENT, ());

@@ -2,6 +2,7 @@
 export interface UpdateHandle {
   version: string;
   downloadAndInstall: () => Promise<void>;
+  close: () => Promise<void>;
 }
 
 /**
@@ -32,8 +33,10 @@ export async function runUpdateCheck(
   port: UpdaterPort,
   opts: { silent: boolean },
 ): Promise<UpdateOutcome> {
+  let update: UpdateHandle | null = null;
+  let confirmedInstall = false;
   try {
-    const update = await port.check();
+    update = await port.check();
     if (!update) {
       if (opts.silent) {
         return { kind: "none" };
@@ -46,15 +49,32 @@ export async function runUpdateCheck(
       `Work Notes ${update.version} is available — Install & restart?`,
     );
     if (!confirmed) {
+      try {
+        await update.close();
+      } catch {
+        // best-effort resource cleanup
+      }
       return { kind: "declined" };
     }
 
+    confirmedInstall = true;
     await update.downloadAndInstall();
     await port.relaunch();
     return { kind: "installing" };
   } catch (error) {
+    if (update) {
+      try {
+        await update.close();
+      } catch {
+        // best-effort resource cleanup
+      }
+    }
     if (!opts.silent) {
-      port.notify("Update check failed. Please try again later.");
+      port.notify(
+        confirmedInstall
+          ? "Update failed to install. Please try again later."
+          : "Update check failed. Please try again later.",
+      );
     }
     return { kind: "error", error };
   }
@@ -85,9 +105,9 @@ export function createTauriUpdaterPort(): UpdaterPort {
       await relaunch();
     },
     notify: (message: string) => {
-      void import("@tauri-apps/plugin-dialog").then(({ message: showMessage }) =>
-        showMessage(message, { title: "Work Notes" }),
-      );
+      void import("@tauri-apps/plugin-dialog")
+        .then(({ message: showMessage }) => showMessage(message, { title: "Work Notes" }))
+        .catch(() => {});
     },
   };
 }
