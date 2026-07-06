@@ -82,6 +82,24 @@ describe("buildTags", () => {
 
     expect(tags[0].lastUsedAt).toBe("2026-05-25T10:00:00.000Z");
   });
+
+  it("breaks ties alphabetically by name when note counts are equal", () => {
+    const tags = buildTags([
+      note("n1", "2026-05-20T10:00:00.000Z", [tag("Zebra"), tag("Apple")]),
+    ]);
+
+    // Both appear once -> equal noteCount -> ordered alphabetically.
+    expect(tags.map((t) => t.name)).toEqual(["Apple", "Zebra"]);
+    expect(tags.every((t) => t.noteCount === 1)).toBe(true);
+  });
+
+  it("skips tags whose name is blank or whitespace", () => {
+    const tags = buildTags([
+      note("n1", "2026-05-20T10:00:00.000Z", [tag("  "), tag("Finance")]),
+    ]);
+
+    expect(tags.map((t) => t.name)).toEqual(["Finance"]);
+  });
 });
 
 describe("buildTagDetail", () => {
