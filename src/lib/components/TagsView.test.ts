@@ -82,4 +82,30 @@ describe("TagsView", () => {
     render(TagsView, { props: { notes: [note({ id: "n0", tags: [] })] } });
     expect(screen.getByText("No tags yet")).toBeTruthy();
   });
+
+  it("shows co-occurring tags and jumps to one when clicked", async () => {
+    render(TagsView, { props: { notes } });
+
+    // Finance selected by default; Kiosk co-occurs with it on n1.
+    const relatedKiosk = screen.getByRole("button", { name: "Show tag: Kiosk" });
+    await fireEvent.click(relatedKiosk);
+
+    expect(screen.getByRole("heading", { name: "Kiosk" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open note: Kiosk telemetry" })).toBeTruthy();
+  });
+
+  it("renders a summary preview in the note rows", () => {
+    const withSummary = [
+      note({
+        id: "s1",
+        title: "Pricing export mismatch",
+        summary: "Finance sees different CSV totals.",
+        parseStatus: "failed",
+        tags: [tag("Finance", "topic")],
+      }),
+    ];
+    render(TagsView, { props: { notes: withSummary } });
+
+    expect(screen.getByText("Finance sees different CSV totals.")).toBeTruthy();
+  });
 });

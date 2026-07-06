@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { buildTagDetail, buildTags, matchesTagSearch, type TagSummary } from "$lib/tags";
+  import { formatRelativeDate, noteStatusClass, noteStatusLabel } from "$lib/note-presentation";
   import type { NoteListItem } from "$lib/types";
 
   type Props = {
@@ -41,6 +42,18 @@
   function noteCountLabel(count: number): string {
     return `${count} ${count === 1 ? "note" : "notes"}`;
   }
+
+  function notePreview(note: NoteListItem): string {
+    const text = (note.summary ?? note.cleanedText ?? "").trim();
+    if (!text) {
+      return "";
+    }
+    return text.length > 90 ? `${text.slice(0, 88)}…` : text;
+  }
+
+  function selectTag(key: string) {
+    selectedKey = key;
+  }
 </script>
 
 <section class="tags-view" aria-label="Tags">
@@ -48,7 +61,7 @@
     <header class="tags-list-head">
       <div class="head-row">
         <h1>Tags</h1>
-        <span class="load-state">{loadingNotes ? "Loading" : `${tags.length} tags`}</span>
+        <span class="load-state">{loadingNotes ? "Loading" : `${tags.length} ${tags.length === 1 ? "tag" : "tags"}`}</span>
       </div>
       <label class="search-row">
         <span aria-hidden="true">Search</span>
@@ -71,11 +84,14 @@
             type="button"
             aria-current={activeKey === tag.key ? "page" : undefined}
             aria-label={tagRowLabel(tag)}
-            onclick={() => (selectedKey = tag.key)}
+            onclick={() => selectTag(tag.key)}
           >
-            <span class={`kind-badge kind-${tag.kind}`}>{tag.kind}</span>
-            <span class="tag-name">{tag.name}</span>
-            <span class="tag-count">{tag.noteCount}</span>
+            <span class="tag-row-head">
+              <span class={`kind-badge kind-${tag.kind}`}>{tag.kind}</span>
+              <span class="tag-name">{tag.name}</span>
+              <span class="tag-count">{tag.noteCount}</span>
+            </span>
+            <span class="tag-meta">last used {formatRelativeDate(tag.lastUsedAt)}</span>
           </button>
         {/each}
       {/if}
@@ -92,28 +108,69 @@
     {:else}
       <header class="detail-head">
         <div class="detail-head-meta">
-          <span class={`kind-badge kind-${detail.tag.kind}`}>{detail.tag.kind}</span>
-          <h2>{detail.tag.name}</h2>
+          <span class={`kind-badge lg kind-${detail.tag.kind}`}>{detail.tag.kind}</span>
+          <div>
+            <h2>{detail.tag.name}</h2>
+            <p>{noteCountLabel(detail.tag.noteCount)} · last used {formatRelativeDate(detail.tag.lastUsedAt)}</p>
+          </div>
         </div>
-        <span class="load-state">{loadingNotes ? "Loading" : noteCountLabel(detail.tag.noteCount)}</span>
       </header>
 
       <div class="detail-scroll">
-        {#if detail.notes.length === 0}
-          <div class="tag-empty">No notes with this tag yet.</div>
-        {:else}
-          <div class="tag-notes">
-            {#each detail.notes as note}
-              <button
-                class="tag-note"
-                type="button"
-                aria-label={`Open note: ${note.title}`}
-                onclick={() => dispatch("openNote", note.id)}
-              >
-                <span class="note-title">{note.title}</span>
-              </button>
-            {/each}
+        <section class="detail-section" aria-label="Tagged notes">
+          <div class="section-head">
+            <h3>Notes</h3>
+            <span>{detail.notes.length}</span>
           </div>
+
+          {#if detail.notes.length === 0}
+            <div class="tag-empty">No notes with this tag yet.</div>
+          {:else}
+            <div class="tag-notes">
+              {#each detail.notes as note}
+                {@const preview = notePreview(note)}
+                <button
+                  class="tag-note"
+                  type="button"
+                  aria-label={`Open note: ${note.title}`}
+                  onclick={() => dispatch("openNote", note.id)}
+                >
+                  <span
+                    class={`status-dot ${noteStatusClass(note.parseStatus, note.reviewStatus)}`}
+                    title={noteStatusLabel(note.parseStatus, note.reviewStatus)}
+                  ></span>
+                  <span class="note-body">
+                    <span class="note-title">{note.title}</span>
+                    {#if preview}<span class="note-preview">{preview}</span>{/if}
+                    <span class="note-when">{formatRelativeDate(note.createdAt)}</span>
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </section>
+
+        {#if detail.relatedTags.length > 0}
+          <section class="detail-section" aria-label="Related tags">
+            <div class="section-head">
+              <h3>Related tags</h3>
+              <span>{detail.relatedTags.length}</span>
+            </div>
+            <div class="related-chips">
+              {#each detail.relatedTags as related}
+                <button
+                  class="related-chip"
+                  type="button"
+                  aria-label={`Show tag: ${related.name}`}
+                  onclick={() => selectTag(related.key)}
+                >
+                  <span class={`kind-badge kind-${related.kind}`}>{related.kind}</span>
+                  <span class="related-name">{related.name}</span>
+                  <span class="related-count" title={`${related.coCount} shared ${related.coCount === 1 ? "note" : "notes"}`}>{related.coCount}</span>
+                </button>
+              {/each}
+            </div>
+          </section>
         {/if}
       </div>
     {/if}
@@ -174,10 +231,35 @@
     line-height: 1.2;
   }
 
-  .load-state {
+  h3 {
+    margin: 0;
     color: var(--color-text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .load-state,
+  .detail-head p,
+  .note-when,
+  .note-preview,
+  .tag-meta,
+  .tag-empty,
+  .empty-state span,
+  .detail-empty p {
+    color: var(--color-text-muted);
     font-size: 11.5px;
+  }
+
+  .load-state,
+  .tag-count,
+  .tag-meta,
+  .section-head span,
+  .related-count,
+  .note-when {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   }
 
   .search-row {
@@ -233,11 +315,9 @@
 
   .tag-row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
+    gap: 3px;
     width: 100%;
-    min-height: 40px;
+    min-height: 48px;
     padding: 8px 14px;
     border: 0;
     border-left: 2px solid transparent;
@@ -246,6 +326,13 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+  }
+
+  .tag-row-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
   }
 
   .tag-row + .tag-row {
@@ -262,12 +349,14 @@
   }
 
   .tag-row:focus-visible,
-  .tag-note:focus-visible {
+  .tag-note:focus-visible,
+  .related-chip:focus-visible {
     outline: 1px solid var(--color-accent-primary);
     outline-offset: -2px;
   }
 
-  .tag-name {
+  .tag-name,
+  .related-name {
     overflow: hidden;
     color: var(--color-text-primary);
     font-size: 13px;
@@ -282,24 +371,59 @@
     border-radius: 999px;
     color: var(--color-accent-primary);
     background: color-mix(in srgb, var(--color-accent-primary) 12%, var(--color-surface-2));
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-size: 11px;
     text-align: center;
   }
 
+  .tag-meta {
+    padding-left: 2px;
+  }
+
+  /* Kind badges — one distinct, theme-derived tint per tag kind via currentColor. */
   .kind-badge {
     display: inline-flex;
     align-items: center;
     height: 18px;
     padding: 0 7px;
     border-radius: 999px;
-    border: 1px solid var(--color-border-default);
+    border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+    background: color-mix(in srgb, currentColor 13%, var(--color-surface-1));
     color: var(--color-text-muted);
-    background: var(--color-surface-1);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.03em;
     text-transform: lowercase;
+    white-space: nowrap;
+  }
+
+  .kind-badge.lg {
+    height: 20px;
+    padding: 0 9px;
+    font-size: 11px;
+  }
+
+  .kind-person {
+    color: var(--color-accent-primary);
+  }
+
+  .kind-project {
+    color: var(--color-status-success);
+  }
+
+  .kind-topic {
+    color: var(--color-accent-hot);
+  }
+
+  .kind-urgency {
+    color: var(--color-status-error);
+  }
+
+  .kind-category {
+    color: var(--color-status-warning);
+  }
+
+  .kind-custom {
+    color: var(--color-text-muted);
   }
 
   .tag-detail {
@@ -330,12 +454,46 @@
     min-width: 0;
   }
 
+  .detail-head p {
+    margin: 2px 0 0;
+  }
+
   .detail-scroll {
     flex: 1;
-    max-width: 820px;
+    max-width: 760px;
     min-height: 0;
     padding: 18px 24px 60px;
     overflow: auto;
+  }
+
+  .detail-section {
+    display: grid;
+    align-content: start;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .detail-section + .detail-section {
+    margin-top: 26px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-head span {
+    display: inline-grid;
+    min-width: 20px;
+    min-height: 20px;
+    place-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: var(--color-accent-primary);
+    background: color-mix(in srgb, var(--color-accent-primary) 12%, var(--color-surface-2));
+    font-size: 11px;
+    font-weight: 750;
   }
 
   .tag-notes {
@@ -345,6 +503,9 @@
 
   .tag-note {
     display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
     width: 100%;
     padding: 9px 10px;
     border: 0;
@@ -360,20 +521,85 @@
     background: var(--color-surface-2);
   }
 
+  .note-body {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
   .note-title {
     overflow: hidden;
     color: var(--color-text-primary);
     font-size: 13px;
     font-weight: 650;
+    line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .tag-empty,
-  .empty-state span,
-  .detail-empty p {
+  .note-preview {
+    overflow: hidden;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: var(--color-text-muted);
+  }
+
+  .status-dot.error {
+    background: var(--color-status-error);
+  }
+
+  .status-dot.info {
+    background: var(--color-accent-hot);
+  }
+
+  .status-dot.warning {
+    background: var(--color-status-warning);
+  }
+
+  .status-dot.success {
+    background: var(--color-status-success);
+  }
+
+  .status-dot.reviewed {
+    border: 1.5px solid var(--color-status-success);
+    background: transparent;
+  }
+
+  .related-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .related-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 8px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 999px;
+    color: inherit;
+    background: var(--color-surface-1);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .related-chip:hover {
+    border-color: var(--color-accent-primary);
+    background: var(--color-surface-2);
+  }
+
+  .related-count {
     color: var(--color-text-muted);
-    font-size: 11.5px;
+    font-size: 11px;
   }
 
   .tag-empty {
@@ -388,6 +614,10 @@
     min-height: 220px;
     color: var(--color-text-muted);
     text-align: center;
+  }
+
+  .empty-state {
+    padding: 8px 10px;
   }
 
   .empty-state strong,

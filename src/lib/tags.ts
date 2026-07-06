@@ -8,9 +8,17 @@ export type TagSummary = {
   lastUsedAt: string | null;
 };
 
+export type RelatedTag = {
+  key: string;
+  name: string;
+  kind: TagKind;
+  coCount: number;
+};
+
 export type TagDetail = {
   tag: TagSummary;
   notes: NoteListItem[];
+  relatedTags: RelatedTag[];
 };
 
 export function buildTags(notes: NoteListItem[]): TagSummary[] {
@@ -60,7 +68,33 @@ export function buildTagDetail(key: string, notes: NoteListItem[]): TagDetail | 
     .filter((note) => noteHasTagKey(note, key))
     .sort((left, right) => sortableTime(right.createdAt) - sortableTime(left.createdAt));
 
-  return { tag, notes: tagged };
+  const related = new Map<string, RelatedTag>();
+  for (const note of tagged) {
+    const seen = new Set<string>();
+    for (const raw of note.tags) {
+      const name = raw.name.trim();
+      if (!name) {
+        continue;
+      }
+      const otherKey = tagKey(raw.kind, name);
+      if (otherKey === key || seen.has(otherKey)) {
+        continue;
+      }
+      seen.add(otherKey);
+      const existing = related.get(otherKey);
+      if (existing) {
+        existing.coCount += 1;
+      } else {
+        related.set(otherKey, { key: otherKey, name, kind: raw.kind, coCount: 1 });
+      }
+    }
+  }
+
+  const relatedTags = Array.from(related.values()).sort(
+    (left, right) => right.coCount - left.coCount || left.name.localeCompare(right.name),
+  );
+
+  return { tag, notes: tagged, relatedTags };
 }
 
 export function matchesTagSearch(tag: TagSummary, query: string): boolean {

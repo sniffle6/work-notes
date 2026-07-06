@@ -120,6 +120,28 @@ describe("buildTagDetail", () => {
   it("returns null for an unknown key", () => {
     expect(buildTagDetail("topic:nope", notes)).toBeNull();
   });
+
+  it("lists co-occurring tags sorted by co-occurrence count", () => {
+    const related = [
+      note("r1", "2026-05-20T10:00:00.000Z", [tag("Finance"), tag("Kiosk", "project"), tag("Maya", "person")]),
+      note("r2", "2026-05-21T10:00:00.000Z", [tag("Finance"), tag("Kiosk", "project")]),
+      note("r3", "2026-05-22T10:00:00.000Z", [tag("Kiosk", "project")]),
+    ];
+    const key = buildTags(related).find((t) => t.name === "Finance")!.key;
+    const detail = buildTagDetail(key, related)!;
+
+    // Finance is on r1,r2. Co-occurring: Kiosk (both) -> 2, Maya (r1) -> 1. Finance excluded.
+    expect(detail.relatedTags.map((t) => [t.name, t.coCount])).toEqual([
+      ["Kiosk", 2],
+      ["Maya", 1],
+    ]);
+  });
+
+  it("has no related tags when the tag never co-occurs", () => {
+    const solo = [note("s1", "2026-05-20T10:00:00.000Z", [tag("Solo")])];
+    const key = buildTags(solo)[0].key;
+    expect(buildTagDetail(key, solo)!.relatedTags).toEqual([]);
+  });
 });
 
 describe("matchesTagSearch", () => {
