@@ -59,3 +59,35 @@ export async function runUpdateCheck(
     return { kind: "error", error };
   }
 }
+
+/**
+ * Production UpdaterPort backed by the Tauri plugins. Plugins are imported
+ * dynamically (matching the app's api.ts convention) so the pure core and its
+ * tests never load Tauri modules. Only call this inside a Tauri window.
+ */
+export function createTauriUpdaterPort(): UpdaterPort {
+  return {
+    check: async () => {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      return check();
+    },
+    confirm: async (message: string) => {
+      const { ask } = await import("@tauri-apps/plugin-dialog");
+      return ask(message, {
+        title: "Work Notes",
+        kind: "info",
+        okLabel: "Install & restart",
+        cancelLabel: "Later",
+      });
+    },
+    relaunch: async () => {
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    },
+    notify: (message: string) => {
+      void import("@tauri-apps/plugin-dialog").then(({ message: showMessage }) =>
+        showMessage(message, { title: "Work Notes" }),
+      );
+    },
+  };
+}
