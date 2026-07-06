@@ -11,11 +11,15 @@ in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`), and the CI secrets
    - `src-tauri/Cargo.toml` (`package.version`)
    - `package.json` (`version`)
 2. Commit: `git commit -am "chore: release vX.Y.Z"`
-3. Tag and push:
+3. Push the release commit to the branch, then tag and push the tag:
    ```
+   git push origin HEAD
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
+   Push the branch first (`git push origin HEAD`) so the version-bump commit
+   lands on the default-branch history — otherwise it is reachable only via the
+   tag and the next release starts from a stale base. The tag push triggers CI.
 4. GitHub Actions builds, signs, and creates a **draft** release with the NSIS
    installer, its `.sig`, and `latest.json`.
 5. Open the draft release on GitHub, confirm the three assets are attached, and
