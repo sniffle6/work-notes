@@ -1,10 +1,13 @@
 <script lang="ts">
   import Bot from "@lucide/svelte/icons/bot";
   import Check from "@lucide/svelte/icons/check";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
+  import Info from "@lucide/svelte/icons/info";
   import Keyboard from "@lucide/svelte/icons/keyboard";
   import Moon from "@lucide/svelte/icons/moon";
   import Palette from "@lucide/svelte/icons/palette";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Sun from "@lucide/svelte/icons/sun";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import X from "@lucide/svelte/icons/x";
@@ -20,11 +23,12 @@
     saving?: boolean;
     open?: boolean;
     error?: string | null;
+    appVersion?: string;
   };
 
-  type SettingsSection = "appearance" | "capture" | "parser";
+  type SettingsSection = "appearance" | "capture" | "parser" | "about";
 
-  let { settings, saving = false, open = true, error = null }: Props = $props();
+  let { settings, saving = false, open = true, error = null, appVersion = "unknown" }: Props = $props();
   let activeSection = $state<SettingsSection>("appearance");
   let hotkey = $state("");
   let parserTimeoutSeconds = $state(90);
@@ -40,6 +44,7 @@
     save: AppSettings;
     close: void;
     selectTheme: string;
+    checkUpdates: void;
   }>();
 
   $effect(() => {
@@ -190,6 +195,15 @@
           <Bot size={16} strokeWidth={2.2} />
           <span>Parser</span>
         </button>
+        <button
+          class:active={activeSection === "about"}
+          type="button"
+          aria-current={activeSection === "about" ? "page" : undefined}
+          onclick={() => (activeSection = "about")}
+        >
+          <Info size={16} strokeWidth={2.2} />
+          <span>About</span>
+        </button>
       </aside>
 
       <div class="settings-panel">
@@ -320,7 +334,7 @@
                 ><span></span></button>
               </div>
             </section>
-          {:else}
+          {:else if activeSection === "parser"}
             <section class="settings-section" aria-labelledby="parser-title">
               <div class="section-head">
                 <span class="section-icon" aria-hidden="true"><Bot size={18} strokeWidth={2.2} /></span>
@@ -405,6 +419,43 @@
                 {#if folderPickerError}
                   <p class="field-error">{folderPickerError}</p>
                 {/if}
+              </div>
+            </section>
+          {:else}
+            <section class="settings-section" aria-labelledby="about-title">
+              <div class="section-head">
+                <span class="section-icon" aria-hidden="true"><Info size={18} strokeWidth={2.2} /></span>
+                <div>
+                  <h3 id="about-title">About</h3>
+                  <p>Installed version and update controls for this app.</p>
+                </div>
+              </div>
+
+              <div class="about-card">
+                <div>
+                  <span class="about-label">Installed version</span>
+                  <strong>{appVersion}</strong>
+                </div>
+                <div>
+                  <span class="about-label">Update source</span>
+                  <p>GitHub releases</p>
+                </div>
+              </div>
+
+              <div class="about-actions">
+                <button class="primary" type="button" onclick={() => dispatch("checkUpdates")}>
+                  <RefreshCw size={14} strokeWidth={2.2} />
+                  Check for updates
+                </button>
+                <a
+                  class="secondary link-button"
+                  href="https://github.com/sniffle6/work-notes/releases/latest"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink size={14} strokeWidth={2.2} />
+                  View release notes
+                </a>
               </div>
             </section>
           {/if}
@@ -942,6 +993,53 @@
     color: var(--color-status-error);
   }
 
+  .about-card {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .about-card > div {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 7px;
+    background: var(--color-surface-1);
+  }
+
+  .about-label {
+    color: var(--color-text-muted);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .about-card strong,
+  .about-card p {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--color-text-primary);
+    font-size: 14px;
+    line-height: 1.3;
+  }
+
+  .about-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .about-actions .primary,
+  .about-actions .secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    text-decoration: none;
+  }
+
   .settings-actions {
     display: flex;
     flex: 0 0 auto;
@@ -1009,7 +1107,8 @@
     }
 
     .theme-grid,
-    .field-row {
+    .field-row,
+    .about-card {
       grid-template-columns: 1fr;
     }
 

@@ -75,6 +75,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Appearance" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Capture" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Parser" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "About" })).toBeTruthy();
     expect(screen.queryByText("Tags and people")).toBeNull();
     expect(screen.queryByText("Data and backup")).toBeNull();
     expect(screen.queryByText("Match system color scheme")).toBeNull();
@@ -84,6 +85,35 @@ describe("SettingsView", () => {
 
     expect(screen.getByRole("heading", { name: "Capture" })).toBeTruthy();
     expect(screen.getByLabelText("Global hotkey")).toBeTruthy();
+  });
+
+  it("shows app version and update actions in the about section", async () => {
+    render(SettingsView, {
+      props: { settings: settings(), open: true, appVersion: "0.1.4" },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "About" }));
+
+    expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+    expect(screen.getByText("0.1.4")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View release notes" }).getAttribute("href")).toBe(
+      "https://github.com/sniffle6/work-notes/releases/latest",
+    );
+  });
+
+  it("dispatches checkUpdates from the about section", async () => {
+    const checkUpdates = vi.fn();
+
+    render(SettingsView, {
+      props: { settings: settings(), open: true, appVersion: "0.1.4" },
+      events: { checkUpdates },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "About" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    expect(checkUpdates).toHaveBeenCalledTimes(1);
   });
 
   it("saves linked repo and directory paths from the folder picker", async () => {

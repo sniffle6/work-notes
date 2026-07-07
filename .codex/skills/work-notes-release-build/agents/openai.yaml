@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work Notes Release Build"
+  short_description: "Release with required notes"
+  default_prompt: "Use $work-notes-release-build to cut or publish a Work Notes GitHub release with release notes."

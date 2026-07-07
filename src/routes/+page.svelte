@@ -21,8 +21,10 @@
   import type { AppSettings } from "$lib/types";
   import { toCssVariables } from "$lib/theme/applyTheme";
   import { getThemeById } from "$lib/theme/themes";
+  import packageMetadata from "../../package.json";
 
   const workNotes = createWorkNotesStore();
+  const appVersion = packageMetadata.version;
   const {
     inbox,
     filteredInbox,
@@ -223,6 +225,14 @@
 
   function selectTheme(event: CustomEvent<string>) {
     void workNotes.setTheme(event.detail);
+  }
+
+  function checkForUpdatesFromSettings() {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    void runUpdateCheck(createTauriUpdaterPort(), { silent: false });
   }
 
   async function deleteSelectedNote() {
@@ -469,8 +479,10 @@
       saving={$savingSettings}
       open={settingsOpen}
       error={settingsOpen ? $error : null}
+      appVersion={appVersion}
       on:save={(event) => void saveSettings(event)}
       on:selectTheme={selectTheme}
+      on:checkUpdates={checkForUpdatesFromSettings}
       on:close={() => (settingsOpen = false)}
     />
 

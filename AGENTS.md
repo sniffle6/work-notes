@@ -9,6 +9,7 @@ This repo is a Windows-only local desktop app named Work Notes. It is built with
 - Use `docs/architecture.md` for the current module map.
 - Use `docs/parser-contract.md` before touching parsing, retries, schema validation, or Codex CLI execution.
 - Use `docs/testing.md` to choose the right verification commands.
+- Before pushing a release tag, triggering a GitHub release build, or publishing a draft GitHub release, use `.codex/skills/work-notes-release-build` and add release notes. Use the skill's dry run mode when testing the release flow. Do not publish a Work Notes release with a placeholder or generic release body.
 - Treat `docs/superpowers/plans/2026-05-20-work-notes-agent-team-implementation.md` as historical implementation context, not current task status.
 
 ## Product Invariants
