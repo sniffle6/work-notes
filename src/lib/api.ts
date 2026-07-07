@@ -193,6 +193,11 @@ export async function updateNoteCleaned(
   return normalizeNoteDetail(note);
 }
 
+export async function updateNoteRaw(noteId: string, rawText: string): Promise<NoteDetail> {
+  const note = await invokeCommand<unknown>("update_note_raw", { noteId, rawText });
+  return normalizeNoteDetail(note);
+}
+
 export async function deleteNote(noteId: string): Promise<void> {
   await invokeCommand<void>("delete_note", { noteId });
 }
@@ -292,6 +297,7 @@ export const api = {
   retryParse,
   retryParseWithFeedback,
   updateNoteCleaned,
+  updateNoteRaw,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -536,6 +542,26 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
         note.cleanedText = String(args?.cleanedText ?? note.cleanedText ?? "");
         note.summary = String(args?.summary ?? note.summary ?? "");
         note.cleanedEdited = true;
+        note.updatedAt = new Date().toISOString();
+      }
+      return normalizeNoteDetail(note ?? fallbackNotes[0]) as T;
+    }
+    case "update_note_raw": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.rawText = String(args?.rawText ?? note.rawText);
+        note.title = makeTitle(note.rawText);
+        note.cleanedText = null;
+        note.summary = null;
+        note.parseStatus = "queued";
+        note.parseError = null;
+        note.cleanedEdited = false;
+        note.tags = [];
+        note.actionItems = note.actionItems.filter(
+          (action) => !(action.source === "parser" && action.status === "suggested"),
+        );
+        note.actionItemCount = note.actionItems.length;
+        note.suggestedActionItemCount = note.actionItems.filter((action) => action.status === "suggested").length;
         note.updatedAt = new Date().toISOString();
       }
       return normalizeNoteDetail(note ?? fallbackNotes[0]) as T;

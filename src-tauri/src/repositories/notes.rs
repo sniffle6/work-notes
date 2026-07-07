@@ -299,6 +299,40 @@ impl NoteRepository {
         Ok(())
     }
 
+    pub fn update_raw_text_by_user(&self, id: NoteId, raw_text: &str) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+
+        transaction
+            .query_row(
+                "SELECT id FROM notes WHERE id = ?1",
+                [id_text.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            })?;
+
+        transaction.execute(
+            "UPDATE notes
+             SET title = ?2,
+                 raw_text = ?3,
+                 cleaned_text = NULL,
+                 summary = NULL,
+                 cleaned_edited = 0,
+                 updated_at = ?4
+             WHERE id = ?1",
+            params![id_text, make_title(raw_text), raw_text, now],
+        )?;
+        replace_fts(&transaction, &id_text, raw_text, None, None)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn set_parse_status(&self, id: NoteId, status: ParseStatus) -> RepositoryResult<()> {
         self.update_status(id, "parse_status", status.as_str())
     }
@@ -581,6 +615,40 @@ mod tests {
         assert_eq!(stored.cleaned_text.as_deref(), Some("## Edited body"));
         assert_eq!(stored.summary.as_deref(), Some("Edited summary"));
         assert!(stored.cleaned_edited);
+    }
+
+    #[test]
+    fn update_raw_text_by_user_invalidates_cleaned_output_and_fts() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("original note").expect("create note");
+        let id = note.id;
+        notes
+            .apply_cleaned_note(id, "Parsed Title", "## Parsed body", "Parsed summary")
+            .expect("apply cleaned note");
+
+        notes
+            .update_raw_text_by_user(id, "updated source mentions calico rollout")
+            .expect("update raw text");
+
+        let stored = notes.get(id).expect("get note").expect("note exists");
+        assert_eq!(stored.raw_text, "updated source mentions calico rollout");
+        assert_eq!(stored.title, "updated source mentions calico rollout");
+        assert_eq!(stored.cleaned_text, None);
+        assert_eq!(stored.summary, None);
+        assert!(!stored.cleaned_edited);
+        assert_eq!(
+            notes.search("calico").expect("search updated raw text")[0].id,
+            id
+        );
+        assert!(notes
+            .search("original")
+            .expect("search old raw text")
+            .is_empty());
+        assert!(notes
+            .search("parsed")
+            .expect("search old cleaned text")
+            .is_empty());
     }
 
     #[test]

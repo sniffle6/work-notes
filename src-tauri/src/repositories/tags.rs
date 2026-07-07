@@ -93,6 +93,15 @@ impl TagRepository {
         Ok(())
     }
 
+    pub fn remove_parser_assignments_for_note(&self, note_id: NoteId) -> RepositoryResult<()> {
+        let connection = self.db.connection()?;
+        connection.execute(
+            "DELETE FROM note_tags WHERE note_id = ?1 AND source = ?2",
+            params![note_id.to_string(), "parser"],
+        )?;
+        Ok(())
+    }
+
     fn find_by_name_and_kind(&self, name: &str, kind: TagKind) -> RepositoryResult<Option<Tag>> {
         let connection = self.db.connection()?;
         let record = connection

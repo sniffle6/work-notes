@@ -305,6 +305,16 @@ impl ActionItemRepository {
         )?;
         Ok(())
     }
+
+    pub fn delete_replaceable_parser_suggestions(&self, note_id: NoteId) -> RepositoryResult<()> {
+        let connection = self.db.connection()?;
+        connection.execute(
+            "DELETE FROM action_items
+             WHERE note_id = ?1 AND source = ?2 AND status = ?3",
+            params![note_id.to_string(), "parser", "suggested"],
+        )?;
+        Ok(())
+    }
 }
 
 struct FollowupItemRecord {

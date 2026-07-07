@@ -11,6 +11,7 @@ use crate::repositories::RepositoryError;
 use crate::services::actions::ActionItemService;
 use crate::services::archive::ArchiveService;
 use crate::services::capture::CaptureService;
+use crate::services::note_edits::NoteEditService;
 use crate::services::parse_queue::ParseQueue;
 use crate::services::search::{NoteDetail, SearchService};
 use crate::services::settings::AppSettings;
@@ -456,6 +457,18 @@ pub async fn update_note_cleaned(
         .repositories
         .notes
         .update_cleaned_by_user(note_id, &title, &cleaned_text, &summary)?;
+    let detail = SearchService::new(state.repositories.clone()).get_note(note_id)?;
+    Ok(detail.into())
+}
+
+#[tauri::command]
+pub async fn update_note_raw(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+    raw_text: String,
+) -> Result<NoteDetailDto, CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    NoteEditService::new(state.repositories.clone()).update_raw_text(note_id, &raw_text)?;
     let detail = SearchService::new(state.repositories.clone()).get_note(note_id)?;
     Ok(detail.into())
 }

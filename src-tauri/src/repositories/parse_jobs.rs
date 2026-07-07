@@ -78,6 +78,51 @@ impl ParseJobRepository {
         Ok(job)
     }
 
+    pub fn enqueue_after_raw_text_update(&self, note_id: NoteId) -> RepositoryResult<ParseJob> {
+        let id = ParseJobId::new();
+        let id_text = id.to_string();
+        let note_id_text = note_id.to_string();
+        let created_at = now_db_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+
+        if let Some(active_job) = active_job_for_note(&transaction, &note_id_text)? {
+            if active_job.status == ParseStatus::Queued {
+                transaction.execute(
+                    "UPDATE parse_jobs SET feedback = NULL WHERE id = ?1",
+                    [active_job.id.to_string()],
+                )?;
+                let active_job =
+                    job_by_id(&transaction, &active_job.id.to_string())?.ok_or_else(|| {
+                        RepositoryError::NotFound {
+                            entity: "parse_job",
+                            id: active_job.id.to_string(),
+                        }
+                    })?;
+                transaction.commit()?;
+                return Ok(active_job);
+            }
+        }
+
+        transaction.execute(
+            "INSERT INTO parse_jobs (
+                id, note_id, status, attempt_count, last_error, feedback, created_at, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, 0, NULL, NULL, ?4, NULL, NULL)",
+            params![id_text, note_id_text, ParseStatus::Queued.as_str(), created_at],
+        )?;
+        transaction.execute(
+            "UPDATE notes SET parse_status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![note_id_text, ParseStatus::Queued.as_str(), created_at],
+        )?;
+        let job =
+            job_by_id(&transaction, &id.to_string())?.ok_or_else(|| RepositoryError::NotFound {
+                entity: "parse_job",
+                id: id.to_string(),
+            })?;
+        transaction.commit()?;
+        Ok(job)
+    }
+
     pub fn next_queued(&self) -> RepositoryResult<Option<ParseJob>> {
         let connection = self.db.connection()?;
         let record = connection

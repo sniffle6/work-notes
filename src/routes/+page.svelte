@@ -323,6 +323,15 @@
     }
   }
 
+  async function saveRawFromNote(event: CustomEvent<{ rawText: string; done: () => void }>) {
+    try {
+      await workNotes.saveRawEdit(event.detail.rawText);
+      event.detail.done();
+    } catch {
+      // The store exposes the error; keep the editor open so the user can retry.
+    }
+  }
+
   async function restoreSelectedNote() {
     await workNotes.restoreSelectedNote();
   }
@@ -469,6 +478,7 @@
             on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
             on:createFollowup={(event) => void createFollowupFromNote(event)}
             on:saveCleaned={(event) => void saveCleanedFromNote(event)}
+            on:saveRaw={(event) => void saveRawFromNote(event)}
           />
         </div>
       </div>

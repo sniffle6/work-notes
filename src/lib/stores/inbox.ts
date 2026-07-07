@@ -14,6 +14,7 @@ import {
   retryParse,
   retryParseWithFeedback,
   updateNoteCleaned,
+  updateNoteRaw,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -48,6 +49,7 @@ type WorkNotesApi = {
   retryParse: typeof retryParse;
   retryParseWithFeedback: typeof retryParseWithFeedback;
   updateNoteCleaned: typeof updateNoteCleaned;
+  updateNoteRaw: typeof updateNoteRaw;
   deleteNote: typeof deleteNote;
   restoreNote: typeof restoreNote;
   permanentlyDeleteNote: typeof permanentlyDeleteNote;
@@ -71,6 +73,7 @@ const defaultApi: WorkNotesApi = {
   retryParse,
   retryParseWithFeedback,
   updateNoteCleaned,
+  updateNoteRaw,
   deleteNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -302,6 +305,27 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       selectedNote.set(await api.getNote(note.id));
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not save edits."));
+      throw unknownError;
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  async function saveRawEdit(rawText: string): Promise<void> {
+    const note = get(selectedNote);
+    if (!note || !rawText.trim()) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.updateNoteRaw(note.id, rawText);
+      await loadInbox();
+      selectedNote.set(await api.getNote(note.id));
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not save raw text."));
       throw unknownError;
     } finally {
       loadingNote.set(false);
@@ -658,6 +682,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     retrySelectedParse,
     retrySelectedParseWithFeedback,
     saveCleanedEdits,
+    saveRawEdit,
     deleteSelectedNote,
     showInbox,
     showArchive,

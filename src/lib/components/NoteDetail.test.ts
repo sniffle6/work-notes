@@ -183,6 +183,28 @@ describe("NoteDetail", () => {
     expect(screen.queryByLabelText("Edit title")).toBeNull();
   });
 
+  it("dispatches saveRaw with edited raw text and closes on done", async () => {
+    const saveRaw = vi.fn();
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsed", cleanedText: "## Body", parseError: null } },
+      events: { saveRaw },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Edit raw" }));
+    await fireEvent.input(screen.getByLabelText("Edit raw note"), {
+      target: { value: "Updated raw source before reparsing." },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Save raw" }));
+
+    expect(saveRaw).toHaveBeenCalledTimes(1);
+    expect(saveRaw.mock.calls[0][0].detail.rawText).toBe("Updated raw source before reparsing.");
+
+    saveRaw.mock.calls[0][0].detail.done();
+    await tick();
+    expect(screen.queryByLabelText("Edit raw note")).toBeNull();
+  });
+
   it("confirms before reparsing a user-edited note", async () => {
     const retryParse = vi.fn();
     render(NoteDetail, {

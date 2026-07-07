@@ -2,6 +2,7 @@ pub mod actions;
 pub mod archive;
 pub mod capture;
 pub mod draft;
+pub mod note_edits;
 pub mod parse_queue;
 pub mod search;
 pub mod settings;

@@ -16,6 +16,8 @@
   let reparseOpen = $state(false);
   let showRaw = $state(false);
   let editing = $state(false);
+  let rawEditing = $state(false);
+  let rawDraft = $state("");
   let reparseConfirmOpen = $state(false);
   let pendingReparse = $state<{ kind: "retry" } | { kind: "feedback"; feedback: string } | null>(null);
   let followupOpen = $state(false);
@@ -40,6 +42,7 @@
     reopenAction: string;
     createFollowup: { text: string; lane: string | null; done: () => void };
     saveCleaned: { title: string; summary: string; cleanedText: string; done: () => void };
+    saveRaw: { rawText: string; done: () => void };
   }>();
 
   $effect(() => {
@@ -50,6 +53,8 @@
       reparseOpen = false;
       showRaw = false;
       editing = false;
+      rawEditing = false;
+      rawDraft = note?.rawText ?? "";
       reparseConfirmOpen = false;
       pendingReparse = null;
       followupOpen = false;
@@ -131,6 +136,7 @@
   }
 
   function startEdit() {
+    rawEditing = false;
     editing = true;
   }
 
@@ -141,6 +147,31 @@
       cleanedText: event.detail.cleanedText,
       done: () => {
         editing = false;
+      },
+    });
+  }
+
+  function startRawEdit() {
+    editing = false;
+    showRaw = true;
+    rawDraft = note?.rawText ?? "";
+    rawEditing = true;
+  }
+
+  function cancelRawEdit() {
+    rawDraft = note?.rawText ?? "";
+    rawEditing = false;
+  }
+
+  function saveRawEdit() {
+    if (!rawDraft.trim()) {
+      return;
+    }
+
+    dispatch("saveRaw", {
+      rawText: rawDraft,
+      done: () => {
+        rawEditing = false;
       },
     });
   }
@@ -323,7 +354,27 @@
 
       <section class="note-body" aria-label={showRaw ? "Raw note" : "Cleaned note"}>
         {#if showRaw}
-          <pre>{note.rawText}</pre>
+          <div class="raw-toolbar">
+            <button class="ghost-button" type="button" onclick={startRawEdit} disabled={loading || rawEditing}>
+              Edit raw
+            </button>
+          </div>
+          {#if rawEditing}
+            <div class="raw-editor">
+              <label>
+                <span>Raw note</span>
+                <textarea aria-label="Edit raw note" bind:value={rawDraft} rows="12" disabled={loading}></textarea>
+              </label>
+              <footer>
+                <button class="secondary-action" type="button" onclick={cancelRawEdit} disabled={loading}>Cancel</button>
+                <button class="primary-action" type="button" onclick={saveRawEdit} disabled={loading || !rawDraft.trim()}>
+                  Save raw
+                </button>
+              </footer>
+            </div>
+          {:else}
+            <pre>{note.rawText}</pre>
+          {/if}
         {:else if editing}
           <CleanedEditor
             title={note.title}
@@ -707,6 +758,7 @@
   .summary-block span,
   .section-head span,
   .reparse-dialog label span,
+  .raw-editor label span,
   .followup-form label span {
     display: inline-flex;
     color: var(--color-accent-primary);
@@ -765,6 +817,28 @@
 
   .note-body {
     margin-bottom: 22px;
+  }
+
+  .raw-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+  }
+
+  .raw-editor {
+    display: grid;
+    gap: 10px;
+  }
+
+  .raw-editor label {
+    display: grid;
+    gap: 7px;
+  }
+
+  .raw-editor footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .note-body p {
@@ -883,7 +957,8 @@
     border-color: var(--color-accent-primary);
   }
 
-  .reparse-dialog textarea {
+  .reparse-dialog textarea,
+  .raw-editor textarea {
     width: 100%;
     min-height: 118px;
     resize: vertical;
@@ -898,7 +973,8 @@
     line-height: 1.5;
   }
 
-  .reparse-dialog textarea:focus {
+  .reparse-dialog textarea:focus,
+  .raw-editor textarea:focus {
     border-color: var(--color-accent-primary);
   }
 

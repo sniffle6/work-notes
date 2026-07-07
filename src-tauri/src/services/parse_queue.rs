@@ -685,7 +685,12 @@ mod tests {
             .update_cleaned_by_user(note_id, "User Title", "user body", "user summary")
             .expect("mark edited");
         assert!(
-            repositories.notes.get(note_id).unwrap().unwrap().cleaned_edited,
+            repositories
+                .notes
+                .get(note_id)
+                .unwrap()
+                .unwrap()
+                .cleaned_edited,
             "precondition: note is user-edited"
         );
 
@@ -772,6 +777,32 @@ mod tests {
         assert_eq!(feedback.as_deref(), Some("Tag this as QA follow-up"));
     }
 
+    #[test]
+    fn retry_parse_uses_updated_raw_text() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        let note_id = note.id;
+        repositories
+            .notes
+            .update_raw_text_by_user(note_id, "maya said update the calico rollout")
+            .unwrap();
+        repositories.parse_jobs.enqueue(note_id).unwrap();
+
+        ParseQueue::new(repositories.clone())
+            .process_next_with_provider(&EchoRawProvider)
+            .unwrap();
+
+        let stored = repositories.notes.get(note_id).unwrap().unwrap();
+        assert_eq!(stored.title, "maya said update the calico rollout");
+        assert_eq!(
+            stored.cleaned_text.as_deref(),
+            Some("Parsed from: maya said update the calico rollout")
+        );
+    }
+
     struct StaticProvider;
 
     impl ParserProvider for StaticProvider {
@@ -792,6 +823,20 @@ mod tests {
                     confidence: 0.81,
                     requires_review: true,
                 }],
+            })
+        }
+    }
+
+    struct EchoRawProvider;
+
+    impl ParserProvider for EchoRawProvider {
+        fn parse(&self, input: &str) -> Result<ParserResult, ParserError> {
+            Ok(ParserResult {
+                title: input.to_string(),
+                cleaned_text: format!("Parsed from: {input}"),
+                summary: input.to_string(),
+                tags: Vec::new(),
+                action_items: Vec::new(),
             })
         }
     }
