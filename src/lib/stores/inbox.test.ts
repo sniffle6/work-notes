@@ -146,7 +146,9 @@ describe("createWorkNotesStore", () => {
     await store.showCapturedNote("captured-note");
 
     expect(get(store.filters)).toEqual(createInboxFilters({ includeArchived: false }));
-    expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
+    // The nav-summary refresh issues its own high-limit inbox query afterward,
+    // so assert the reveal query happened rather than that it was the last one.
+    expect(api.listInbox).toHaveBeenCalledWith(createInboxFilters({ includeArchived: false }));
     expect(get(store.inbox).map((item) => item.id)).toEqual(["captured-note"]);
     expect(get(store.selectedNote)?.id).toBe("captured-note");
   });
@@ -527,7 +529,9 @@ describe("createWorkNotesStore", () => {
     await store.acceptSuggestedAction("action-1");
 
     expect(api.acceptActionItem).toHaveBeenCalledWith("action-1");
-    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    // Follow-ups reload after accepting (the [] -> [accepted] transition proves
+    // it); the exact call count now also includes the nav-summary refresh.
+    expect(api.listFollowups).toHaveBeenCalled();
     expect(get(store.followups)).toEqual([accepted]);
   });
 
@@ -561,7 +565,9 @@ describe("createWorkNotesStore", () => {
     );
     expect(api.getNote).toHaveBeenLastCalledWith("note-1");
     expect(api.listInbox).toHaveBeenCalled();
-    expect(api.listFollowups).toHaveBeenLastCalledWith(200);
+    // The board refresh loads follow-ups at the default limit; the nav-summary
+    // refresh then issues its own high-limit query, so it is no longer last.
+    expect(api.listFollowups).toHaveBeenCalledWith(200);
     expect(get(store.selectedNote)?.actionItems.map((item) => item.id)).toEqual(["manual-1"]);
     expect(get(store.followups)).toEqual([created]);
   });
@@ -570,12 +576,19 @@ describe("createWorkNotesStore", () => {
     const current = followup({ id: "action-1", followupState: "open", followupLane: null });
     const waiting = followup({ id: "action-1", followupState: "waiting", followupLane: null });
     const assignedLane = followup({ id: "action-1", followupState: "waiting", followupLane: "Vendor" });
+    // Stateful snapshot: each mutation advances it, so the interleaved
+    // nav-summary refresh reads a consistent value instead of shifting a
+    // once-chain out from under loadFollowups.
+    let followupsSnapshot: FollowupItem[] = [waiting];
     const api = testApi({
       getNote: vi.fn().mockResolvedValue({ ...note(), actionItems: [current] }),
-      listFollowups: vi
-        .fn()
-        .mockResolvedValueOnce([waiting])
-        .mockResolvedValueOnce([assignedLane]),
+      listFollowups: vi.fn(async () => followupsSnapshot),
+      updateFollowupState: vi.fn(async () => {
+        followupsSnapshot = [waiting];
+      }),
+      updateFollowupLane: vi.fn(async () => {
+        followupsSnapshot = [assignedLane];
+      }),
     });
     const store = createWorkNotesStore(api);
 
@@ -585,7 +598,7 @@ describe("createWorkNotesStore", () => {
 
     expect(api.updateFollowupState).toHaveBeenCalledWith("action-1", "waiting");
     expect(api.updateFollowupLane).toHaveBeenCalledWith("action-1", "Vendor");
-    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(api.listFollowups).toHaveBeenCalled();
     expect(api.getNote).toHaveBeenCalledTimes(3);
     expect(get(store.followups)).toEqual([assignedLane]);
   });
@@ -617,6 +630,88 @@ describe("createWorkNotesStore", () => {
     expect(api.completeActionItem).toHaveBeenCalledWith("action-1");
     expect(api.reopenActionItem).toHaveBeenCalledWith("action-1");
     expect(api.getNote).toHaveBeenLastCalledWith("note-1");
+  });
+});
+
+describe("nav summary", () => {
+  it("builds view-independent counts from canonical, high-limit data", async () => {
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([
+        note({ id: "a", isArchived: false, parseStatus: "failed" }),
+        note({ id: "b", isArchived: false, parseStatus: "queued" }),
+        note({ id: "c", isArchived: true }),
+      ]),
+      listSuggestedActions: vi
+        .fn()
+        .mockResolvedValue([reviewItem({ id: "r1" }), reviewItem({ id: "r2" })]),
+      listFollowups: vi.fn().mockResolvedValue([
+        followup({ id: "f1", status: "accepted" }),
+        followup({ id: "f2", status: "done" }),
+      ]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+
+    expect(get(store.navSummary)).toEqual({
+      inbox: 2,
+      needsReview: 2,
+      followups: 1,
+      parseFailed: 1,
+      parseQueue: 1,
+      tags: ["Finance"],
+    });
+    expect(api.listInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ includeArchived: false, limit: 1000 }),
+    );
+  });
+
+  it("keeps nav counts stable when navigating to the archive", async () => {
+    const active = note({ id: "active-1", isArchived: false });
+    const archived = [
+      note({ id: "arch-1", isArchived: true }),
+      note({ id: "arch-2", isArchived: true }),
+      note({ id: "arch-3", isArchived: true }),
+    ];
+    const api = testApi({
+      listInbox: vi.fn(async (filters: InboxFilters) =>
+        filters.includeArchived ? [active, ...archived] : [active],
+      ),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+    expect(get(store.navSummary).inbox).toBe(1);
+
+    await store.showArchive();
+
+    // The archive view fills the `inbox` store with the archived notes...
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["arch-1", "arch-2", "arch-3"]);
+    // ...but the sidebar's Inbox count must not follow it.
+    expect(get(store.navSummary).inbox).toBe(1);
+  });
+
+  it("refreshes nav counts after archiving the selected note", async () => {
+    let archivedOne = false;
+    const api = testApi({
+      listInbox: vi.fn(async () =>
+        archivedOne ? [note({ id: "b" })] : [note({ id: "a" }), note({ id: "b" })],
+      ),
+      deleteNote: vi.fn(async () => {
+        archivedOne = true;
+      }),
+      getNote: vi.fn(async (id: string) => ({ ...note({ id }), actionItems: [] })),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+    expect(get(store.navSummary).inbox).toBe(2);
+
+    await store.selectNote("a");
+    await store.deleteSelectedNote();
+
+    expect(api.deleteNote).toHaveBeenCalledWith("a");
+    expect(get(store.navSummary).inbox).toBe(1);
   });
 });
 

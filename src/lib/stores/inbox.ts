@@ -33,8 +33,13 @@ import type {
 } from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
+import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 
 export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
+
+// Upper bound for the canonical count queries. Matches the backend clamp for
+// the inbox list; suggested actions and follow-ups clamp lower server-side.
+const NAV_SUMMARY_LIMIT = 1000;
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -98,6 +103,10 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const savingSettings = writable(false);
   const busyActionId = writable<string | null>(null);
   const error = writable<string | null>(null);
+  // View-independent counts for the sidebar/nav chrome. Refreshed on startup
+  // and after any data mutation — never touched by plain navigation — so the
+  // nav badges stay put when the user merely switches views (e.g. Archive).
+  const navSummary = writable<NavSummary>(EMPTY_NAV_SUMMARY);
 
   const filteredInbox = derived([inbox, filters, viewMode], ([$inbox, $filters, $viewMode]) =>
     $inbox.filter((note) =>
@@ -208,6 +217,21 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
+  async function refreshNavSummary(): Promise<void> {
+    try {
+      const [notes, actions, followupItems] = await Promise.all([
+        api.listInbox(createInboxFilters({ includeArchived: false, limit: NAV_SUMMARY_LIMIT })),
+        api.listSuggestedActions(NAV_SUMMARY_LIMIT),
+        api.listFollowups(NAV_SUMMARY_LIMIT),
+      ]);
+      navSummary.set(buildNavSummary(notes ?? [], actions ?? [], followupItems ?? []));
+    } catch {
+      // Nav counts are ancillary chrome. On a refresh failure keep the
+      // last-known summary rather than surfacing an error banner or masking a
+      // more relevant error already visible to the user.
+    }
+  }
+
   async function saveCapture(rawText: string): Promise<string | undefined> {
     const noteId = await captureRawNote(rawText);
     if (noteId) {
@@ -229,6 +253,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       await api.retryParse(note.id);
       await loadInbox();
       selectedNote.set(await api.getNote(note.id));
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not retry parse."));
     } finally {
@@ -250,6 +275,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       await api.retryParseWithFeedback(note.id, trimmed);
       await loadInbox();
       selectedNote.set(await api.getNote(note.id));
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not reparse note."));
     } finally {
@@ -295,6 +321,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       await api.deleteNote(note.id);
       selectedNote.set(null);
       await loadInbox();
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not delete note."));
     } finally {
@@ -382,6 +409,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
       await loadInbox();
       await selectNote(note.id);
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not restore note."));
     } finally {
@@ -439,6 +467,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       selectedNote.set(await api.getNote(note.id));
       await loadInbox();
       await loadFollowups();
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not create follow-up."));
       throw unknownError;
@@ -509,6 +538,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     filters.set(createInboxFilters({ includeArchived: false }));
     await loadInbox();
     await selectNote(noteId);
+    await refreshNavSummary();
   }
 
   async function ensureSelectionAfterLoad(
@@ -555,6 +585,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       if (get(viewMode) === "followups") {
         await loadFollowups();
       }
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not update action."));
     } finally {
@@ -577,6 +608,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
           selectedNote.set(await api.getNote(note.id));
         }
       }
+      await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not update follow-up."));
     } finally {
@@ -613,11 +645,13 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     savingSettings,
     busyActionId,
     error,
+    navSummary,
     captureRawNote,
     loadInbox,
     loadArchive,
     loadSuggestedActions,
     loadFollowups,
+    refreshNavSummary,
     selectNote,
     saveCapture,
     showCapturedNote,

@@ -40,6 +40,7 @@
     savingSettings,
     busyActionId,
     error,
+    navSummary,
   } = workNotes;
 
   let quickDraft = $state("");
@@ -58,18 +59,16 @@
       .map(([name, value]) => `${name}: ${value}`)
       .join("; "),
   );
+  // Sidebar chrome reads from the view-independent nav summary so the badges,
+  // tag chips, and parser-queue count stay put as the user changes views.
   const metrics = $derived([
-    { label: "Inbox", value: String($inbox.length) },
-    { label: "Needs review", value: String($suggestedActions.length) },
-    { label: "Follow-ups", value: String($followups.filter((item) => item.status !== "done").length) },
-    { label: "Parse failed", value: String($inbox.filter((note) => note.parseStatus === "failed").length) },
+    { label: "Inbox", value: String($navSummary.inbox) },
+    { label: "Needs review", value: String($navSummary.needsReview) },
+    { label: "Follow-ups", value: String($navSummary.followups) },
+    { label: "Parse failed", value: String($navSummary.parseFailed) },
   ]);
-  const topTags = $derived(
-    Array.from(new Set($inbox.flatMap((note) => note.tags.map((tag) => tag.name)))).sort((left, right) =>
-      left.localeCompare(right),
-    ),
-  );
-  const parserQueueCount = $derived($inbox.filter((note) => note.parseStatus === "queued" || note.parseStatus === "parsing").length);
+  const topTags = $derived($navSummary.tags);
+  const parserQueueCount = $derived($navSummary.parseQueue);
   const parserCommand = $derived($settings?.codexCommandPath || "codex.cmd");
 
   onMount(() => {
@@ -77,6 +76,7 @@
       void workNotes.loadInbox();
       void workNotes.loadSuggestedActions();
       void workNotes.loadSettings();
+      void workNotes.refreshNavSummary();
       return;
     }
 
@@ -85,6 +85,7 @@
     if (currentWindowLabel !== "quick-capture") {
       void workNotes.loadInbox();
       void workNotes.loadSuggestedActions();
+      void workNotes.refreshNavSummary();
     }
     const unlisteners: Array<() => void> = [];
     let disposed = false;
@@ -114,6 +115,10 @@
       }).then(registerUnlisten);
 
       void listen<NoteCapturedPayload>(NOTE_CAPTURED_EVENT, (event) => {
+        // A note arrived from another window; keep the sidebar counts current
+        // regardless of which view we reload below.
+        void workNotes.refreshNavSummary();
+
         if (get(viewMode) === "today") {
           void workNotes.showToday();
           return;
