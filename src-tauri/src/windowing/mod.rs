@@ -76,6 +76,7 @@ pub fn initialize_windowing(
 
 pub fn prepare_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        apply_default_window_icons(app, &window)?;
         install_close_to_tray_handler(&window);
     } else {
         create_main_window(app)?;
@@ -111,8 +112,97 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWi
     .visible(true)
     .build()?;
 
+    apply_default_window_icons(app, &window)?;
     install_close_to_tray_handler(&window);
     Ok(window)
+}
+
+fn apply_default_window_icons<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &WebviewWindow<R>,
+) -> tauri::Result<()> {
+    if let Some(icon) = app.default_window_icon().cloned() {
+        window.set_icon(icon.clone())?;
+        #[cfg(target_os = "windows")]
+        windows_taskbar_icon::set(window, &icon)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+mod windows_taskbar_icon {
+    use std::{
+        io::{Error as IoError, ErrorKind},
+        sync::Mutex,
+    };
+
+    use tauri::{image::Image, Runtime, WebviewWindow};
+    use windows::Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::{CreateIcon, SendMessageW, HICON, ICON_BIG, WM_SETICON},
+    };
+
+    static TASKBAR_ICON_HANDLES: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+
+    pub fn set<R: Runtime>(window: &WebviewWindow<R>, icon: &Image<'_>) -> tauri::Result<()> {
+        let hicon = create_hicon(icon)?;
+        let hwnd = window.hwnd()?;
+
+        unsafe {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(hicon.0 as isize)),
+            );
+        }
+
+        // Keep the icon resource alive for the process lifetime after Windows stores the handle.
+        if let Ok(mut handles) = TASKBAR_ICON_HANDLES.lock() {
+            handles.push(hicon.0 as isize);
+        }
+
+        Ok(())
+    }
+
+    fn create_hicon(icon: &Image<'_>) -> tauri::Result<HICON> {
+        let width = icon.width();
+        let height = icon.height();
+        let expected_len = width as usize * height as usize * 4;
+        let mut bgra = icon.rgba().to_vec();
+
+        if bgra.len() != expected_len {
+            return Err(io_error(format!(
+                "icon RGBA buffer has {} bytes, expected {}",
+                bgra.len(),
+                expected_len
+            )));
+        }
+
+        let mut and_mask = Vec::with_capacity(width as usize * height as usize);
+        for pixel in bgra.chunks_exact_mut(4) {
+            and_mask.push(pixel[3].wrapping_sub(u8::MAX));
+            pixel.swap(0, 2);
+        }
+
+        unsafe {
+            CreateIcon(
+                None,
+                width as i32,
+                height as i32,
+                1,
+                32,
+                and_mask.as_ptr(),
+                bgra.as_ptr(),
+            )
+        }
+        .map_err(|error| io_error(format!("failed to create taskbar icon: {error}")))
+    }
+
+    fn io_error(message: String) -> tauri::Error {
+        IoError::new(ErrorKind::Other, message).into()
+    }
 }
 
 fn install_close_to_tray_handler<R: Runtime>(window: &WebviewWindow<R>) {
