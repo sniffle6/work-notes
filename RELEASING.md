@@ -50,12 +50,29 @@ file.
    tag and the next release starts from a stale base. The tag push triggers CI.
 6. GitHub Actions builds, signs, and creates a **draft** release with the NSIS
    installer, its `.sig`, and `latest.json`.
-7. Confirm the three assets are attached, replace the placeholder body with the
-   release notes, and publish the draft:
+7. Confirm the three assets are attached, replace the placeholder body and
+   updater metadata notes with the release notes, then publish the draft:
    ```
    gh release view vX.Y.Z --json isDraft,assets,body
-   gh release edit vX.Y.Z --notes-file docs\releases\vX.Y.Z.md --draft=false
+   gh release edit vX.Y.Z --notes-file docs\releases\vX.Y.Z.md
+
+   $tempDir = Join-Path $env:TEMP "work-notes-vX.Y.Z-release"
+   New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+   gh release download vX.Y.Z --pattern latest.json --dir $tempDir
+   $latestPath = Join-Path $tempDir "latest.json"
+   $latest = Get-Content -Raw $latestPath | ConvertFrom-Json
+   $latest.notes = (Get-Content -Raw docs\releases\vX.Y.Z.md).TrimEnd()
+   $latest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $latestPath -Encoding utf8
+   gh release upload vX.Y.Z $latestPath --clobber
+   Remove-Item -LiteralPath $tempDir -Recurse -Force
+
+   gh release edit vX.Y.Z --draft=false --latest
+   (Invoke-RestMethod "https://github.com/sniffle6/work-notes/releases/latest/download/latest.json").notes
    ```
+   The Tauri action writes `latest.json` before Codex replaces the GitHub
+   release body, so update its `notes` field from the same public release notes
+   file. GitHub's latest-download permalink can briefly serve cached content
+   after asset replacement; wait and recheck until it returns the public notes.
    Publishing makes it the "Latest" release, which activates the updater
    permalink for existing installs.
 

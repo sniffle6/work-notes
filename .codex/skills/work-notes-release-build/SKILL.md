@@ -85,13 +85,26 @@ Use dry run mode when testing this skill or preparing a release plan. Unless the
    ```
    Confirm the draft exists and includes the NSIS installer, its `.sig`, and `latest.json`.
 
-6. Apply notes and publish:
+6. Apply notes, update updater metadata, and publish:
    ```powershell
    gh release edit vX.Y.Z --notes-file docs\releases\vX.Y.Z.md
+   $tempDir = Join-Path $env:TEMP "work-notes-vX.Y.Z-release"
+   New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+   gh release download vX.Y.Z --pattern latest.json --dir $tempDir
+   $latestPath = Join-Path $tempDir "latest.json"
+   $latest = Get-Content -Raw $latestPath | ConvertFrom-Json
+   $latest.notes = (Get-Content -Raw docs\releases\vX.Y.Z.md).TrimEnd()
+   $latest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $latestPath -Encoding utf8
+   gh release upload vX.Y.Z $latestPath --clobber
+   Remove-Item -LiteralPath $tempDir -Recurse -Force
    gh release edit vX.Y.Z --draft=false --latest
    gh release view vX.Y.Z --json isDraft,isPrerelease,isImmutable,assets,body,url
    ```
-   The body must not be the CI placeholder. If the notes are not ready, leave the release as a draft.
+   The body and updater `latest.json` notes must not be the CI placeholder. If the notes are not ready, leave the release as a draft. After publishing, verify:
+   ```powershell
+   (Invoke-RestMethod "https://github.com/sniffle6/work-notes/releases/latest/download/latest.json").notes
+   ```
+   GitHub's latest-download permalink can briefly serve cached content after asset replacement; wait and recheck until it returns the public notes.
 
 ## Rules
 
@@ -102,11 +115,13 @@ Use dry run mode when testing this skill or preparing a release plan. Unless the
 - Never rely on GitHub's auto-generated notes without reviewing and editing them into user-facing Work Notes notes.
 - Push the version-bump branch before pushing the tag, so the next release starts from the bumped version.
 - If CI creates the draft but assets are missing or the release body is still a placeholder, stop before publishing.
+- If `latest.json` still contains the placeholder notes, replace it with the same public notes file before publishing.
 - Mention verification that actually ran in the handoff or release verification record. Do not claim commands passed unless their output was checked.
 
 ## Common Mistakes
 
 - Publishing the draft from the browser before replacing the placeholder body. Fix: use `gh release edit vX.Y.Z --notes-file ... --draft=false`.
+- Replacing the GitHub release body but leaving placeholder notes in `latest.json`. Fix: download `latest.json`, replace its `notes` field from `docs/releases/vX.Y.Z.md`, upload it with `--clobber`, then verify the latest-download permalink.
 - Adding a `## Verification` section to the public GitHub release body. Fix: keep verification evidence in the handoff, checklist, or `docs/verification/...`.
 - Tagging before committing the version bump and release notes to the branch. Fix: commit both, push `HEAD`, then push `vX.Y.Z`.
 - Using a temporary notes file that is not committed. Fix: write `docs/releases/vX.Y.Z.md` and pass that file to `gh release edit`.
