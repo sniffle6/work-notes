@@ -615,22 +615,41 @@ pub async fn save_settings(
     state: tauri::State<'_, AppState>,
     settings: AppSettingsDto,
 ) -> Result<AppSettingsDto, CommandError> {
-    windowing::hotkey::validate_shortcut(&settings.global_hotkey)
+    let normalized_hotkey = windowing::hotkey::validate_shortcut(&settings.global_hotkey)
         .map_err(|error| CommandError::new("hotkey_error", error.to_string()))?;
 
-    let previous_hotkey = state
+    let previous_settings = state.settings.get().unwrap_or_default();
+    let mut settings = state
         .settings
-        .get()
-        .map(|settings| settings.global_hotkey)
-        .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+        .validate(settings)
+        .map_err(CommandError::from)?;
+    settings.global_hotkey = normalized_hotkey;
+
+    let previous_hotkey = previous_settings.global_hotkey.clone();
 
     if let Err(error) = windowing::hotkey::register_global_shortcut(&app, &settings.global_hotkey) {
         let _ = windowing::hotkey::register_global_shortcut(&app, &previous_hotkey);
         return Err(CommandError::new("hotkey_error", error.to_string()));
     }
 
-    let saved = state.settings.save(settings).map_err(CommandError::from)?;
-    Ok(saved)
+    if let Err(error) =
+        windowing::startup::apply_launch_at_startup_setting(&app, settings.launch_at_startup)
+    {
+        let _ = windowing::hotkey::register_global_shortcut(&app, &previous_hotkey);
+        return Err(CommandError::new("startup_error", error.to_string()));
+    }
+
+    match state.settings.save(settings).map_err(CommandError::from) {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            let _ = windowing::hotkey::register_global_shortcut(&app, &previous_hotkey);
+            let _ = windowing::startup::apply_launch_at_startup_setting(
+                &app,
+                previous_settings.launch_at_startup,
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]

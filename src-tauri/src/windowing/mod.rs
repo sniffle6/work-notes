@@ -1,10 +1,13 @@
 pub mod hotkey;
 pub mod quick_capture;
+pub mod startup;
 pub mod tray;
 
 use tauri::{
     AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+
+use crate::{app_state::AppState, services::settings::SettingsService};
 
 pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const QUICK_CAPTURE_WINDOW_LABEL: &str = "quick-capture";
@@ -42,6 +45,20 @@ pub struct MainWindowDefinition {
     pub url: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseAction {
+    HideToTray,
+    ExitApplication,
+}
+
+pub fn close_action_for_minimize_to_tray(minimize_to_tray: bool) -> CloseAction {
+    if minimize_to_tray {
+        CloseAction::HideToTray
+    } else {
+        CloseAction::ExitApplication
+    }
+}
+
 pub fn main_window_definition() -> MainWindowDefinition {
     MainWindowDefinition {
         label: MAIN_WINDOW_LABEL,
@@ -66,20 +83,24 @@ pub fn bottom_right_position(
 pub fn initialize_windowing(
     app: &AppHandle,
     quick_capture_shortcut: &str,
+    settings: SettingsService,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    prepare_main_window(app)?;
+    prepare_main_window(app, settings)?;
     quick_capture::prepare_quick_capture_window(app)?;
     tray::initialize_tray_menu(app)?;
     hotkey::register_global_shortcut(app, quick_capture_shortcut)?;
     Ok(())
 }
 
-pub fn prepare_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub fn prepare_main_window<R: Runtime>(
+    app: &AppHandle<R>,
+    settings: SettingsService,
+) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         apply_default_window_icons(app, &window)?;
-        install_close_to_tray_handler(&window);
+        install_close_to_tray_handler(&window, Some(settings));
     } else {
-        create_main_window(app)?;
+        create_main_window(app, Some(settings))?;
     }
 
     Ok(())
@@ -89,9 +110,10 @@ pub fn show_main_window<R: Runtime + 'static>(app: &AppHandle<R>) -> tauri::Resu
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         show_existing_window(&window)?;
     } else {
+        let settings = settings_service(app);
         let app = app.clone();
         std::thread::spawn(move || {
-            if let Ok(window) = create_main_window(&app) {
+            if let Ok(window) = create_main_window(&app, settings) {
                 let _ = show_existing_window(&window);
             }
         });
@@ -100,7 +122,10 @@ pub fn show_main_window<R: Runtime + 'static>(app: &AppHandle<R>) -> tauri::Resu
     Ok(())
 }
 
-fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+fn create_main_window<R: Runtime>(
+    app: &AppHandle<R>,
+    settings: Option<SettingsService>,
+) -> tauri::Result<WebviewWindow<R>> {
     let definition = main_window_definition();
     let window = WebviewWindowBuilder::new(
         app,
@@ -113,8 +138,13 @@ fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWi
     .build()?;
 
     apply_default_window_icons(app, &window)?;
-    install_close_to_tray_handler(&window);
+    install_close_to_tray_handler(&window, settings);
     Ok(window)
+}
+
+fn settings_service<R: Runtime>(app: &AppHandle<R>) -> Option<SettingsService> {
+    app.try_state::<AppState>()
+        .map(|state| state.settings.clone())
 }
 
 fn apply_default_window_icons<R: Runtime>(
@@ -205,13 +235,30 @@ mod windows_taskbar_icon {
     }
 }
 
-fn install_close_to_tray_handler<R: Runtime>(window: &WebviewWindow<R>) {
+fn install_close_to_tray_handler<R: Runtime>(
+    window: &WebviewWindow<R>,
+    settings: Option<SettingsService>,
+) {
     let event_window = window.clone();
     let hide_window = window.clone();
+    let app = window.app_handle().clone();
     event_window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            let _ = hide_window.hide();
+            let close_action = settings
+                .as_ref()
+                .and_then(|settings| settings.get().ok())
+                .map(|settings| close_action_for_minimize_to_tray(settings.minimize_to_tray))
+                .unwrap_or(CloseAction::HideToTray);
+
+            match close_action {
+                CloseAction::HideToTray => {
+                    let _ = hide_window.hide();
+                }
+                CloseAction::ExitApplication => {
+                    app.exit(0);
+                }
+            }
         }
     });
 }
@@ -225,8 +272,8 @@ fn show_existing_window<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<
 #[cfg(test)]
 mod tests {
     use super::{
-        bottom_right_position, main_window_definition, WindowPosition, WindowSize, WorkArea,
-        MAIN_WINDOW_LABEL,
+        bottom_right_position, close_action_for_minimize_to_tray, main_window_definition,
+        CloseAction, WindowPosition, WindowSize, WorkArea, MAIN_WINDOW_LABEL,
     };
 
     #[test]
@@ -256,5 +303,21 @@ mod tests {
         assert_eq!(definition.width, 1100);
         assert_eq!(definition.height, 720);
         assert_eq!(definition.url, "index.html");
+    }
+
+    #[test]
+    fn close_action_hides_main_window_when_minimize_to_tray_is_enabled() {
+        assert_eq!(
+            close_action_for_minimize_to_tray(true),
+            CloseAction::HideToTray
+        );
+    }
+
+    #[test]
+    fn close_action_exits_app_when_minimize_to_tray_is_disabled() {
+        assert_eq!(
+            close_action_for_minimize_to_tray(false),
+            CloseAction::ExitApplication
+        );
     }
 }

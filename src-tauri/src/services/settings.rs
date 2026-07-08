@@ -136,18 +136,12 @@ impl SettingsService {
             .unwrap_or_else(|| Ok(AppSettings::default()))
     }
 
-    pub fn save(&self, mut settings: AppSettings) -> ServiceResult<AppSettings> {
-        if settings.codex_command_path.trim().is_empty() {
-            return Err(ServiceError::InvalidInput("codex command path is required"));
-        }
-        if settings.parser_timeout_seconds == 0 {
-            return Err(ServiceError::InvalidInput(
-                "parser timeout must be positive",
-            ));
-        }
-        settings.linked_workspace_paths =
-            normalize_linked_workspace_paths(std::mem::take(&mut settings.linked_workspace_paths))?;
+    pub fn validate(&self, settings: AppSettings) -> ServiceResult<AppSettings> {
+        validate_settings(settings)
+    }
 
+    pub fn save(&self, settings: AppSettings) -> ServiceResult<AppSettings> {
+        let settings = validate_settings(settings)?;
         let value = serde_json::to_string(&settings)?;
         let connection = self.database.connection()?;
         connection.execute(
@@ -158,6 +152,21 @@ impl SettingsService {
         )?;
         Ok(settings)
     }
+}
+
+fn validate_settings(mut settings: AppSettings) -> ServiceResult<AppSettings> {
+    if settings.codex_command_path.trim().is_empty() {
+        return Err(ServiceError::InvalidInput("codex command path is required"));
+    }
+    if settings.parser_timeout_seconds == 0 {
+        return Err(ServiceError::InvalidInput(
+            "parser timeout must be positive",
+        ));
+    }
+    settings.linked_workspace_paths =
+        normalize_linked_workspace_paths(std::mem::take(&mut settings.linked_workspace_paths))?;
+
+    Ok(settings)
 }
 
 fn normalize_linked_workspace_paths(paths: Vec<String>) -> ServiceResult<Vec<String>> {

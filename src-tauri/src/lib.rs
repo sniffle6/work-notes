@@ -32,15 +32,17 @@ pub fn run() {
             std::fs::create_dir_all(project_dirs.data_dir())?;
             let database = Database::open(project_dirs.data_dir().join("work-notes.sqlite3"))?;
             let state = AppState::new(database);
-            let quick_capture_shortcut = state
-                .settings
-                .get()
-                .map(|settings| settings.global_hotkey)
-                .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+            app.handle().plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))?;
+            let app_settings = state.settings.get().unwrap_or_default();
+            let quick_capture_shortcut = app_settings.global_hotkey.clone();
             let quick_capture_shortcut = windowing::hotkey::validate_shortcut(
                 &quick_capture_shortcut,
             )
             .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+            let settings_service = state.settings.clone();
             let parse_worker = services::parse_queue::ParseQueue::with_runtime_settings(
                 state.repositories.clone(),
                 state.settings.clone(),
@@ -48,9 +50,17 @@ pub fn run() {
                 state.parser_provider_config.clone(),
             );
             parse_worker.requeue_interrupted_jobs()?;
+            let _ = windowing::startup::apply_launch_at_startup_setting(
+                app.handle(),
+                app_settings.launch_at_startup,
+            );
             app.manage(state);
             parse_worker.start_background_worker()?;
-            windowing::initialize_windowing(app.handle(), &quick_capture_shortcut)?;
+            windowing::initialize_windowing(
+                app.handle(),
+                &quick_capture_shortcut,
+                settings_service,
+            )?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

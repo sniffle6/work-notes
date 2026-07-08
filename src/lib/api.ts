@@ -125,7 +125,7 @@ let fallbackSettings: AppSettings = {
   codexCommandPath: "codex.cmd",
   linkedWorkspacePaths: [],
   selectedTheme: "dark-compact",
-  launchAtStartup: true,
+  launchAtStartup: false,
   minimizeToTray: true,
 };
 
