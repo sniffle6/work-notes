@@ -161,4 +161,19 @@ describe("AppShell", () => {
     expect(primaryNav.querySelectorAll("svg")).toHaveLength(7);
     expect(primaryNav.querySelector("kbd")).toBeNull();
   });
+
+  it("makes active parser work obvious in the sidebar footer", () => {
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        parserQueueCount: 2,
+      },
+    });
+
+    expect(screen.getByRole("status", { name: "Parser activity" }).textContent).toContain("Parsing notes");
+    expect(screen.getByText("2 in queue")).toBeTruthy();
+  });
 });

@@ -42,6 +42,7 @@
     savingSettings,
     busyActionId,
     error,
+    parserNotification,
     navSummary,
   } = workNotes;
 
@@ -72,6 +73,11 @@
   const topTags = $derived($navSummary.tags);
   const parserQueueCount = $derived($navSummary.parseQueue);
   const parserCommand = $derived($settings?.codexCommandPath || "codex.cmd");
+  const parserActive = $derived(
+    parserQueueCount > 0 ||
+      $inbox.some((note) => isParserActive(note.parseStatus)) ||
+      isParserActive($selectedNote?.parseStatus),
+  );
 
   onMount(() => {
     if (!isTauriRuntime()) {
@@ -110,6 +116,11 @@
     }).then(registerUnlisten);
 
     if (currentWindowLabel !== "quick-capture") {
+      const parserRefreshTimer = window.setInterval(() => {
+        void workNotes.refreshParserActivity();
+      }, 5000);
+      registerUnlisten(() => window.clearInterval(parserRefreshTimer));
+
       void runUpdateCheck(createTauriUpdaterPort(), { silent: true });
 
       void listen(CHECK_FOR_UPDATES_EVENT, () => {
@@ -170,8 +181,25 @@
     document.body.dataset.theme = themeId;
   });
 
+  $effect(() => {
+    const notification = $parserNotification;
+    if (!notification || typeof window === "undefined") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      workNotes.clearParserNotification();
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  });
+
   function isTauriRuntime(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
+
+  function isParserActive(status?: string): boolean {
+    return status === "queued" || status === "parsing";
   }
 
   function initialWindowLabel(): string {
@@ -381,6 +409,7 @@
     tags={topTags}
     {parserCommand}
     {parserQueueCount}
+    {parserActive}
     {themeId}
     {themeStyle}
     activeView={$viewMode}
@@ -388,6 +417,18 @@
     on:settings={() => (settingsOpen = true)}
     on:navigate={(event) => void navigatePrimary(event)}
   >
+    {#if $parserNotification}
+      <div class={`parser-toast ${$parserNotification.tone}`} role="status" aria-live="polite">
+        <div>
+          <strong>{$parserNotification.title}</strong>
+          <span>{$parserNotification.message}</span>
+        </div>
+        <button type="button" aria-label="Dismiss parser notification" onclick={() => workNotes.clearParserNotification()}>
+          x
+        </button>
+      </div>
+    {/if}
+
     {#if $error}
       <p class="app-error">{$error}</p>
     {/if}
@@ -585,6 +626,79 @@
     background: color-mix(in srgb, var(--color-status-error) 10%, var(--color-surface-1));
     font-size: 12px;
     line-height: 1.3;
+  }
+
+  .parser-toast {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 35;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    width: min(360px, calc(100vw - 32px));
+    padding: 10px 11px 10px 12px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 8px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-1);
+    box-shadow: 0 18px 36px -18px rgba(0, 0, 0, 0.58);
+  }
+
+  .parser-toast.success {
+    border-color: color-mix(in srgb, var(--color-status-success) 58%, var(--color-border-default));
+    background: color-mix(in srgb, var(--color-status-success) 12%, var(--color-surface-1));
+  }
+
+  .parser-toast.error {
+    border-color: color-mix(in srgb, var(--color-status-error) 58%, var(--color-border-default));
+    background: color-mix(in srgb, var(--color-status-error) 12%, var(--color-surface-1));
+  }
+
+  .parser-toast div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .parser-toast strong,
+  .parser-toast span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .parser-toast strong {
+    font-size: 12.5px;
+    font-weight: 850;
+  }
+
+  .parser-toast span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+
+  .parser-toast button {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--color-text-muted);
+    background: transparent;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .parser-toast button:hover,
+  .parser-toast button:focus-visible {
+    border-color: var(--color-border-default);
+    color: var(--color-text-primary);
+    background: var(--color-surface-2);
+    outline: none;
   }
 
   @media (max-width: 980px) {

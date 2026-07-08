@@ -38,6 +38,13 @@ import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-su
 
 export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
 
+export type ParserNotification = {
+  id: string;
+  tone: "success" | "error";
+  title: string;
+  message: string;
+};
+
 // Upper bound for the canonical count queries. Matches the backend clamp for
 // the inbox list; suggested actions and follow-ups clamp lower server-side.
 const NAV_SUMMARY_LIMIT = 1000;
@@ -106,6 +113,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   const savingSettings = writable(false);
   const busyActionId = writable<string | null>(null);
   const error = writable<string | null>(null);
+  const parserNotification = writable<ParserNotification | null>(null);
+  let parserNotificationSequence = 0;
   // View-independent counts for the sidebar/nav chrome. Refreshed on startup
   // and after any data mutation — never touched by plain navigation — so the
   // nav badges stay put when the user merely switches views (e.g. Archive).
@@ -565,6 +574,121 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await refreshNavSummary();
   }
 
+  async function refreshParserActivity(): Promise<void> {
+    if (!hasParserActivity()) {
+      return;
+    }
+
+    const activeBefore = parserStatusSnapshot();
+    const queueBefore = get(navSummary).parseQueue;
+    const inboxHadParserActivity = get(inbox).some((note) => isActiveParseStatus(note.parseStatus));
+    const selectedId = get(selectedNote)?.id;
+    const mode = get(viewMode);
+
+    if (mode === "today") {
+      await loadInbox();
+      await loadSuggestedActions();
+    } else if (mode === "people") {
+      await loadInbox({ limit: 1000 });
+      await loadSuggestedActions(500);
+    } else if (mode === "tags") {
+      await loadInbox({ limit: 1000 });
+    } else if (mode === "actions") {
+      if (inboxHadParserActivity) {
+        await loadInbox();
+      }
+      await loadSuggestedActions();
+    } else if (mode === "followups") {
+      if (inboxHadParserActivity) {
+        await loadInbox();
+      }
+      await loadFollowups();
+    } else {
+      await loadInbox();
+      await loadSuggestedActions();
+    }
+
+    if (selectedId) {
+      await selectNote(selectedId);
+    }
+    await refreshNavSummary();
+    announceParserCompletion(activeBefore, queueBefore);
+  }
+
+  function clearParserNotification(): void {
+    parserNotification.set(null);
+  }
+
+  function hasParserActivity(): boolean {
+    const selected = get(selectedNote);
+    return (
+      get(navSummary).parseQueue > 0 ||
+      get(inbox).some((note) => isActiveParseStatus(note.parseStatus)) ||
+      Boolean(selected && isActiveParseStatus(selected.parseStatus))
+    );
+  }
+
+  function parserStatusSnapshot(): Map<string, NoteListItem["parseStatus"]> {
+    const statuses = new Map<string, NoteListItem["parseStatus"]>();
+    for (const note of get(inbox)) {
+      statuses.set(note.id, note.parseStatus);
+    }
+
+    const selected = get(selectedNote);
+    if (selected) {
+      statuses.set(selected.id, selected.parseStatus);
+    }
+
+    return statuses;
+  }
+
+  function announceParserCompletion(
+    activeBefore: Map<string, NoteListItem["parseStatus"]>,
+    queueBefore: number,
+  ): void {
+    let parsedCount = 0;
+    let failedCount = 0;
+    const after = parserStatusSnapshot();
+
+    for (const [noteId, statusBefore] of activeBefore) {
+      if (!isActiveParseStatus(statusBefore)) {
+        continue;
+      }
+
+      const statusAfter = after.get(noteId);
+      if (statusAfter === "failed") {
+        failedCount += 1;
+      } else if (statusAfter === "parsed") {
+        parsedCount += 1;
+      }
+    }
+
+    if (failedCount > 0) {
+      parserNotification.set(nextParserNotification({
+        tone: "error",
+        title: failedCount === 1 ? "Parsing failed" : "Parsing finished with errors",
+        message: failedCount === 1 ? "Open the note to retry." : `${failedCount} notes need attention.`,
+      }));
+      return;
+    }
+
+    if (parsedCount > 0 || (queueBefore > 0 && get(navSummary).parseQueue === 0)) {
+      parserNotification.set(nextParserNotification({
+        tone: "success",
+        title: "Parsing complete",
+        message: parsedCount <= 1 ? "Cleaned note is ready." : `${parsedCount} notes are ready.`,
+      }));
+    }
+  }
+
+  function nextParserNotification(fields: Omit<ParserNotification, "id">): ParserNotification {
+    parserNotificationSequence += 1;
+    return {
+      id: `parser-${parserNotificationSequence}`,
+      ...fields,
+    };
+  }
+
   async function ensureSelectionAfterLoad(
     items: NoteListItem[],
     preferredSelectionIndex?: number,
@@ -669,6 +793,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     savingSettings,
     busyActionId,
     error,
+    parserNotification,
     navSummary,
     captureRawNote,
     loadInbox,
@@ -679,6 +804,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     selectNote,
     saveCapture,
     showCapturedNote,
+    refreshParserActivity,
+    clearParserNotification,
     retrySelectedParse,
     retrySelectedParseWithFeedback,
     saveCleanedEdits,
@@ -721,6 +848,10 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function normalizeLane(lane?: string | null): string | null {
   return lane?.trim() || null;
+}
+
+function isActiveParseStatus(status: NoteListItem["parseStatus"]): boolean {
+  return status === "queued" || status === "parsing";
 }
 
 function isNotFoundError(error: unknown): boolean {

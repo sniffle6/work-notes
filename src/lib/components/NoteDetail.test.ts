@@ -164,6 +164,15 @@ describe("NoteDetail", () => {
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
+  it("shows an obvious parser activity indicator while parsing", () => {
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsing", parseError: null } },
+    });
+
+    const status = screen.getByRole("status", { name: "Parsing note" });
+    expect(status.textContent).toContain("Parsing in background");
+  });
+
   it("dispatches saveCleaned with edited values and closes on done", async () => {
     const saveCleaned = vi.fn();
     render(NoteDetail, {

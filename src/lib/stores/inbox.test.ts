@@ -164,6 +164,59 @@ describe("createWorkNotesStore", () => {
     expect(api.getNote).toHaveBeenLastCalledWith("note-1");
   });
 
+  it("refreshes active parser notes without waiting for user navigation", async () => {
+    let parseStatus: NoteListItem["parseStatus"] = "parsing";
+    const api = testApi({
+      listInbox: vi.fn(async () => [note({ parseStatus })]),
+      getNote: vi.fn(async () => ({ ...note({ parseStatus }), actionItems: [] })),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadInbox();
+    parseStatus = "parsed";
+    await store.refreshParserActivity();
+
+    expect(get(store.inbox)[0].parseStatus).toBe("parsed");
+    expect(get(store.selectedNote)?.parseStatus).toBe("parsed");
+  });
+
+  it("notifies when active parser work completes", async () => {
+    let parseStatus: NoteListItem["parseStatus"] = "parsing";
+    const api = testApi({
+      listInbox: vi.fn(async () => [note({ parseStatus })]),
+      getNote: vi.fn(async () => ({ ...note({ parseStatus }), actionItems: [] })),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadInbox();
+    parseStatus = "parsed";
+    await store.refreshParserActivity();
+
+    expect(get(store.parserNotification)).toMatchObject({
+      tone: "success",
+      title: "Parsing complete",
+    });
+  });
+
+  it("refreshes stale active inbox rows while another view is open", async () => {
+    let parseStatus: NoteListItem["parseStatus"] = "parsing";
+    const api = testApi({
+      listInbox: vi.fn(async () => [note({ parseStatus })]),
+      getNote: vi.fn(async () => ({ ...note({ parseStatus }), actionItems: [] })),
+      listSuggestedActions: vi.fn().mockResolvedValue([]),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadInbox();
+    await store.showActions();
+
+    parseStatus = "parsed";
+    await store.refreshParserActivity();
+
+    expect(get(store.inbox)[0].parseStatus).toBe("parsed");
+    expect(get(store.parserNotification)?.title).toBe("Parsing complete");
+  });
+
   it("saves cleaned edits and reloads the selected note", async () => {
     const api = testApi();
     const store = createWorkNotesStore(api);

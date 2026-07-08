@@ -13,6 +13,8 @@ use rusqlite::{params, Transaction};
 
 use super::ServiceResult;
 
+const INTERRUPTED_PARSE_ERROR: &str = "parser was interrupted before completion; retrying";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseQueueConfig {
     pub max_attempts: u32,
@@ -164,6 +166,13 @@ impl ParseQueue {
             .map_err(Into::into)
     }
 
+    pub fn requeue_interrupted_jobs(&self) -> ServiceResult<usize> {
+        self.repositories
+            .parse_jobs
+            .requeue_interrupted(INTERRUPTED_PARSE_ERROR)
+            .map_err(Into::into)
+    }
+
     pub fn process_next_with_provider<P>(&self, provider: &P) -> ServiceResult<bool>
     where
         P: ParserProvider,
@@ -282,7 +291,9 @@ impl ParseQueue {
 
     fn handle_parse_failure(&self, job: &ParseJob, error: &str) -> ServiceResult<()> {
         let config = self.current_queue_config();
-        if job.attempt_count < config.max_attempts {
+        if is_non_retryable_parse_error(error) {
+            self.mark_failed(job.id, error)
+        } else if job.attempt_count < config.max_attempts {
             self.repositories
                 .parse_jobs
                 .mark_queued(job.id, error)
@@ -307,6 +318,10 @@ impl ParseQueue {
             .map(|settings| ParserProviderConfig::from_settings(&settings))
             .unwrap_or_else(|| self.parser_provider_config.clone())
     }
+}
+
+fn is_non_retryable_parse_error(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("timed out")
 }
 
 struct RepositoryParserResultSink<'a> {
@@ -671,6 +686,51 @@ mod tests {
     }
 
     #[test]
+    fn process_next_with_provider_marks_timeout_failed_without_requeueing() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("@codex: inspect linked context before cleaning\n\nraw note")
+            .unwrap();
+
+        let queue = ParseQueue::with_config(
+            repositories.clone(),
+            ParseQueueConfig {
+                max_attempts: 3,
+                ..ParseQueueConfig::default()
+            },
+            ParserProviderConfig::default(),
+        );
+        let processed = queue.process_next_with_provider(&TimeoutProvider).unwrap();
+
+        assert!(processed);
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.parse_status, ParseStatus::Failed);
+        assert!(repositories.parse_jobs.next_queued().unwrap().is_none());
+    }
+
+    #[test]
+    fn requeue_interrupted_jobs_recovers_jobs_left_parsing() {
+        let repositories = test_repositories();
+        let note = repositories.notes.create_raw_note("raw note").unwrap();
+        repositories.parse_jobs.claim_next_queued().unwrap().unwrap();
+
+        let requeued = ParseQueue::new(repositories.clone())
+            .requeue_interrupted_jobs()
+            .unwrap();
+
+        assert_eq!(requeued, 1);
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.parse_status, ParseStatus::Queued);
+        let queued = repositories.parse_jobs.next_queued().unwrap().unwrap();
+        assert_eq!(queued.note_id, note.id);
+        assert_eq!(
+            queued.last_error.as_deref(),
+            Some("parser was interrupted before completion; retrying")
+        );
+    }
+
+    #[test]
     fn successful_parse_resets_cleaned_edited_flag() {
         let repositories = test_repositories();
         let note = repositories
@@ -846,6 +906,16 @@ mod tests {
     impl ParserProvider for FailingProvider {
         fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
             Err(ParserError::Provider("codex unavailable".to_string()))
+        }
+    }
+
+    struct TimeoutProvider;
+
+    impl ParserProvider for TimeoutProvider {
+        fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
+            Err(ParserError::Provider(
+                "codex command timed out after 90s".to_string(),
+            ))
         }
     }
 

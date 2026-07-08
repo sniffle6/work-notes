@@ -56,6 +56,18 @@ describe("InboxList", () => {
 
     expect(screen.getByText("No archived notes")).toBeTruthy();
   });
+
+  it("shows parser activity labels on active note rows", () => {
+    render(InboxList, {
+      props: {
+        items: [{ ...notes()[0], parseStatus: "parsing", reviewStatus: "none" }],
+        filters: filters(),
+        selectedId: "n1",
+      },
+    });
+
+    expect(screen.getByText("Parsing")).toBeTruthy();
+  });
 });
 
 function filters(): InboxFilters {

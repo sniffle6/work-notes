@@ -47,6 +47,7 @@ pub fn run() {
                 state.parse_queue_config.clone(),
                 state.parser_provider_config.clone(),
             );
+            parse_worker.requeue_interrupted_jobs()?;
             app.manage(state);
             parse_worker.start_background_worker()?;
             windowing::initialize_windowing(app.handle(), &quick_capture_shortcut)?;

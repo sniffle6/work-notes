@@ -24,6 +24,7 @@
     tags?: string[];
     parserCommand?: string;
     parserQueueCount?: number;
+    parserActive?: boolean;
     themeId?: string;
     themeStyle?: string;
     children?: Snippet;
@@ -39,6 +40,7 @@
     tags = [],
     parserCommand = "codex.cmd",
     parserQueueCount = 0,
+    parserActive = false,
     themeId = "dark-compact",
     themeStyle = "",
     children,
@@ -56,6 +58,7 @@
   const inboxMetric = $derived(metrics.find((metric) => metric.label === "Inbox")?.value ?? "0");
   const actionsMetric = $derived(metrics.find((metric) => metric.label === "Needs review")?.value ?? "0");
   const followupsMetric = $derived(metrics.find((metric) => metric.label === "Follow-ups")?.value ?? "0");
+  const parserBusy = $derived(parserActive || parserQueueCount > 0);
 
   function navigate(view: InboxViewMode) {
     dispatch("navigate", view);
@@ -172,11 +175,14 @@
       </div>
     </div>
 
-    <div class="parser-footer">
-      <span class="parser-dot" aria-hidden="true"></span>
+    <div class="parser-footer" class:active={parserBusy} role="status" aria-label="Parser activity" aria-live="polite">
+      <span class="parser-dot" class:spinning={parserBusy} aria-hidden="true"></span>
       <div>
-        <p>Parser ready</p>
-        <small>{parserCommand || "codex.cmd"} - {parserQueueCount} in queue</small>
+        <p>{parserBusy ? "Parsing notes" : "Parser ready"}</p>
+        <small>
+          <span>{parserCommand || "codex.cmd"}</span>
+          <span>{parserQueueCount} in queue</span>
+        </small>
       </div>
       <button class="settings-button" type="button" aria-label="Settings" onclick={() => dispatch("settings")}>*</button>
     </div>
@@ -498,9 +504,17 @@
     background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
   }
 
+  .parser-footer.active {
+    background: color-mix(in srgb, var(--color-accent-hot) 14%, var(--color-surface-2));
+  }
+
   .theme-memphis .parser-footer {
     border-top-width: 2px;
     background: var(--color-surface-2);
+  }
+
+  .theme-memphis .parser-footer.active {
+    background: color-mix(in srgb, var(--color-accent-hot) 24%, var(--color-surface-2));
   }
 
   .parser-dot {
@@ -512,6 +526,20 @@
 
   .theme-memphis .parser-dot {
     border: 1.5px solid var(--color-border-default);
+  }
+
+  .parser-dot.spinning {
+    width: 12px;
+    height: 12px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
+    border-top-color: var(--color-accent-hot);
+    background: transparent;
+    animation: parser-spin 0.8s linear infinite;
+  }
+
+  .theme-memphis .parser-dot.spinning {
+    border-color: color-mix(in srgb, var(--color-border-default) 55%, var(--color-accent-hot));
+    border-top-color: var(--color-accent-hot);
   }
 
   .parser-footer p,
@@ -529,9 +557,23 @@
   }
 
   .parser-footer small {
+    display: flex;
+    gap: 5px;
     color: var(--color-text-muted);
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-size: 11px;
+  }
+
+  .parser-footer small span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @keyframes parser-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .settings-button {
@@ -575,6 +617,12 @@
 
     .key-row {
       display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .parser-dot.spinning {
+      animation: none;
     }
   }
 </style>

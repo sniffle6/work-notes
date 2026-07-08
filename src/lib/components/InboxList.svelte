@@ -87,6 +87,10 @@
     return "neutral";
   }
 
+  function isParserActive(status: ParseStatus): boolean {
+    return status === "queued" || status === "parsing";
+  }
+
   function previewText(item: NoteListItem): string {
     return item.cleanedText ?? item.summary ?? item.rawText;
   }
@@ -197,8 +201,18 @@
           onclick={() => dispatch("select", item.id)}
         >
           <div class="item-topline">
-            <span class={`status-dot ${statusClass(item.parseStatus, item.reviewStatus)}`} title={statusLabel(item.parseStatus, item.reviewStatus)}></span>
+            <span
+              class={`status-dot ${statusClass(item.parseStatus, item.reviewStatus)}`}
+              class:spinning={isParserActive(item.parseStatus)}
+              title={statusLabel(item.parseStatus, item.reviewStatus)}
+            ></span>
             <span class="source">{captureSourceLabel(item.captureSource)}</span>
+            {#if isParserActive(item.parseStatus)}
+              <span class="parser-state" role="status" aria-label={`Note ${statusLabel(item.parseStatus, item.reviewStatus)}`}>
+                <span class="row-spinner" aria-hidden="true"></span>
+                {statusLabel(item.parseStatus, item.reviewStatus)}
+              </span>
+            {/if}
             <span class="captured-at">{formatCapturedAt(item.createdAt)}</span>
           </div>
           <h3>{item.title}</h3>
@@ -545,6 +559,43 @@
     background: transparent;
   }
 
+  .status-dot.spinning {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
+    border-top-color: var(--color-accent-hot);
+    background: transparent;
+    animation: parser-spin 0.8s linear infinite;
+  }
+
+  .parser-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 18px;
+    padding: 0 7px;
+    border-radius: 999px;
+    color: var(--color-accent-hot);
+    background: color-mix(in srgb, var(--color-accent-hot) 13%, var(--color-surface-2));
+    font-size: 10.5px;
+    font-weight: 800;
+  }
+
+  .row-spinner {
+    width: 10px;
+    height: 10px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
+    border-top-color: var(--color-accent-hot);
+    border-radius: 999px;
+    animation: parser-spin 0.8s linear infinite;
+  }
+
+  @keyframes parser-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   h3,
   p,
   h2 {
@@ -724,6 +775,13 @@
       min-height: 0;
       border-right: 0;
       border-bottom: 1px solid var(--color-border-default);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status-dot.spinning,
+    .row-spinner {
+      animation: none;
     }
   }
 </style>

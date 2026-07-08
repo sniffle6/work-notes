@@ -96,6 +96,10 @@
     return "neutral";
   }
 
+  function isParserActive(status: ParseStatus): boolean {
+    return status === "queued" || status === "parsing";
+  }
+
   function formatDate(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -261,7 +265,11 @@
   {:else}
     <header class="detail-header">
       <div class="head-meta">
-        <span class={`status-dot ${statusClass(note.parseStatus, note.reviewStatus)}`} title={`${parseLabel(note.parseStatus)} - ${reviewLabel(note.reviewStatus)}`}></span>
+        <span
+          class={`status-dot ${statusClass(note.parseStatus, note.reviewStatus)}`}
+          class:spinning={isParserActive(note.parseStatus)}
+          title={`${parseLabel(note.parseStatus)} - ${reviewLabel(note.reviewStatus)}`}
+        ></span>
         <span>{formatDate(note.createdAt)}</span>
         <span>{parseLabel(note.parseStatus)}</span>
         <span>{reviewLabel(note.reviewStatus)}</span>
@@ -331,10 +339,17 @@
           <span>{note.parseError ?? "Parser failed. Raw note text is still saved."}</span>
           <button type="button" onclick={requestRetry} disabled={loading}>Retry</button>
         </div>
-      {:else if note.parseStatus === "parsing"}
-        <div class="detail-banner info">
-          <strong>Parsing in background</strong>
-          <span>Codex is cleaning and tagging. Raw note is saved.</span>
+      {:else if isParserActive(note.parseStatus)}
+        <div class="detail-banner info parser-progress" role="status" aria-label="Parsing note" aria-live="polite">
+          <i class="banner-spinner" aria-hidden="true"></i>
+          <div>
+            <strong>{note.parseStatus === "queued" ? "Queued for parsing" : "Parsing in background"}</strong>
+            <span>
+              {note.parseStatus === "queued"
+                ? "Codex will clean and tag this note next. Raw note is saved."
+                : "Codex is cleaning and tagging. Raw note is saved."}
+            </span>
+          </div>
         </div>
       {/if}
 
@@ -622,6 +637,15 @@
     background: transparent;
   }
 
+  .status-dot.spinning {
+    width: 12px;
+    height: 12px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
+    border-top-color: var(--color-accent-hot);
+    background: transparent;
+    animation: parser-spin 0.8s linear infinite;
+  }
+
   .header-actions {
     display: flex;
     flex-wrap: wrap;
@@ -732,6 +756,32 @@
   .detail-banner.info {
     color: var(--color-accent-hot);
     background: color-mix(in srgb, var(--color-accent-hot) 12%, var(--color-surface-1));
+  }
+
+  .detail-banner.parser-progress {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .detail-banner.parser-progress div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .banner-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 26%, transparent);
+    border-top-color: var(--color-accent-hot);
+    border-radius: 999px;
+    animation: parser-spin 0.8s linear infinite;
+  }
+
+  @keyframes parser-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   :global([data-theme="memphis"]) .detail-banner,
@@ -1202,6 +1252,13 @@
     .followup-form,
     .followup-fields {
       grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status-dot.spinning,
+    .banner-spinner {
+      animation: none;
     }
   }
 </style>

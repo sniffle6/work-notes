@@ -230,6 +230,50 @@ impl ParseJobRepository {
         Ok(())
     }
 
+    pub fn requeue_interrupted(&self, error: &str) -> RepositoryResult<usize> {
+        let now = now_db_string();
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+        let note_ids = {
+            let mut statement = transaction.prepare(
+                "SELECT note_id
+                 FROM parse_jobs
+                 WHERE status = ?1",
+            )?;
+            let rows = statement
+                .query_map([ParseStatus::Parsing.as_str()], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+
+        if note_ids.is_empty() {
+            transaction.commit()?;
+            return Ok(0);
+        }
+
+        let changed = transaction.execute(
+            "UPDATE parse_jobs
+             SET status = ?2,
+                 last_error = ?3,
+                 started_at = NULL,
+                 finished_at = NULL
+             WHERE status = ?1",
+            params![
+                ParseStatus::Parsing.as_str(),
+                ParseStatus::Queued.as_str(),
+                error
+            ],
+        )?;
+        for note_id in note_ids {
+            transaction.execute(
+                "UPDATE notes SET parse_status = ?2, updated_at = ?3 WHERE id = ?1",
+                params![note_id, ParseStatus::Queued.as_str(), now],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
     pub fn record_run(
         &self,
         note_id: NoteId,
