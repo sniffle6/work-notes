@@ -305,6 +305,7 @@ mod tests {
         service.complete(action.id).unwrap();
         let completed = repositories.action_items.get(action.id).unwrap().unwrap();
         assert_eq!(completed.status, ActionStatus::Done);
+        assert!(completed.completed_at.is_some());
         assert_eq!(
             repositories
                 .notes
@@ -318,6 +319,7 @@ mod tests {
         service.reopen(action.id).unwrap();
         let reopened = repositories.action_items.get(action.id).unwrap().unwrap();
         assert_eq!(reopened.status, ActionStatus::Accepted);
+        assert_eq!(reopened.completed_at, None);
     }
 
     #[test]

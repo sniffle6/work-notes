@@ -3,20 +3,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 
-import type { ActionReviewItem, NoteListItem } from "$lib/types";
+import type { ActionReviewItem, FollowupItem } from "$lib/types";
 import TodayView from "./TodayView.svelte";
 
 afterEach(() => cleanup());
 
 const now = new Date("2026-05-22T15:00:00");
 
-function action(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
+function suggestion(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
   return {
-    id: "action-1",
-    noteId: "note-1",
+    id: "suggested-1",
+    noteId: "note-suggested",
     noteTitle: "Launch source note",
-    text: "Send EOD launch summary",
-    owner: "Maya",
+    text: "Review launch summary",
     dueDate: "2026-05-22",
     confidence: 0.82,
     createdAt: "2026-05-20T13:42:00",
@@ -24,90 +23,93 @@ function action(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
   };
 }
 
-function note(overrides: Partial<NoteListItem> = {}): NoteListItem {
+function followup(overrides: Partial<FollowupItem> = {}): FollowupItem {
   return {
-    id: "note-1",
-    title: "Launch source note",
-    rawText: "Maya needs the launch summary.",
-    summary: "Launch summary is due.",
-    captureSource: "quick_capture",
-    createdAt: "2026-05-22T09:15:00",
-    updatedAt: "2026-05-22T09:15:00",
-    parseStatus: "parsed",
-    reviewStatus: "needs_review",
-    tags: [
-      { id: "tag-1", name: "Launch", kind: "topic", source: "ai", confidence: 0.9 },
-      { id: "tag-2", name: "Maya", kind: "person", source: "ai", confidence: 0.8 },
-    ],
-    actionItemCount: 1,
-    suggestedActionItemCount: 1,
+    id: "open-1",
+    noteId: "note-open",
+    noteTitle: "Launch source note",
+    text: "Send EOD launch summary",
+    owner: "Maya",
+    dueDate: "2026-05-22",
+    status: "accepted",
+    source: "parser",
+    tags: [],
+    createdAt: "2026-05-20T13:42:00",
+    completedAt: null,
     ...overrides,
   };
 }
 
-describe("TodayView", () => {
-  it("renders due actions, captured notes, and weekday activity", () => {
+describe("TodayView calendar", () => {
+  it("defaults to today and shows open and done buckets on a full month grid", () => {
     render(TodayView, {
       props: {
-        notes: [
-          note({ id: "today-note", title: "Captured launch note" }),
-          note({ id: "old-note", title: "Old note", createdAt: "2026-05-21T09:15:00" }),
+        actions: [suggestion()],
+        followups: [
+          followup(),
+          followup({
+            id: "done-1",
+            text: "Publish launch notes",
+            status: "done",
+            completedAt: "2026-05-22T11:30:00",
+          }),
         ],
-        actions: [action()],
         now,
       },
     });
 
-    expect(screen.getByText("Today")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "May 2026" })).toBeTruthy();
+    const navigation = screen.getByRole("group", { name: "Calendar navigation" });
+    expect(Array.from(navigation.children).map((child) => child.getAttribute("aria-label") ?? child.textContent)).toEqual([
+      "Previous month",
+      "May 2026",
+      "Next month",
+      "Today",
+    ]);
     expect(screen.getByRole("heading", { name: "Friday, May 22" })).toBeTruthy();
-    expect(screen.getByText("Send EOD launch summary")).toBeTruthy();
-    expect(screen.getByText(/from "Launch source note"/)).toBeTruthy();
-    expect(screen.getByText("Captured launch note")).toBeTruthy();
-    expect(screen.queryByText("Old note")).toBeNull();
-
-    for (const label of ["Mon", "Tue", "Wed", "Thu", "Fri"]) {
-      expect(screen.getByText(label)).toBeTruthy();
-    }
+    expect(screen.getByRole("button", { name: /Select Friday, May 22, 2 open, 1 done/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Accept task: Review launch summary" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Mark done: Send EOD launch summary" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reopen task: Publish launch notes" })).toBeTruthy();
   });
 
-  it("dispatches accept without opening the source note", async () => {
+  it("navigates months and returns to today", async () => {
+    render(TodayView, { props: { actions: [], followups: [], now } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(screen.getByRole("heading", { name: "June 2026" })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByRole("heading", { name: "May 2026" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Friday, May 22" })).toBeTruthy();
+  });
+
+  it("dispatches review, complete, reopen, and source-note events", async () => {
     const accept = vi.fn();
+    const complete = vi.fn();
+    const reopen = vi.fn();
     const openNote = vi.fn();
 
     render(TodayView, {
       props: {
-        notes: [note()],
-        actions: [action()],
+        actions: [suggestion()],
+        followups: [
+          followup(),
+          followup({ id: "done-1", text: "Publish launch notes", status: "done", completedAt: "2026-05-22T11:30:00" }),
+        ],
         now,
       },
-      events: { accept, openNote },
+      events: { accept, complete, reopen, openNote },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Accept action: Send EOD launch summary" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Accept task: Review launch summary" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Mark done: Send EOD launch summary" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Reopen task: Publish launch notes" }));
+    await fireEvent.click(screen.getAllByRole("button", { name: "Open note: Launch source note" })[0]);
 
-    expect(accept.mock.calls[0][0].detail).toBe("action-1");
-    expect(openNote).not.toHaveBeenCalled();
-  });
-
-  it("opens action and note rows through openNote events", async () => {
-    const openNote = vi.fn();
-
-    render(TodayView, {
-      props: {
-        notes: [note({ id: "note-captured", title: "Captured launch note" })],
-        actions: [action({ noteId: "note-action" })],
-        now,
-      },
-      events: { openNote },
-    });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open note: Send EOD launch summary" }));
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: /Open note: Captured launch note, Needs review, .*1 action/,
-      }),
-    );
-
-    expect(openNote.mock.calls.map((call) => call[0].detail)).toEqual(["note-action", "note-captured"]);
+    expect(accept.mock.calls[0][0].detail).toBe("suggested-1");
+    expect(complete.mock.calls[0][0].detail).toBe("open-1");
+    expect(reopen.mock.calls[0][0].detail).toBe("done-1");
+    expect(openNote.mock.calls[0][0].detail).toBe("note-open");
   });
 });

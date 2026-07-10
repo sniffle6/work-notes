@@ -98,11 +98,11 @@
           class:active={activeView === "today"}
           type="button"
           aria-current={activeView === "today" ? "page" : undefined}
-          aria-label="Today"
+          aria-label="Calendar"
           onclick={() => navigate("today")}
         >
           <span class="nav-icon" aria-hidden="true"><CalendarDays size={15} strokeWidth={2.2} /></span>
-          <span>Today</span>
+          <span>Calendar</span>
         </button>
         <button
           class:active={activeView === "actions"}

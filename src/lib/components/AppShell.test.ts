@@ -8,7 +8,7 @@ import AppShell from "./AppShell.svelte";
 afterEach(() => cleanup());
 
 describe("AppShell", () => {
-  it("marks today active and emits today navigation", async () => {
+  it("marks calendar active and emits today navigation", async () => {
     const navigate = vi.fn();
 
     render(AppShell, {
@@ -22,10 +22,10 @@ describe("AppShell", () => {
       events: { navigate },
     });
 
-    const today = screen.getByRole("button", { name: "Today" });
-    await fireEvent.click(today);
+    const calendar = screen.getByRole("button", { name: "Calendar" });
+    await fireEvent.click(calendar);
 
-    expect(today.getAttribute("aria-current")).toBe("page");
+    expect(calendar.getAttribute("aria-current")).toBe("page");
     expect(navigate.mock.calls[0][0].detail).toBe("today");
   });
 

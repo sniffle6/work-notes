@@ -446,13 +446,14 @@
       />
     {:else if $viewMode === "today"}
       <TodayView
-        notes={$inbox}
         actions={$suggestedActions}
-        loadingNotes={$loadingInbox}
-        loadingActions={$loadingSuggestedActions}
+        followups={$followups}
+        loadingActions={$loadingSuggestedActions || $loadingFollowups}
         busyActionId={$busyActionId}
         on:openNote={(event) => void openNoteFromToday(event.detail)}
         on:accept={(event) => void workNotes.acceptSuggestedAction(event.detail)}
+        on:complete={(event) => void workNotes.completeAction(event.detail)}
+        on:reopen={(event) => void workNotes.reopenAction(event.detail)}
       />
     {:else if $viewMode === "people"}
       <PeopleView

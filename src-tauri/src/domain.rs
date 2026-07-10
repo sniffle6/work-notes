@@ -308,6 +308,7 @@ pub struct ActionItem {
     pub confidence: Option<f64>,
     pub followup_state: Option<FollowupState>,
     pub followup_lane: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -337,6 +338,7 @@ pub struct FollowupItem {
     pub followup_lane: Option<String>,
     pub tags: Vec<TagAssignment>,
     pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

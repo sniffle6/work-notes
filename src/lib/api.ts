@@ -19,6 +19,22 @@ type UnknownRecord = Record<string, unknown>;
 
 const fallbackNow = "2026-05-20T13:42:00.000Z";
 
+function previewDateKey(dayOffset: number): string {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + dayOffset);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function previewTimestamp(dayOffset: number, hour: number, minute: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + dayOffset);
+  date.setHours(hour, minute, 0, 0);
+  return date.toISOString();
+}
+
 let fallbackNotes: NoteDetail[] = [
   {
     id: "fallback-archived-1",
@@ -53,18 +69,56 @@ let fallbackNotes: NoteDetail[] = [
       { id: "tag-maya", name: "Maya", kind: "person", source: "ai", confidence: 0.94 },
       { id: "tag-kiosk", name: "Kiosk", kind: "topic", source: "ai", confidence: 0.88 },
     ],
-    actionItemCount: 1,
-    suggestedActionItemCount: 1,
+    actionItemCount: 4,
+    suggestedActionItemCount: 2,
     actionItems: [
       {
         id: "a-1024",
         noteId: "n-1024",
         text: "Bring serial list into the Tuesday sync.",
         owner: "Maya",
-        dueDate: null,
+        dueDate: previewDateKey(-4),
         status: "suggested",
         source: "parser",
         confidence: 0.82,
+        noteTitle: "Kiosk 7 telemetry IDs",
+      },
+      {
+        id: "a-1025",
+        noteId: "n-1024",
+        text: "Confirm replacement asset tags with the vendor.",
+        owner: "Maya",
+        dueDate: previewDateKey(3),
+        status: "accepted",
+        source: "parser",
+        confidence: 0.88,
+        noteTitle: "Kiosk 7 telemetry IDs",
+        followupState: "waiting",
+        followupLane: "Kiosk rollout",
+      },
+      {
+        id: "a-1026",
+        noteId: "n-1024",
+        text: "Collect the kiosk serial numbers from facilities.",
+        owner: "Maya",
+        dueDate: previewDateKey(-2),
+        status: "done",
+        source: "parser",
+        confidence: 0.91,
+        noteTitle: "Kiosk 7 telemetry IDs",
+        followupState: "open",
+        followupLane: "Kiosk rollout",
+        completedAt: previewTimestamp(-1, 16, 20),
+      },
+      {
+        id: "a-1027",
+        noteId: "n-1024",
+        text: "Schedule the post-install telemetry review.",
+        owner: "Maya",
+        dueDate: previewDateKey(12),
+        status: "suggested",
+        source: "parser",
+        confidence: 0.76,
         noteTitle: "Kiosk 7 telemetry IDs",
       },
     ],
@@ -98,7 +152,7 @@ let fallbackNotes: NoteDetail[] = [
     parseStatus: "parsed",
     reviewStatus: "reviewed",
     tags: [{ id: "tag-front-desk", name: "Front desk", kind: "project", source: "ai", confidence: 0.86 }],
-    actionItemCount: 1,
+    actionItemCount: 4,
     suggestedActionItemCount: 0,
     actionItems: [
       {
@@ -106,13 +160,54 @@ let fallbackNotes: NoteDetail[] = [
         noteId: "n-1022",
         text: "Check badge printer template alignment for real entries.",
         owner: "Rina",
-        dueDate: null,
+        dueDate: previewDateKey(0),
         status: "accepted",
         source: "parser",
         confidence: 0.78,
         noteTitle: "Visitor badge printer",
         followupState: "open",
         followupLane: null,
+      },
+      {
+        id: "a-1022-2",
+        noteId: "n-1022",
+        text: "Print a calibration sheet on the front desk printer.",
+        owner: "Rina",
+        dueDate: previewDateKey(0),
+        status: "done",
+        source: "user",
+        confidence: null,
+        noteTitle: "Visitor badge printer",
+        followupState: "open",
+        followupLane: "Front desk",
+        completedAt: previewTimestamp(0, 9, 15),
+      },
+      {
+        id: "a-1022-3",
+        noteId: "n-1022",
+        text: "Install the corrected badge template at reception.",
+        owner: "Rina",
+        dueDate: previewDateKey(7),
+        status: "accepted",
+        source: "parser",
+        confidence: 0.84,
+        noteTitle: "Visitor badge printer",
+        followupState: "open",
+        followupLane: "Front desk",
+      },
+      {
+        id: "a-1022-4",
+        noteId: "n-1022",
+        text: "Document the production printer offset settings.",
+        owner: "Rina",
+        dueDate: previewDateKey(-4),
+        status: "done",
+        source: "user",
+        confidence: null,
+        noteTitle: "Visitor badge printer",
+        followupState: "open",
+        followupLane: "Front desk",
+        completedAt: previewTimestamp(-3, 14, 40),
       },
     ],
   },
@@ -420,6 +515,7 @@ function normalizeActionItem(value: unknown): ActionItem {
     noteTitle: getString(record, "noteTitle", "note_title"),
     followupState: normalizeFollowupState(getString(record, "followupState", "followup_state")),
     followupLane: getNullableString(record, "followupLane", "followup_lane"),
+    completedAt: getNullableString(record, "completedAt", "completed_at"),
   };
 }
 
@@ -457,6 +553,7 @@ function normalizeFollowupItem(value: unknown): FollowupItem {
     followupLane: getNullableString(record, "followupLane", "followup_lane"),
     tags: getArray(record, "tags").map(normalizeTag),
     createdAt: getString(record, "createdAt", "created_at") ?? fallbackNow,
+    completedAt: getNullableString(record, "completedAt", "completed_at"),
   };
 }
 
@@ -625,6 +722,7 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
       if (action && action.status === "accepted") {
         action.status = "done";
+        action.completedAt = new Date().toISOString();
       }
       return undefined as T;
     }
@@ -633,6 +731,7 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
       if (action && action.status === "done") {
         action.status = "accepted";
+        action.completedAt = null;
       }
       return undefined as T;
     }

@@ -275,13 +275,15 @@ describe("createWorkNotesStore", () => {
     );
   });
 
-  it("enters today view with non-archived notes and suggested actions", async () => {
+  it("enters today view with suggested, open, and done tasks for the calendar", async () => {
     const active = note({ id: "active", isArchived: false });
     const archived = note({ id: "archived", isArchived: true });
     const dueAction = reviewItem({ id: "due-action", noteId: "active", dueDate: "2026-05-22" });
+    const openFollowup = followup({ id: "open-action", noteId: "active", dueDate: "2026-05-22" });
     const api = testApi({
       listInbox: vi.fn().mockResolvedValue([active, archived]),
       listSuggestedActions: vi.fn().mockResolvedValue([dueAction]),
+      listFollowups: vi.fn().mockResolvedValue([openFollowup]),
       getNote: vi.fn().mockResolvedValue({ ...active, actionItems: [] }),
     });
     const store = createWorkNotesStore(api);
@@ -300,7 +302,9 @@ describe("createWorkNotesStore", () => {
     expect(api.listInbox).toHaveBeenLastCalledWith(createInboxFilters({ includeArchived: false }));
     expect(get(store.inbox).map((item) => item.id)).toEqual(["active"]);
     expect(get(store.suggestedActions)).toEqual([dueAction]);
-    expect(api.listSuggestedActions).toHaveBeenCalledTimes(1);
+    expect(get(store.followups)).toEqual([openFollowup]);
+    expect(api.listSuggestedActions).toHaveBeenCalledWith(500);
+    expect(api.listFollowups).toHaveBeenCalledWith(500);
   });
 
   it("enters people view with non-archived notes, reset filters, and suggested actions", async () => {

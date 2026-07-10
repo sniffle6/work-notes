@@ -53,6 +53,7 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           confidence REAL,
           followup_state TEXT,
           followup_lane TEXT,
+          completed_at TEXT,
           FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
 
@@ -118,6 +119,12 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
     )?;
     ensure_column(
         connection,
+        "action_items",
+        "completed_at",
+        "completed_at TEXT",
+    )?;
+    ensure_column(
+        connection,
         "notes",
         "cleaned_edited",
         "cleaned_edited INTEGER NOT NULL DEFAULT 0",
@@ -125,6 +132,11 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_action_items_status_followup_state
          ON action_items(status, followup_state)",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_action_items_completed_at
+         ON action_items(completed_at)",
         [],
     )?;
     connection.execute(

@@ -401,7 +401,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     viewMode.set("today");
     filters.set(createInboxFilters({ includeArchived: false }));
     await loadInbox();
-    await loadSuggestedActions();
+    await loadSuggestedActions(500);
+    await loadFollowups(500);
   }
 
   async function showPeople(): Promise<void> {
@@ -587,7 +588,8 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
     if (mode === "today") {
       await loadInbox();
-      await loadSuggestedActions();
+      await loadSuggestedActions(500);
+      await loadFollowups(500);
     } else if (mode === "people") {
       await loadInbox({ limit: 1000 });
       await loadSuggestedActions(500);
@@ -728,10 +730,10 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       }
       await loadInbox();
       if (refreshSuggestedActions) {
-        await loadSuggestedActions();
+        await loadSuggestedActions(get(viewMode) === "today" ? 500 : undefined);
       }
-      if (get(viewMode) === "followups") {
-        await loadFollowups();
+      if (get(viewMode) === "followups" || get(viewMode) === "today") {
+        await loadFollowups(get(viewMode) === "today" ? 500 : 200);
       }
       await refreshNavSummary();
     } catch (unknownError) {

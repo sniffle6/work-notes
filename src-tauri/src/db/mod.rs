@@ -98,5 +98,9 @@ mod tests {
             columns.iter().any(|column| column == "followup_lane"),
             "action_items.followup_lane should exist"
         );
+        assert!(
+            columns.iter().any(|column| column == "completed_at"),
+            "action_items.completed_at should exist"
+        );
     }
 }

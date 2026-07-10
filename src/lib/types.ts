@@ -35,6 +35,7 @@ export type ActionItem = {
   noteTitle?: string;
   followupState?: FollowupState | null;
   followupLane?: string | null;
+  completedAt?: string | null;
 };
 
 export type ActionReviewItem = {
@@ -62,6 +63,7 @@ export type FollowupItem = {
   followupLane?: string | null;
   tags: Tag[];
   createdAt: string;
+  completedAt?: string | null;
 };
 
 export type FollowupLane = {

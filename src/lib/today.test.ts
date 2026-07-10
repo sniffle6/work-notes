@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import type { ActionReviewItem, NoteListItem } from "$lib/types";
+import type { ActionReviewItem, FollowupItem } from "$lib/types";
 import {
-  actionsDueByToday,
-  buildWorkWeekActivity,
-  formatShortTime,
-  formatTodayHeading,
-  notesCapturedToday,
+  buildCalendarMonth,
+  buildCalendarTasks,
+  tasksForCalendarDate,
+  unplacedDoneTasks,
+  unscheduledOpenTasks,
 } from "$lib/today";
 
 const now = new Date("2026-05-22T15:00:00");
 
-function action(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
+function suggestion(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
   return {
-    id: "action-1",
+    id: "suggested-1",
     noteId: "note-1",
     noteTitle: "Source note",
-    text: "Send the launch recap",
+    text: "Review the launch recap",
     owner: "Maya",
     dueDate: "2026-05-22",
     confidence: 0.82,
@@ -25,96 +25,68 @@ function action(overrides: Partial<ActionReviewItem> = {}): ActionReviewItem {
   };
 }
 
-function note(overrides: Partial<NoteListItem> = {}): NoteListItem {
+function followup(overrides: Partial<FollowupItem> = {}): FollowupItem {
   return {
-    id: "note-1",
-    title: "Launch recap",
-    rawText: "Capture the launch recap.",
-    summary: "Launch needs a recap.",
-    captureSource: "quick_capture",
-    createdAt: "2026-05-22T09:15:00",
-    updatedAt: "2026-05-22T09:15:00",
-    parseStatus: "parsed",
-    reviewStatus: "needs_review",
+    id: "followup-1",
+    noteId: "note-1",
+    noteTitle: "Source note",
+    text: "Send the launch recap",
+    dueDate: "2026-05-22",
+    status: "accepted",
+    source: "parser",
     tags: [],
-    actionItemCount: 1,
-    suggestedActionItemCount: 1,
+    createdAt: "2026-05-20T13:42:00",
+    completedAt: null,
     ...overrides,
   };
 }
 
-describe("today helpers", () => {
-  it("includes overdue and due-today actions sorted by due date then creation", () => {
-    const result = actionsDueByToday(
+describe("calendar helpers", () => {
+  it("combines suggested, open, and done tasks without losing lifecycle state", () => {
+    const tasks = buildCalendarTasks(
+      [suggestion()],
       [
-        action({ id: "future", dueDate: "2026-05-23" }),
-        action({ id: "today-later", dueDate: "2026-05-22", createdAt: "2026-05-20T10:00:00" }),
-        action({ id: "no-date", dueDate: null }),
-        action({ id: "invalid", dueDate: "not-a-date" }),
-        action({ id: "invalid-overflow-day", dueDate: "2026-02-31" }),
-        action({ id: "invalid-overflow-month", dueDate: "2026-13-01" }),
-        action({ id: "overdue", dueDate: "2026-05-21", createdAt: "2026-05-21T08:00:00" }),
-        action({ id: "today-earlier", dueDate: "2026-05-22", createdAt: "2026-05-19T10:00:00" }),
+        followup(),
+        followup({ id: "done-1", status: "done", completedAt: "2026-05-22T11:30:00" }),
       ],
-      now,
     );
 
-    expect(result.map((item) => item.id)).toEqual(["overdue", "today-earlier", "today-later"]);
-  });
-
-  it("detects notes captured on the same local date", () => {
-    const result = notesCapturedToday(
-      [
-        note({ id: "today-morning", createdAt: "2026-05-22T08:00:00" }),
-        note({ id: "today-evening", createdAt: "2026-05-22T23:59:00" }),
-        note({ id: "yesterday", createdAt: "2026-05-21T23:59:00" }),
-        note({ id: "invalid", createdAt: "not-a-date" }),
-      ],
-      now,
-    );
-
-    expect(result.map((item) => item.id)).toEqual(["today-evening", "today-morning"]);
-  });
-
-  it("builds five weekday activity entries with capture and due-action counts", () => {
-    const result = buildWorkWeekActivity(
-      [
-        note({ id: "mon-note", createdAt: "2026-05-18T10:00:00" }),
-        note({ id: "fri-note-1", createdAt: "2026-05-22T09:00:00" }),
-        note({ id: "fri-note-2", createdAt: "2026-05-22T11:00:00" }),
-        note({ id: "sat-note", createdAt: "2026-05-23T10:00:00" }),
-      ],
-      [
-        action({ id: "tue-action", dueDate: "2026-05-19" }),
-        action({ id: "fri-action", dueDate: "2026-05-22" }),
-        action({ id: "sat-action", dueDate: "2026-05-23" }),
-        action({ id: "invalid-action", dueDate: "invalid" }),
-        action({ id: "invalid-overflow-day", dueDate: "2026-02-31" }),
-        action({ id: "invalid-overflow-month", dueDate: "2026-13-01" }),
-        action({ id: "invalid-normalizes-to-monday", dueDate: "2026-04-48" }),
-      ],
-      now,
-    );
-
-    expect(result.map((day) => day.label)).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri"]);
-    expect(result.map(({ label, captureCount, dueActionCount, totalCount, isToday }) => ({
-      label,
-      captureCount,
-      dueActionCount,
-      totalCount,
-      isToday,
-    }))).toEqual([
-      { label: "Mon", captureCount: 1, dueActionCount: 0, totalCount: 1, isToday: false },
-      { label: "Tue", captureCount: 0, dueActionCount: 1, totalCount: 1, isToday: false },
-      { label: "Wed", captureCount: 0, dueActionCount: 0, totalCount: 0, isToday: false },
-      { label: "Thu", captureCount: 0, dueActionCount: 0, totalCount: 0, isToday: false },
-      { label: "Fri", captureCount: 2, dueActionCount: 1, totalCount: 3, isToday: true },
+    expect(tasks.map(({ id, status, completedAt }) => ({ id, status, completedAt }))).toEqual([
+      { id: "suggested-1", status: "suggested", completedAt: null },
+      { id: "followup-1", status: "accepted", completedAt: null },
+      { id: "done-1", status: "done", completedAt: "2026-05-22T11:30:00" },
     ]);
   });
 
-  it("formats the Today heading and compact times", () => {
-    expect(formatTodayHeading(now)).toBe("Friday, May 22");
-    expect(formatShortTime("2026-05-22T09:05:00")).toMatch(/9:05/);
-    expect(formatShortTime("invalid")).toBe("invalid");
+  it("builds a six-week month grid with open work on due dates and done work on completion dates", () => {
+    const tasks = buildCalendarTasks(
+      [suggestion()],
+      [
+        followup({ id: "overdue", dueDate: "2026-05-21" }),
+        followup({ id: "done", status: "done", dueDate: "2026-05-19", completedAt: "2026-05-22T09:00:00" }),
+      ],
+    );
+    const month = buildCalendarMonth(tasks, now, now);
+    const may22 = month.find((day) => day.key === "2026-05-22");
+    const may19 = month.find((day) => day.key === "2026-05-19");
+
+    expect(month).toHaveLength(42);
+    expect(may22).toMatchObject({ isToday: true, openCount: 1, doneCount: 1 });
+    expect(may19).toMatchObject({ openCount: 0, doneCount: 0 });
+  });
+
+  it("adds overdue work to today's agenda and keeps undated tasks in explicit buckets", () => {
+    const tasks = buildCalendarTasks(
+      [suggestion({ id: "undated", dueDate: null })],
+      [
+        followup({ id: "overdue", dueDate: "2026-05-21" }),
+        followup({ id: "today", dueDate: "2026-05-22" }),
+        followup({ id: "historic", status: "done", completedAt: null }),
+      ],
+    );
+
+    expect(tasksForCalendarDate(tasks, now, true).open.map((task) => task.id)).toEqual(["overdue", "today"]);
+    expect(unscheduledOpenTasks(tasks).map((task) => task.id)).toEqual(["undated"]);
+    expect(unplacedDoneTasks(tasks).map((task) => task.id)).toEqual(["historic"]);
   });
 });

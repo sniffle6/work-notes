@@ -235,6 +235,7 @@ pub struct ActionItemDto {
     pub confidence: Option<f64>,
     pub followup_state: Option<FollowupState>,
     pub followup_lane: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 impl From<ActionItem> for ActionItemDto {
@@ -250,6 +251,7 @@ impl From<ActionItem> for ActionItemDto {
             confidence: action_item.confidence,
             followup_state: action_item.followup_state,
             followup_lane: action_item.followup_lane,
+            completed_at: action_item.completed_at,
         }
     }
 }
@@ -270,6 +272,7 @@ pub struct FollowupItemDto {
     pub followup_lane: Option<String>,
     pub tags: Vec<TagAssignmentDto>,
     pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 impl From<FollowupItem> for FollowupItemDto {
@@ -288,6 +291,7 @@ impl From<FollowupItem> for FollowupItemDto {
             followup_lane: item.followup_lane,
             tags: item.tags.into_iter().map(Into::into).collect(),
             created_at: item.created_at,
+            completed_at: item.completed_at,
         }
     }
 }
@@ -751,6 +755,7 @@ mod tests {
             followup_lane: Some("Ops".to_string()),
             tags: Vec::new(),
             created_at: Utc::now(),
+            completed_at: None,
         };
 
         let serialized = serde_json::to_value(FollowupItemDto::from(item)).unwrap();
@@ -762,6 +767,7 @@ mod tests {
         assert!(serialized.get("followupState").is_some());
         assert!(serialized.get("followupLane").is_some());
         assert!(serialized.get("createdAt").is_some());
+        assert!(serialized.get("completedAt").is_some());
     }
 
     #[test]

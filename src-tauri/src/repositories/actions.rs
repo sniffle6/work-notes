@@ -6,7 +6,9 @@ use crate::domain::{
 };
 
 use super::tags::TagRepository;
-use super::{parse_db_datetime, RepositoryError, RepositoryResult};
+use super::{
+    now_db_string, optional_db_datetime, parse_db_datetime, RepositoryError, RepositoryResult,
+};
 
 #[derive(Clone)]
 pub struct ActionItemRepository {
@@ -98,6 +100,7 @@ impl ActionItemRepository {
             confidence,
             followup_state,
             followup_lane: followup_lane.map(str::to_string),
+            completed_at: None,
         })
     }
 
@@ -125,7 +128,7 @@ impl ActionItemRepository {
         let record = connection
             .query_row(
                 "SELECT id, note_id, text, owner, due_date, status, source, confidence,
-                    followup_state, followup_lane
+                    followup_state, followup_lane, completed_at
                  FROM action_items
                  WHERE id = ?1",
                 [id.to_string()],
@@ -199,7 +202,8 @@ impl ActionItemRepository {
                     ai.confidence,
                     ai.followup_state,
                     ai.followup_lane,
-                    n.created_at
+                    n.created_at,
+                    ai.completed_at
                  FROM action_items ai
                  JOIN notes n ON n.id = ai.note_id
                  WHERE ai.status IN ('accepted', 'done') AND n.is_archived = 0
@@ -224,7 +228,7 @@ impl ActionItemRepository {
         let connection = self.db.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, note_id, text, owner, due_date, status, source, confidence,
-                followup_state, followup_lane
+                followup_state, followup_lane, completed_at
              FROM action_items
              WHERE note_id = ?1
              ORDER BY rowid",
@@ -246,9 +250,10 @@ impl ActionItemRepository {
                  followup_state = CASE
                    WHEN ?2 = 'accepted' AND followup_state IS NULL THEN 'open'
                    ELSE followup_state
-                 END
+                 END,
+                 completed_at = CASE WHEN ?2 = 'done' THEN ?3 ELSE NULL END
              WHERE id = ?1",
-            params![id.to_string(), status.as_str()],
+            params![id.to_string(), status.as_str(), now_db_string()],
         )?;
         if changed == 0 {
             return Err(RepositoryError::NotFound {
@@ -330,6 +335,7 @@ struct FollowupItemRecord {
     followup_state: Option<String>,
     followup_lane: Option<String>,
     created_at: String,
+    completed_at: Option<String>,
 }
 
 impl FollowupItemRecord {
@@ -347,6 +353,7 @@ impl FollowupItemRecord {
             followup_state: row.get(9)?,
             followup_lane: row.get(10)?,
             created_at: row.get(11)?,
+            completed_at: row.get(12)?,
         })
     }
 
@@ -372,6 +379,7 @@ impl FollowupItemRecord {
             followup_lane: self.followup_lane,
             tags: tags.list_for_note(note_id)?,
             created_at: parse_db_datetime("created_at", self.created_at)?,
+            completed_at: optional_db_datetime("completed_at", self.completed_at)?,
         })
     }
 }
@@ -426,6 +434,7 @@ struct ActionItemRecord {
     confidence: Option<f64>,
     followup_state: Option<String>,
     followup_lane: Option<String>,
+    completed_at: Option<String>,
 }
 
 impl ActionItemRecord {
@@ -441,6 +450,7 @@ impl ActionItemRecord {
             confidence: row.get(7)?,
             followup_state: row.get(8)?,
             followup_lane: row.get(9)?,
+            completed_at: row.get(10)?,
         })
     }
 
@@ -462,6 +472,7 @@ impl ActionItemRecord {
             confidence: self.confidence,
             followup_state,
             followup_lane: self.followup_lane,
+            completed_at: optional_db_datetime("completed_at", self.completed_at)?,
         })
     }
 }

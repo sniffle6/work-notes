@@ -31,6 +31,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 
 - `AppShell.svelte`: app frame, sidebar, status metrics, quick capture slot.
 - `InboxList.svelte`: inbox rows, Notes/Actions modes, search, status/tag filters, selection, and suggested-action counts.
+- `TodayView.svelte`: month calendar for open work by due date and completed work by completion date; defaults to the current day and exposes accept, complete, and reopen controls.
 - `NoteDetail.svelte`: title, raw/Markdown cleaned text, summary, tags, suggested actions, parse retry, reparse feedback, delete event.
 - `MarkdownView.svelte`: renders parser-provided Markdown safely for note detail.
 - `QuickCapturePanel.svelte`: compact note entry; preserves `Enter`, `Shift+Enter`, and `Esc` behavior.
@@ -63,7 +64,7 @@ Core tables:
 - `notes`: title, raw and derived note fields, parse status, review status, archive flag.
 - `notes_fts`: FTS5 index over raw text, cleaned text, and summary.
 - `tags` and `note_tags`: normalized tags and note assignments.
-- `action_items`: parser-suggested or user-managed actions.
+- `action_items`: parser-suggested or user-managed actions, including open/done lifecycle state and the timestamp recorded when work is completed.
 - `parse_jobs`: queued, parsing, parsed, and failed parse work.
 - `parse_runs`: raw provider response and normalized parsed JSON for audit/debugging.
 - `settings`: persisted app and parser settings.
