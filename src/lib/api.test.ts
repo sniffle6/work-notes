@@ -25,5 +25,10 @@ describe("browser fallback calendar data", () => {
     expect(done).toHaveLength(3);
     expect([...suggested, ...open].every((item) => item.dueDate)).toBe(true);
     expect(done.every((item) => item.completedAt)).toBe(true);
+    expect([...suggested, ...followups].every((item) => {
+      const capturedAt = new Date(item.createdAt).getTime();
+      const ageInDays = (Date.now() - capturedAt) / 86_400_000;
+      return ageInDays >= 0 && ageInDays < 14;
+    })).toBe(true);
   });
 });

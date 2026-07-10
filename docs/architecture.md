@@ -31,7 +31,8 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 
 - `AppShell.svelte`: app frame, sidebar, status metrics, quick capture slot.
 - `InboxList.svelte`: inbox rows, Notes/Actions modes, search, status/tag filters, selection, and suggested-action counts.
-- `TodayView.svelte`: month calendar for open work by due date and completed work by completion date; defaults to the current day and exposes accept, complete, and reopen controls.
+- `today.ts`: calendar projection module that turns each action item into linked captured, due, and completed occurrences, including same-day merging and month counts.
+- `TodayView.svelte`: month calendar that renders projected action-item lifecycle occurrences; defaults to the current day and exposes accept, complete, and reopen controls.
 - `NoteDetail.svelte`: title, raw/Markdown cleaned text, summary, tags, suggested actions, parse retry, reparse feedback, delete event.
 - `MarkdownView.svelte`: renders parser-provided Markdown safely for note detail.
 - `QuickCapturePanel.svelte`: compact note entry; preserves `Enter`, `Shift+Enter`, and `Esc` behavior.

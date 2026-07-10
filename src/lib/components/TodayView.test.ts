@@ -41,8 +41,8 @@ function followup(overrides: Partial<FollowupItem> = {}): FollowupItem {
 }
 
 describe("TodayView calendar", () => {
-  it("defaults to today and shows open and done buckets on a full month grid", () => {
-    render(TodayView, {
+  it("defaults to today and shows linked due and completed activity on a full month grid", () => {
+    const { container } = render(TodayView, {
       props: {
         actions: [suggestion()],
         followups: [
@@ -67,7 +67,11 @@ describe("TodayView calendar", () => {
       "Today",
     ]);
     expect(screen.getByRole("heading", { name: "Friday, May 22" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Select Friday, May 22, 2 open, 1 done/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /Select Friday, May 22, 0 captured, 3 due, 1 completed/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("heading", { name: "Activity" })).toBeTruthy();
+    expect(screen.getAllByText(/Captured May 20/).length).toBeGreaterThan(0);
+    const lifecycleText = container.querySelector('[data-task-id="open-1"] .lifecycle-rail')?.textContent?.replace(/\s+/g, " ").trim();
+    expect(lifecycleText).toBe("Captured May 20 Due May 22");
     expect(screen.getByRole("button", { name: "Accept task: Review launch summary" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Mark done: Send EOD launch summary" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reopen task: Publish launch notes" })).toBeTruthy();
@@ -111,5 +115,32 @@ describe("TodayView calendar", () => {
     expect(complete.mock.calls[0][0].detail).toBe("open-1");
     expect(reopen.mock.calls[0][0].detail).toBe("done-1");
     expect(openNote.mock.calls[0][0].detail).toBe("note-open");
+  });
+
+  it("highlights every visible occurrence of a hovered selected-day task", async () => {
+    const { container } = render(TodayView, {
+      props: {
+        actions: [],
+        followups: [
+          followup({ id: "first", dueDate: null }),
+          followup({ id: "second", dueDate: null }),
+          followup(),
+        ],
+        now,
+      },
+    });
+    const row = container.querySelector<HTMLElement>('.task-row[data-task-id="open-1"]');
+    const visibleEchoes = () => Array.from(container.querySelectorAll<HTMLElement>('.day-task[data-task-id="open-1"]'));
+
+    expect(row).toBeTruthy();
+    expect(visibleEchoes()).toHaveLength(1);
+
+    await fireEvent.mouseEnter(row!);
+    expect(visibleEchoes()).toHaveLength(2);
+    expect(visibleEchoes().every((echo) => echo.classList.contains("echo-highlighted"))).toBe(true);
+
+    await fireEvent.mouseLeave(row!);
+    expect(visibleEchoes()).toHaveLength(1);
+    expect(visibleEchoes().every((echo) => !echo.classList.contains("echo-highlighted"))).toBe(true);
   });
 });

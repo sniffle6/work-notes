@@ -1,6 +1,8 @@
 import type { ActionReviewItem, FollowupItem } from "$lib/types";
 
 export type CalendarTaskStatus = "suggested" | "accepted" | "done";
+export type CalendarMomentKind = "captured" | "due" | "completed";
+export type CalendarMomentPosition = "past" | "selected" | "future";
 
 export type CalendarTask = {
   id: string;
@@ -10,8 +12,22 @@ export type CalendarTask = {
   owner?: string | null;
   dueDate?: string | null;
   status: CalendarTaskStatus;
-  createdAt: string;
+  capturedAt: string;
   completedAt?: string | null;
+};
+
+export type CalendarOccurrence = {
+  key: string;
+  dateKey: string;
+  kinds: CalendarMomentKind[];
+  task: CalendarTask;
+};
+
+export type CalendarLifecycleMoment = {
+  kind: CalendarMomentKind;
+  dateKey: string;
+  position: CalendarMomentPosition;
+  isOverdue: boolean;
 };
 
 export type CalendarDay = {
@@ -19,13 +35,9 @@ export type CalendarDay = {
   date: Date;
   isCurrentMonth: boolean;
   isToday: boolean;
-  openCount: number;
-  doneCount: number;
-};
-
-export type CalendarDayTasks = {
-  open: CalendarTask[];
-  done: CalendarTask[];
+  capturedCount: number;
+  dueCount: number;
+  completedCount: number;
 };
 
 export function buildCalendarTasks(
@@ -41,7 +53,7 @@ export function buildCalendarTasks(
       owner: action.owner,
       dueDate: action.dueDate,
       status: "suggested" as const,
-      createdAt: action.createdAt,
+      capturedAt: action.createdAt,
       completedAt: null,
     })),
     ...followups.map((action) => ({
@@ -52,7 +64,7 @@ export function buildCalendarTasks(
       owner: action.owner,
       dueDate: action.dueDate,
       status: action.status,
-      createdAt: action.createdAt,
+      capturedAt: action.createdAt,
       completedAt: action.completedAt,
     })),
   ];
@@ -70,51 +82,56 @@ export function buildCalendarMonth(
   return Array.from({ length: 42 }, (_, index) => {
     const date = addDays(gridStart, index);
     const key = localDateKey(date);
-    const dayTasks = tasksForCalendarDate(tasks, date);
+    const occurrences = calendarOccurrencesForDate(tasks, date);
 
     return {
       key,
       date,
       isCurrentMonth: date.getMonth() === monthStart.getMonth(),
       isToday: key === todayKey,
-      openCount: dayTasks.open.length,
-      doneCount: dayTasks.done.length,
+      capturedCount: countKind(occurrences, "captured"),
+      dueCount: countKind(occurrences, "due"),
+      completedCount: countKind(occurrences, "completed"),
     };
   });
 }
 
-export function tasksForCalendarDate(
+export function calendarOccurrencesForDate(
   tasks: CalendarTask[],
   date: Date,
-  includeOverdueOpen = false,
-): CalendarDayTasks {
+): CalendarOccurrence[] {
   const key = localDateKey(date);
 
-  const open = tasks
-    .filter((task) => {
-      if (task.status === "done") return false;
-      const dueKey = dateValueKey(task.dueDate);
-      return dueKey === key || (includeOverdueOpen && dueKey !== null && dueKey < key);
-    })
-    .sort(compareOpenTasks);
-
-  const done = tasks
-    .filter((task) => task.status === "done" && dateValueKey(task.completedAt) === key)
-    .sort((left, right) => sortableTime(right.completedAt) - sortableTime(left.completedAt));
-
-  return { open, done };
+  return tasks
+    .map((task) => occurrenceForTaskOnDate(task, key))
+    .filter((occurrence): occurrence is CalendarOccurrence => occurrence !== null)
+    .sort(compareOccurrences);
 }
 
-export function unscheduledOpenTasks(tasks: CalendarTask[]): CalendarTask[] {
-  return tasks
-    .filter((task) => task.status !== "done" && dateValueKey(task.dueDate) === null)
-    .sort((left, right) => sortableTime(right.createdAt) - sortableTime(left.createdAt));
-}
+export function buildTaskLifecycle(
+  task: CalendarTask,
+  selectedDate: Date,
+  today = new Date(),
+): CalendarLifecycleMoment[] {
+  const selectedKey = localDateKey(selectedDate);
+  const todayKey = localDateKey(today);
+  const values: Array<[CalendarMomentKind, string | null | undefined]> = [
+    ["captured", task.capturedAt],
+    ["due", task.dueDate],
+    ["completed", task.status === "done" ? task.completedAt : null],
+  ];
 
-export function unplacedDoneTasks(tasks: CalendarTask[]): CalendarTask[] {
-  return tasks
-    .filter((task) => task.status === "done" && dateValueKey(task.completedAt) === null)
-    .sort((left, right) => sortableTime(right.createdAt) - sortableTime(left.createdAt));
+  return values.flatMap(([kind, value]) => {
+    const dateKey = dateValueKey(value);
+    if (!dateKey) return [];
+
+    return [{
+      kind,
+      dateKey,
+      position: dateKey === selectedKey ? "selected" : dateKey < selectedKey ? "past" : "future",
+      isOverdue: kind === "due" && task.status !== "done" && dateKey < todayKey,
+    }];
+  });
 }
 
 export function formatMonthHeading(date: Date): string {
@@ -135,17 +152,49 @@ export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function dateValueKey(value: string | null | undefined): string | null {
+export function dateValueKey(value: string | null | undefined): string | null {
   const date = parseDate(value);
   return date ? localDateKey(date) : null;
 }
 
-function compareOpenTasks(left: CalendarTask, right: CalendarTask): number {
-  const leftDue = sortableTime(left.dueDate);
-  const rightDue = sortableTime(right.dueDate);
-  if (leftDue !== rightDue) return leftDue - rightDue;
-  if (left.status !== right.status) return left.status === "accepted" ? -1 : 1;
-  return sortableTime(left.createdAt) - sortableTime(right.createdAt);
+function occurrenceForTaskOnDate(task: CalendarTask, dateKey: string): CalendarOccurrence | null {
+  const kinds: CalendarMomentKind[] = [];
+
+  if (dateValueKey(task.capturedAt) === dateKey) kinds.push("captured");
+  if (dateValueKey(task.dueDate) === dateKey) kinds.push("due");
+  if (task.status === "done" && dateValueKey(task.completedAt) === dateKey) kinds.push("completed");
+
+  if (kinds.length === 0) return null;
+
+  return {
+    key: `${task.id}:${dateKey}`,
+    dateKey,
+    kinds,
+    task,
+  };
+}
+
+function countKind(occurrences: CalendarOccurrence[], kind: CalendarMomentKind): number {
+  return occurrences.filter((occurrence) => occurrence.kinds.includes(kind)).length;
+}
+
+function compareOccurrences(left: CalendarOccurrence, right: CalendarOccurrence): number {
+  const leftKind = momentSortValue(left.kinds);
+  const rightKind = momentSortValue(right.kinds);
+  if (leftKind !== rightKind) return leftKind - rightKind;
+  if (left.task.status !== right.task.status) {
+    if (left.task.status === "accepted") return -1;
+    if (right.task.status === "accepted") return 1;
+    if (left.task.status === "suggested") return -1;
+    if (right.task.status === "suggested") return 1;
+  }
+  return sortableTime(left.task.capturedAt) - sortableTime(right.task.capturedAt);
+}
+
+function momentSortValue(kinds: CalendarMomentKind[]): number {
+  if (kinds.includes("captured")) return 0;
+  if (kinds.includes("due")) return 1;
+  return 2;
 }
 
 function parseDate(value: string | null | undefined): Date | null {

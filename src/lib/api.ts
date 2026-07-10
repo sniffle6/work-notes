@@ -17,7 +17,7 @@ import type {
 
 type UnknownRecord = Record<string, unknown>;
 
-const fallbackNow = "2026-05-20T13:42:00.000Z";
+const fallbackNow = previewTimestamp(0, 13, 42);
 
 function previewDateKey(dayOffset: number): string {
   const date = new Date();
@@ -43,8 +43,8 @@ let fallbackNotes: NoteDetail[] = [
     cleanedText: "Archived workspace cleanup note",
     summary: "Archived workspace cleanup note",
     captureSource: "quick_capture",
-    createdAt: "2026-05-20T13:39:00.000Z",
-    updatedAt: "2026-05-20T13:39:00.000Z",
+    createdAt: previewTimestamp(-30, 13, 39),
+    updatedAt: previewTimestamp(-30, 13, 39),
     parseStatus: "parsed",
     reviewStatus: "reviewed",
     isArchived: true,
@@ -61,8 +61,8 @@ let fallbackNotes: NoteDetail[] = [
       "Maya needs the kiosk 7 serial list brought into the Tuesday sync, with missing asset tags flagged before the vendor call.",
     summary: "Bring kiosk 7 serials to Tuesday sync and flag missing asset tags.",
     captureSource: "quick_capture",
-    createdAt: "2026-05-20T13:42:00.000Z",
-    updatedAt: "2026-05-20T13:45:00.000Z",
+    createdAt: previewTimestamp(-5, 9, 42),
+    updatedAt: previewTimestamp(-5, 9, 45),
     parseStatus: "parsed",
     reviewStatus: "needs_review",
     tags: [
@@ -130,8 +130,8 @@ let fallbackNotes: NoteDetail[] = [
     cleanedText: null,
     summary: "Finance sees CSV totals that do not match the dashboard.",
     captureSource: "quick_capture",
-    createdAt: "2026-05-20T13:18:00.000Z",
-    updatedAt: "2026-05-20T13:18:00.000Z",
+    createdAt: previewTimestamp(-2, 9, 18),
+    updatedAt: previewTimestamp(-2, 9, 18),
     parseStatus: "failed",
     reviewStatus: "none",
     tags: [{ id: "tag-finance", name: "Finance", kind: "topic", source: "ai", confidence: 0.91 }],
@@ -147,8 +147,8 @@ let fallbackNotes: NoteDetail[] = [
     cleanedText: "The visitor badge printer shifts names down one line on real entries, though test labels print correctly.",
     summary: "Badge printer alignment fails for real visitor entries.",
     captureSource: "quick_capture",
-    createdAt: "2026-05-19T18:30:00.000Z",
-    updatedAt: "2026-05-19T18:35:00.000Z",
+    createdAt: previewTimestamp(-4, 14, 30),
+    updatedAt: previewTimestamp(-4, 14, 35),
     parseStatus: "parsed",
     reviewStatus: "reviewed",
     tags: [{ id: "tag-front-desk", name: "Front desk", kind: "project", source: "ai", confidence: 0.86 }],
