@@ -72,6 +72,8 @@ pub fn run() {
             commands::update_note_cleaned,
             commands::update_note_raw,
             commands::delete_note,
+            commands::complete_note,
+            commands::reopen_note,
             commands::restore_note,
             commands::permanently_delete_note,
             commands::accept_action_item,

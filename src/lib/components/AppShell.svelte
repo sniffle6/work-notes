@@ -5,6 +5,7 @@
   import Hash from "@lucide/svelte/icons/hash";
   import InboxIcon from "@lucide/svelte/icons/inbox";
   import ListChecks from "@lucide/svelte/icons/list-checks";
+  import CircleCheck from "@lucide/svelte/icons/circle-check";
   import Users from "@lucide/svelte/icons/users";
   import { createEventDispatcher } from "svelte";
   import type { Snippet } from "svelte";
@@ -145,6 +146,16 @@
         >
           <span class="nav-icon" aria-hidden="true"><Users size={15} strokeWidth={2.2} /></span>
           <span>People</span>
+        </button>
+        <button
+          class:active={activeView === "done"}
+          type="button"
+          aria-current={activeView === "done" ? "page" : undefined}
+          aria-label="Done"
+          onclick={() => navigate("done")}
+        >
+          <span class="nav-icon" aria-hidden="true"><CircleCheck size={15} strokeWidth={2.2} /></span>
+          <span>Done</span>
         </button>
         <button
           class:active={activeView === "archive"}

@@ -14,7 +14,8 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           capture_source TEXT NOT NULL,
           parse_status TEXT NOT NULL,
           review_status TEXT NOT NULL,
-          is_archived INTEGER NOT NULL DEFAULT 0
+          is_archived INTEGER NOT NULL DEFAULT 0,
+          completed_at TEXT
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -129,6 +130,7 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
         "cleaned_edited",
         "cleaned_edited INTEGER NOT NULL DEFAULT 0",
     )?;
+    ensure_column(connection, "notes", "completed_at", "completed_at TEXT")?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_action_items_status_followup_state
          ON action_items(status, followup_state)",
@@ -137,6 +139,11 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_action_items_completed_at
          ON action_items(completed_at)",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notes_completed_at
+         ON notes(completed_at)",
         [],
     )?;
     connection.execute(

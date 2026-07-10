@@ -5,7 +5,10 @@ use crate::domain::{
     InboxFilters, Note, NoteId, NoteListItem, ParseJobId, ParseStatus, ReviewStatus,
 };
 
-use super::{now_db_string, parse_db_datetime, u32_from_i64, RepositoryError, RepositoryResult};
+use super::{
+    now_db_string, optional_db_datetime, parse_db_datetime, u32_from_i64, RepositoryError,
+    RepositoryResult,
+};
 
 #[derive(Clone)]
 pub struct NoteRepository {
@@ -69,7 +72,49 @@ impl NoteRepository {
         let now = now_db_string();
         let connection = self.db.connection()?;
         let changed = connection.execute(
-            "UPDATE notes SET is_archived = 1, updated_at = ?2 WHERE id = ?1",
+            "UPDATE notes
+             SET is_archived = 1, completed_at = NULL, updated_at = ?2
+             WHERE id = ?1",
+            params![id_text, now],
+        )?;
+
+        if changed == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn complete(&self, id: NoteId) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let connection = self.db.connection()?;
+        let changed = connection.execute(
+            "UPDATE notes
+             SET completed_at = ?2, is_archived = 0, updated_at = ?2
+             WHERE id = ?1",
+            params![id_text, now],
+        )?;
+
+        if changed == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "note",
+                id: id.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn reopen_completed(&self, id: NoteId) -> RepositoryResult<()> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        let connection = self.db.connection()?;
+        let changed = connection.execute(
+            "UPDATE notes SET completed_at = NULL, updated_at = ?2 WHERE id = ?1",
             params![id_text, now],
         )?;
 
@@ -146,7 +191,8 @@ impl NoteRepository {
         let record = connection
             .query_row(
                 "SELECT id, title, raw_text, cleaned_text, summary, created_at, updated_at,
-                        capture_source, parse_status, review_status, is_archived, cleaned_edited
+                        capture_source, parse_status, review_status, is_archived, completed_at,
+                        cleaned_edited
                  FROM notes
                  WHERE id = ?1",
                 [id_text],
@@ -165,6 +211,10 @@ impl NoteRepository {
 
         if !filters.include_archived {
             conditions.push("n.is_archived = 0".to_string());
+        }
+
+        if !filters.include_completed {
+            conditions.push("n.completed_at IS NULL".to_string());
         }
 
         if let Some(status) = filters.parse_status {
@@ -349,7 +399,7 @@ impl NoteRepository {
         let connection = self.db.connection()?;
         let sql = format!(
             "{} JOIN notes_fts ON notes_fts.note_id = n.id
-             WHERE notes_fts MATCH ?1 AND n.is_archived = 0
+             WHERE notes_fts MATCH ?1 AND n.is_archived = 0 AND n.completed_at IS NULL
              ORDER BY bm25(notes_fts), n.created_at DESC
              LIMIT 200",
             list_item_select()
@@ -413,6 +463,7 @@ fn list_item_select() -> String {
         n.parse_status,
         n.review_status,
         n.is_archived,
+        n.completed_at,
         (SELECT COUNT(*) FROM note_tags nt WHERE nt.note_id = n.id) AS tag_count,
         (SELECT COUNT(*) FROM action_items ai WHERE ai.note_id = n.id) AS action_item_count,
         (
@@ -451,6 +502,7 @@ struct NoteRecord {
     parse_status: String,
     review_status: String,
     is_archived: i64,
+    completed_at: Option<String>,
     cleaned_edited: i64,
 }
 
@@ -468,7 +520,8 @@ impl NoteRecord {
             parse_status: row.get(8)?,
             review_status: row.get(9)?,
             is_archived: row.get(10)?,
-            cleaned_edited: row.get(11)?,
+            completed_at: row.get(11)?,
+            cleaned_edited: row.get(12)?,
         })
     }
 
@@ -485,6 +538,7 @@ impl NoteRecord {
             parse_status: ParseStatus::from_db(&self.parse_status)?,
             review_status: ReviewStatus::from_db(&self.review_status)?,
             is_archived: self.is_archived != 0,
+            completed_at: optional_db_datetime("completed_at", self.completed_at)?,
             cleaned_edited: self.cleaned_edited != 0,
         })
     }
@@ -501,6 +555,7 @@ struct NoteListItemRecord {
     parse_status: String,
     review_status: String,
     is_archived: i64,
+    completed_at: Option<String>,
     tag_count: i64,
     action_item_count: i64,
     suggested_action_item_count: i64,
@@ -519,9 +574,10 @@ impl NoteListItemRecord {
             parse_status: row.get(7)?,
             review_status: row.get(8)?,
             is_archived: row.get(9)?,
-            tag_count: row.get(10)?,
-            action_item_count: row.get(11)?,
-            suggested_action_item_count: row.get(12)?,
+            completed_at: row.get(10)?,
+            tag_count: row.get(11)?,
+            action_item_count: row.get(12)?,
+            suggested_action_item_count: row.get(13)?,
         })
     }
 
@@ -537,6 +593,7 @@ impl NoteListItemRecord {
             parse_status: ParseStatus::from_db(&self.parse_status)?,
             review_status: ReviewStatus::from_db(&self.review_status)?,
             is_archived: self.is_archived != 0,
+            completed_at: optional_db_datetime("completed_at", self.completed_at)?,
             tag_count: u32_from_i64("tag_count", self.tag_count)?,
             action_item_count: u32_from_i64("action_item_count", self.action_item_count)?,
             suggested_action_item_count: u32_from_i64(
@@ -685,6 +742,49 @@ mod tests {
             .list_inbox(InboxFilters::default())
             .expect("list default inbox");
         assert!(inbox.iter().any(|item| item.id == note.id));
+    }
+
+    #[test]
+    fn completed_note_is_hidden_from_inbox_without_becoming_archived() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("finish this").expect("create note");
+
+        notes.complete(note.id).expect("complete note");
+
+        let completed = notes.get(note.id).expect("get note").expect("note exists");
+        assert!(completed.completed_at.is_some());
+        assert!(!completed.is_archived);
+        assert!(notes
+            .list_inbox(InboxFilters::default())
+            .expect("list default inbox")
+            .is_empty());
+    }
+
+    #[test]
+    fn completed_note_can_be_listed_and_reopened() {
+        let (db, notes) = setup_notes();
+        let _keep_db_alive = db;
+        let note = notes.create_raw_note("finish this").expect("create note");
+
+        notes.complete(note.id).expect("complete note");
+        let completed = notes
+            .list_inbox(InboxFilters {
+                include_completed: true,
+                ..InboxFilters::default()
+            })
+            .expect("list completed notes");
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].completed_at.is_some());
+
+        notes.reopen_completed(note.id).expect("reopen note");
+        let reopened = notes.get(note.id).expect("get note").expect("note exists");
+        assert_eq!(reopened.completed_at, None);
+        assert!(notes
+            .list_inbox(InboxFilters::default())
+            .expect("list default inbox")
+            .iter()
+            .any(|item| item.id == note.id));
     }
 
     #[test]

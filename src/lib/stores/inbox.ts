@@ -3,6 +3,7 @@ import { derived, get, writable } from "svelte/store";
 import {
   acceptActionItem,
   completeActionItem,
+  completeNote,
   createManualFollowup,
   dismissActionItem,
   getNote,
@@ -11,6 +12,7 @@ import {
   listInbox,
   listSuggestedActions,
   reopenActionItem,
+  reopenNote,
   retryParse,
   retryParseWithFeedback,
   updateNoteCleaned,
@@ -36,7 +38,7 @@ export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 
-export type InboxViewMode = "inbox" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
+export type InboxViewMode = "inbox" | "done" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
 
 export type ParserNotification = {
   id: string;
@@ -58,6 +60,8 @@ type WorkNotesApi = {
   updateNoteCleaned: typeof updateNoteCleaned;
   updateNoteRaw: typeof updateNoteRaw;
   deleteNote: typeof deleteNote;
+  completeNote: typeof completeNote;
+  reopenNote: typeof reopenNote;
   restoreNote: typeof restoreNote;
   permanentlyDeleteNote: typeof permanentlyDeleteNote;
   acceptActionItem: typeof acceptActionItem;
@@ -82,6 +86,8 @@ const defaultApi: WorkNotesApi = {
   updateNoteCleaned,
   updateNoteRaw,
   deleteNote,
+  completeNote,
+  reopenNote,
   restoreNote,
   permanentlyDeleteNote,
   acceptActionItem,
@@ -127,6 +133,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
         createInboxFilters({
           ...$filters,
           includeArchived: $viewMode === "archive",
+          includeCompleted: $viewMode === "done",
         }),
       ),
     ),
@@ -147,13 +154,15 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       const backendFilters = createInboxFilters({
         ...currentFilters,
         includeArchived: mode === "archive",
+        includeCompleted: mode === "done",
         limit: options.limit,
       });
       const items = await api.listInbox(backendFilters);
-      const visibleItems =
-        mode === "archive"
-          ? items.filter((note) => note.isArchived)
-          : items.filter((note) => !note.isArchived);
+      const visibleItems = mode === "archive"
+        ? items.filter((note) => note.isArchived)
+        : mode === "done"
+          ? items.filter((note) => !note.isArchived && Boolean(note.completedAt))
+          : items.filter((note) => !note.isArchived && !note.completedAt);
 
       inbox.set(visibleItems);
       await ensureSelectionAfterLoad(visibleItems, options.preferredSelectionIndex);
@@ -232,7 +241,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
   async function refreshNavSummary(): Promise<void> {
     try {
       const [notes, actions, followupItems] = await Promise.all([
-        api.listInbox(createInboxFilters({ includeArchived: false, limit: NAV_SUMMARY_LIMIT })),
+        api.listInbox(createInboxFilters({ includeArchived: false, includeCompleted: false, limit: NAV_SUMMARY_LIMIT })),
         api.listSuggestedActions(NAV_SUMMARY_LIMIT),
         api.listFollowups(NAV_SUMMARY_LIMIT),
       ]);
@@ -372,19 +381,25 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function showInbox(): Promise<void> {
     viewMode.set("inbox");
-    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
+    await loadInbox();
+  }
+
+  async function showDone(): Promise<void> {
+    viewMode.set("done");
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: true }));
     await loadInbox();
   }
 
   async function showArchive(): Promise<void> {
     viewMode.set("archive");
-    filters.update((current) => createInboxFilters({ ...current, includeArchived: true }));
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: true, includeCompleted: false }));
     await loadInbox();
   }
 
   async function showActions(): Promise<void> {
     viewMode.set("actions");
-    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
     await loadSuggestedActions();
 
     const actions = get(suggestedActions);
@@ -420,7 +435,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function showFollowups(): Promise<void> {
     viewMode.set("followups");
-    filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+    filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
     await loadFollowups();
   }
 
@@ -440,7 +455,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     try {
       await api.restoreNote(note.id);
       viewMode.set("inbox");
-      filters.update((current) => createInboxFilters({ ...current, includeArchived: false }));
+      filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
       await loadInbox();
       await selectNote(note.id);
       await refreshNavSummary();
@@ -573,6 +588,49 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await loadInbox();
     await selectNote(noteId);
     await refreshNavSummary();
+  }
+
+  async function completeInboxNote(noteId: string): Promise<void> {
+    const currentItems = get(inbox);
+    const completedIndex = currentItems.findIndex((item) => item.id === noteId);
+
+    error.set(null);
+
+    try {
+      await api.completeNote(noteId);
+      if (get(selectedNote)?.id === noteId) {
+        selectedNote.set(null);
+      }
+      await loadInbox({
+        preferredSelectionIndex: completedIndex >= 0 ? completedIndex : undefined,
+      });
+      await refreshNavSummary();
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not complete note."));
+    }
+  }
+
+  async function reopenSelectedNote(): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.reopenNote(note.id);
+      viewMode.set("inbox");
+      filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
+      await loadInbox();
+      await selectNote(note.id);
+      await refreshNavSummary();
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not reopen note."));
+    } finally {
+      loadingNote.set(false);
+    }
   }
 
   async function refreshParserActivity(): Promise<void> {
@@ -813,7 +871,9 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     saveCleanedEdits,
     saveRawEdit,
     deleteSelectedNote,
+    completeInboxNote,
     showInbox,
+    showDone,
     showArchive,
     showActions,
     showToday,
@@ -821,6 +881,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showTags,
     showFollowups,
     restoreSelectedNote,
+    reopenSelectedNote,
     permanentlyDeleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,

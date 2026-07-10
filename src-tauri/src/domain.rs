@@ -249,6 +249,7 @@ pub struct Note {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub completed_at: Option<DateTime<Utc>>,
     pub cleaned_edited: bool,
 }
 
@@ -264,6 +265,7 @@ pub struct NoteListItem {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub completed_at: Option<DateTime<Utc>>,
     pub tag_count: u32,
     pub action_item_count: u32,
     pub suggested_action_item_count: u32,
@@ -278,6 +280,8 @@ pub struct InboxFilters {
     pub query: Option<String>,
     #[serde(default)]
     pub include_archived: bool,
+    #[serde(default)]
+    pub include_completed: bool,
     pub limit: Option<u32>,
 }
 

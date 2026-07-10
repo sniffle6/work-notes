@@ -84,6 +84,7 @@ export type NoteListItem = {
   parseStatus: ParseStatus;
   reviewStatus: ReviewStatus;
   isArchived?: boolean;
+  completedAt?: string | null;
   tags: Tag[];
   actionItemCount: number;
   suggestedActionItemCount: number;
@@ -101,6 +102,7 @@ export type InboxFilters = {
   parseStatuses: ParseStatus[];
   reviewStatuses: ReviewStatus[];
   includeArchived?: boolean;
+  includeCompleted?: boolean;
   limit?: number;
 };
 

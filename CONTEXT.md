@@ -27,3 +27,11 @@ _Avoid_: Duplicate task
 **Action-item lifecycle**:
 The connected sequence of captured, optional due, and completion moments for one action item. Its dated moments are distinct from its current suggested, open, or done state.
 _Avoid_: Ticket states
+
+**Completed note**:
+A source note whose work was finished and intentionally removed from the active inbox.
+_Avoid_: Archived note, deleted note
+
+**Archived note**:
+A source note intentionally set aside without claiming that its work was completed. It remains recoverable as a soft-deleted record.
+_Avoid_: Completed note, done note

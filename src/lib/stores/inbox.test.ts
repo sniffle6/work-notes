@@ -49,6 +49,8 @@ describe("createInboxFilters", () => {
       tagIds: [],
       parseStatuses: [],
       reviewStatuses: [],
+      includeArchived: false,
+      includeCompleted: false,
     });
     expect(matchesNoteFilters(note(), filters)).toBe(true);
   });
@@ -102,6 +104,13 @@ describe("matchesNoteFilters", () => {
 
     expect(matchesNoteFilters(note(), filters)).toBe(true);
     expect(matchesNoteFilters(note({ parseStatus: "failed" }), filters)).toBe(false);
+  });
+
+  it("hides completed notes unless completed notes are included", () => {
+    const completed = note({ completedAt: "2026-07-10T14:00:00.000Z" });
+
+    expect(matchesNoteFilters(completed, createInboxFilters())).toBe(false);
+    expect(matchesNoteFilters(completed, createInboxFilters({ includeCompleted: true }))).toBe(true);
   });
 });
 
@@ -257,6 +266,23 @@ describe("createWorkNotesStore", () => {
     expect(get(store.inbox)).toEqual([]);
   });
 
+  it("completes an inbox note and removes it from the active list", async () => {
+    const first = note({ id: "note-1" });
+    const second = note({ id: "note-2" });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValueOnce([first, second]).mockResolvedValueOnce([second]),
+      getNote: vi.fn(async (id: string) => ({ ...note({ id }), actionItems: [] })),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.loadInbox();
+    await store.completeInboxNote("note-1");
+
+    expect(api.completeNote).toHaveBeenCalledWith("note-1");
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["note-2"]);
+    expect(get(store.selectedNote)?.id).toBe("note-2");
+  });
+
   it("loads archived notes in archive mode only", async () => {
     const api = testApi({
       listInbox: vi.fn().mockResolvedValue([
@@ -273,6 +299,44 @@ describe("createWorkNotesStore", () => {
     expect(api.listInbox).toHaveBeenCalledWith(
       expect.objectContaining({ includeArchived: true }),
     );
+  });
+
+  it("loads completed notes in done mode only", async () => {
+    const active = note({ id: "active", completedAt: null });
+    const completed = note({ id: "completed", completedAt: "2026-07-10T14:00:00.000Z" });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValue([active, completed]),
+      getNote: vi.fn(async (id: string) => ({ ...(id === "completed" ? completed : active), actionItems: [] })),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showDone();
+
+    expect(get(store.viewMode)).toBe("done");
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["completed"]);
+    expect(api.listInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ includeArchived: false, includeCompleted: true }),
+    );
+  });
+
+  it("reopens a completed note and returns it to Inbox", async () => {
+    const completed = note({ id: "completed", completedAt: "2026-07-10T14:00:00.000Z" });
+    const reopened = note({ id: "completed", completedAt: null });
+    const api = testApi({
+      listInbox: vi.fn().mockResolvedValueOnce([completed]).mockResolvedValueOnce([reopened]),
+      getNote: vi
+        .fn()
+        .mockResolvedValueOnce({ ...completed, actionItems: [] })
+        .mockResolvedValue({ ...reopened, actionItems: [] }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.showDone();
+    await store.reopenSelectedNote();
+
+    expect(api.reopenNote).toHaveBeenCalledWith("completed");
+    expect(get(store.viewMode)).toBe("inbox");
+    expect(get(store.selectedNote)?.completedAt).toBeNull();
   });
 
   it("enters today view with suggested, open, and done tasks for the calendar", async () => {
@@ -801,6 +865,8 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
       .mockResolvedValue(detail),
     updateNoteRaw: vi.fn<(noteId: string, rawText: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    completeNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    reopenNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     restoreNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     permanentlyDeleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     acceptActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),

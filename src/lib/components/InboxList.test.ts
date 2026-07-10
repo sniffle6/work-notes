@@ -57,6 +57,20 @@ describe("InboxList", () => {
     expect(screen.getByText("No archived notes")).toBeTruthy();
   });
 
+  it("uses completed empty copy in done mode", () => {
+    render(InboxList, {
+      props: {
+        items: [],
+        filters: { ...filters(), includeCompleted: true },
+        selectedId: undefined,
+        viewMode: "done",
+      },
+    });
+
+    expect(screen.getByText("No completed notes")).toBeTruthy();
+    expect(screen.getByText("0 done")).toBeTruthy();
+  });
+
   it("shows parser activity labels on active note rows", () => {
     render(InboxList, {
       props: {
@@ -67,6 +81,35 @@ describe("InboxList", () => {
     });
 
     expect(screen.getByText("Parsing")).toBeTruthy();
+  });
+
+  it("offers Done on active inbox rows and dispatches the note id", async () => {
+    const complete = vi.fn();
+
+    render(InboxList, {
+      props: {
+        items: notes(),
+        filters: filters(),
+        selectedId: "n1",
+      },
+      events: { complete },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Mark Maria dashboard owner done" }));
+
+    expect(complete.mock.calls[0][0].detail).toBe("n1");
+  });
+
+  it("does not offer Done for archived rows", () => {
+    render(InboxList, {
+      props: {
+        items: [{ ...notes()[0], isArchived: true }],
+        filters: { ...filters(), includeArchived: true },
+        viewMode: "archive",
+      },
+    });
+
+    expect(screen.queryByRole("button", { name: /done/i })).toBeNull();
   });
 });
 

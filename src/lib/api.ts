@@ -297,6 +297,14 @@ export async function deleteNote(noteId: string): Promise<void> {
   await invokeCommand<void>("delete_note", { noteId });
 }
 
+export async function completeNote(noteId: string): Promise<void> {
+  await invokeCommand<void>("complete_note", { noteId });
+}
+
+export async function reopenNote(noteId: string): Promise<void> {
+  await invokeCommand<void>("reopen_note", { noteId });
+}
+
 export async function restoreNote(noteId: string): Promise<void> {
   await invokeCommand<void>("restore_note", { noteId });
 }
@@ -394,6 +402,8 @@ export const api = {
   updateNoteCleaned,
   updateNoteRaw,
   deleteNote,
+  completeNote,
+  reopenNote,
   restoreNote,
   permanentlyDeleteNote,
   acceptActionItem,
@@ -418,6 +428,7 @@ function toBackendFilters(filters: InboxFilters): UnknownRecord {
     tagIds: filters.tagIds,
     query: filters.search.trim() || null,
     includeArchived: Boolean(filters.includeArchived),
+    includeCompleted: Boolean(filters.includeCompleted),
     limit: filters.limit ?? null,
   };
 }
@@ -462,6 +473,7 @@ function normalizeNoteListItem(value: unknown): NoteListItem {
     parseStatus: normalizeParseStatus(getString(record, "parseStatus", "parse_status")),
     reviewStatus: normalizeReviewStatus(getString(record, "reviewStatus", "review_status")),
     isArchived: getBoolean(record, "isArchived", "is_archived") ?? false,
+    completedAt: getNullableString(record, "completedAt", "completed_at"),
     tags: getArray(record, "tags").map(normalizeTag),
     actionItemCount,
     suggestedActionItemCount,
@@ -606,7 +618,11 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
     }
     case "list_inbox":
       return fallbackNotes
-        .filter((note) => Boolean((args?.filters as UnknownRecord | undefined)?.includeArchived) || !note.isArchived)
+        .filter(
+          (note) =>
+            (Boolean((args?.filters as UnknownRecord | undefined)?.includeArchived) || !note.isArchived) &&
+            (Boolean((args?.filters as UnknownRecord | undefined)?.includeCompleted) || !note.completedAt),
+        )
         .slice(0, Number((args?.filters as UnknownRecord | undefined)?.limit ?? 200))
         .map(normalizeNoteListItem) as T;
     case "get_note": {
@@ -667,6 +683,23 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       const note = fallbackNotes.find((item) => item.id === args?.noteId);
       if (note) {
         note.isArchived = true;
+        note.updatedAt = new Date().toISOString();
+      }
+      return undefined as T;
+    }
+    case "complete_note": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.completedAt = new Date().toISOString();
+        note.isArchived = false;
+        note.updatedAt = note.completedAt;
+      }
+      return undefined as T;
+    }
+    case "reopen_note": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note) {
+        note.completedAt = null;
         note.updatedAt = new Date().toISOString();
       }
       return undefined as T;

@@ -83,6 +83,21 @@ describe("NoteDetail", () => {
     expect(permanentlyDeleteNote).toHaveBeenCalledTimes(1);
   });
 
+  it("shows Reopen instead of Archive for completed notes", async () => {
+    const reopenNote = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), completedAt: "2026-07-10T14:00:00.000Z" } },
+      events: { reopenNote },
+    });
+
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add follow-up" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+
+    expect(reopenNote).toHaveBeenCalledTimes(1);
+  });
+
   it("dispatches manual follow-up text and lane without clearing until done", async () => {
     const createFollowup = vi.fn();
 

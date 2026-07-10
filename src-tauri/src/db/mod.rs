@@ -102,5 +102,16 @@ mod tests {
             columns.iter().any(|column| column == "completed_at"),
             "action_items.completed_at should exist"
         );
+
+        let mut statement = connection.prepare("PRAGMA table_info(notes)").unwrap();
+        let note_columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            note_columns.iter().any(|column| column == "completed_at"),
+            "notes.completed_at should exist"
+        );
     }
 }

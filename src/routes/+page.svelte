@@ -282,6 +282,11 @@
       return;
     }
 
+    if (event.detail === "done") {
+      await workNotes.showDone();
+      return;
+    }
+
     if (event.detail === "actions") {
       await workNotes.showActions();
       return;
@@ -489,6 +494,7 @@
             loading={$loadingInbox}
             viewMode={$viewMode}
             on:select={(event) => void workNotes.selectNote(event.detail)}
+            on:complete={(event) => void workNotes.completeInboxNote(event.detail)}
             on:filter={(event) => void workNotes.updateFilters(event.detail)}
           />
         {/if}
@@ -512,6 +518,7 @@
             on:retryParse={() => void workNotes.retrySelectedParse()}
             on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
             on:deleteNote={() => void deleteSelectedNote()}
+            on:reopenNote={() => void workNotes.reopenSelectedNote()}
             on:restoreNote={() => void restoreSelectedNote()}
             on:permanentlyDeleteNote={() => void permanentlyDeleteSelectedNote()}
             on:acceptAction={(event) => void workNotes.acceptSuggestedAction(event.detail)}

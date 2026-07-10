@@ -6,13 +6,18 @@ export function createInboxFilters(overrides: Partial<InboxFilters> = {}): Inbox
     tagIds: [...(overrides.tagIds ?? [])],
     parseStatuses: [...(overrides.parseStatuses ?? [])],
     reviewStatuses: [...(overrides.reviewStatuses ?? [])],
-    includeArchived: overrides.includeArchived,
+    includeArchived: overrides.includeArchived ?? false,
+    includeCompleted: overrides.includeCompleted ?? false,
     limit: overrides.limit,
   };
 }
 
 export function matchesNoteFilters(note: NoteListItem, filters: InboxFilters): boolean {
   if (!filters.includeArchived && note.isArchived) {
+    return false;
+  }
+
+  if (!filters.includeCompleted && note.completedAt) {
     return false;
   }
 

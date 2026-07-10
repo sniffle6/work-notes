@@ -34,6 +34,7 @@
     retryParse: void;
     reparseWithFeedback: string;
     deleteNote: void;
+    reopenNote: void;
     restoreNote: void;
     permanentlyDeleteNote: void;
     acceptAction: string;
@@ -290,6 +291,10 @@
           </button>
           <button class="delete-button" type="button" onclick={() => dispatch("permanentlyDeleteNote")} disabled={loading}>
             Delete permanently
+          </button>
+        {:else if note.completedAt}
+          <button class="ghost-button" type="button" onclick={() => dispatch("reopenNote")} disabled={loading}>
+            Reopen
           </button>
         {:else}
           <button class="ghost-button" type="button" onclick={openFollowupForm} disabled={loading}>

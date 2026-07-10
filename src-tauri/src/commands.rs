@@ -91,6 +91,7 @@ pub struct NoteListItemDto {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub completed_at: Option<DateTime<Utc>>,
     pub tags: Vec<TagAssignmentDto>,
     pub tag_count: u32,
     pub action_item_count: u32,
@@ -111,6 +112,7 @@ impl NoteListItemDto {
             parse_status: item.parse_status,
             review_status: item.review_status,
             is_archived: item.is_archived,
+            completed_at: item.completed_at,
             tags: tags.into_iter().map(Into::into).collect(),
             tag_count: item.tag_count,
             action_item_count: item.action_item_count,
@@ -133,6 +135,7 @@ pub struct NoteDetailDto {
     pub parse_status: ParseStatus,
     pub review_status: ReviewStatus,
     pub is_archived: bool,
+    pub completed_at: Option<DateTime<Utc>>,
     pub cleaned_edited: bool,
     pub tags: Vec<TagAssignmentDto>,
     pub action_items: Vec<ActionItemDto>,
@@ -154,6 +157,7 @@ impl From<NoteDetail> for NoteDetailDto {
             parse_status: note.parse_status,
             review_status: note.review_status,
             is_archived: note.is_archived,
+            completed_at: note.completed_at,
             cleaned_edited: note.cleaned_edited,
             tags: detail.tags.into_iter().map(Into::into).collect(),
             action_items: detail.action_items.into_iter().map(Into::into).collect(),
@@ -176,6 +180,7 @@ impl From<Note> for NoteDetailDto {
             parse_status: note.parse_status,
             review_status: note.review_status,
             is_archived: note.is_archived,
+            completed_at: note.completed_at,
             cleaned_edited: note.cleaned_edited,
             tags: Vec::new(),
             action_items: Vec::new(),
@@ -334,6 +339,8 @@ pub struct InboxFiltersDto {
     pub query: Option<String>,
     #[serde(default)]
     pub include_archived: bool,
+    #[serde(default)]
+    pub include_completed: bool,
     pub limit: Option<u32>,
 }
 
@@ -375,6 +382,7 @@ impl TryFrom<InboxFiltersDto> for InboxFilters {
             tag_ids,
             query: filters.query,
             include_archived: filters.include_archived,
+            include_completed: filters.include_completed,
             limit: filters.limit,
         })
     }
@@ -484,6 +492,26 @@ pub async fn delete_note(
 ) -> Result<(), CommandError> {
     let note_id = parse_note_id(&note_id)?;
     state.repositories.notes.archive(note_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn complete_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    state.repositories.notes.complete(note_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reopen_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    state.repositories.notes.reopen_completed(note_id)?;
     Ok(())
 }
 
@@ -697,6 +725,7 @@ mod tests {
             parse_status: ParseStatus::Queued,
             review_status: ReviewStatus::None,
             is_archived: false,
+            completed_at: None,
             tags: Vec::new(),
             tag_count: 2,
             action_item_count: 3,
@@ -711,6 +740,7 @@ mod tests {
         assert!(serialized.get("parseStatus").is_some());
         assert!(serialized.get("reviewStatus").is_some());
         assert!(serialized.get("isArchived").is_some());
+        assert!(serialized.get("completedAt").is_some());
         assert!(serialized.get("tags").is_some());
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());

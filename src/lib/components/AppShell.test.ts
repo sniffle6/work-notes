@@ -50,6 +50,27 @@ describe("AppShell", () => {
     expect(navigate.mock.calls[0][0].detail).toBe("archive");
   });
 
+  it("marks done active and emits done navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "done",
+      },
+      events: { navigate },
+    });
+
+    const done = screen.getByRole("button", { name: "Done" });
+    await fireEvent.click(done);
+
+    expect(done.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("done");
+  });
+
   it("marks actions active and emits actions navigation", async () => {
     const navigate = vi.fn();
 
@@ -158,7 +179,7 @@ describe("AppShell", () => {
 
     const primaryNav = screen.getByRole("navigation", { name: "Primary" });
 
-    expect(primaryNav.querySelectorAll("svg")).toHaveLength(7);
+    expect(primaryNav.querySelectorAll("svg")).toHaveLength(8);
     expect(primaryNav.querySelector("kbd")).toBeNull();
   });
 

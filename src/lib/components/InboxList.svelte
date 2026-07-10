@@ -23,6 +23,7 @@
 
   const dispatch = createEventDispatcher<{
     select: string;
+    complete: string;
     filter: Partial<InboxFilters>;
   }>();
 
@@ -142,7 +143,9 @@
           <span>{suggestedActionCount}</span>
         </button>
       </div>
-      <span class="load-state">{loading ? "Loading" : `${items.length} open`}</span>
+      <span class="load-state">
+        {loading ? "Loading" : viewMode === "done" ? `${items.length} done` : viewMode === "archive" ? `${items.length} archived` : `${items.length} open`}
+      </span>
     </div>
 
     <label class="search-row">
@@ -187,19 +190,19 @@
     {#if visibleItems.length === 0}
       <div class="empty-state">
         <div class="empty-mark">WN</div>
-        <h2>{viewMode === "archive" && mode === "notes" ? "No archived notes" : mode === "actions" ? "No suggested actions" : "No notes"}</h2>
-        <p>{viewMode === "archive" && mode === "notes" ? "Archived notes appear here after they leave Inbox." : mode === "actions" ? "Parser suggestions will appear here after capture." : "Press the hotkey to capture your first one."}</p>
+        <h2>{viewMode === "done" && mode === "notes" ? "No completed notes" : viewMode === "archive" && mode === "notes" ? "No archived notes" : mode === "actions" ? "No suggested actions" : "No notes"}</h2>
+        <p>{viewMode === "done" && mode === "notes" ? "Completed notes appear here after they leave Inbox." : viewMode === "archive" && mode === "notes" ? "Archived notes appear here after they leave Inbox." : mode === "actions" ? "Parser suggestions will appear here after capture." : "Press the hotkey to capture your first one."}</p>
       </div>
     {/if}
 
     {#if mode === "notes"}
       {#each visibleItems as item}
-        <button
-          class:selected={item.id === selectedId}
-          class="inbox-item"
-          type="button"
-          onclick={() => dispatch("select", item.id)}
-        >
+        <div class:selected={item.id === selectedId} class="inbox-item-row">
+          <button
+            class="inbox-item"
+            type="button"
+            onclick={() => dispatch("select", item.id)}
+          >
           <div class="item-topline">
             <span
               class={`status-dot ${statusClass(item.parseStatus, item.reviewStatus)}`}
@@ -228,7 +231,18 @@
               <span class="action-count">{actionLabel(item.suggestedActionItemCount)}</span>
             {/if}
           </div>
-        </button>
+          </button>
+          {#if viewMode === "inbox"}
+            <button
+              class="done-button"
+              type="button"
+              aria-label={`Mark ${item.title} done`}
+              onclick={() => dispatch("complete", item.id)}
+            >
+              Done
+            </button>
+          {/if}
+        </div>
       {/each}
     {:else}
       <div class="action-groups">
@@ -488,14 +502,44 @@
     cursor: pointer;
   }
 
-  .inbox-item + .inbox-item {
+  .inbox-item-row {
+    position: relative;
+  }
+
+  .inbox-item-row + .inbox-item-row {
     border-top: 1px solid var(--color-border-default);
   }
 
-  .inbox-item:hover,
-  .inbox-item.selected {
+  .inbox-item-row:hover .inbox-item,
+  .inbox-item-row.selected .inbox-item {
     border-left-color: var(--color-accent-primary);
     background: var(--color-surface-2);
+  }
+
+  .done-button {
+    position: absolute;
+    right: 13px;
+    bottom: 11px;
+    min-height: 24px;
+    padding: 0 10px;
+    border: 1px solid var(--color-status-success);
+    border-radius: 999px;
+    color: var(--color-status-success);
+    background: var(--color-surface-1);
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .done-button:hover,
+  .done-button:focus-visible {
+    color: var(--color-app-bg);
+    background: var(--color-status-success);
+  }
+
+  .inbox-item-row:has(.done-button) .inbox-item {
+    padding-right: 82px;
   }
 
   :global([data-theme="memphis"]) .inbox-item {
@@ -507,11 +551,11 @@
     box-shadow: 3px 3px 0 var(--color-border-default);
   }
 
-  :global([data-theme="memphis"]) .inbox-item + .inbox-item {
+  :global([data-theme="memphis"]) .inbox-item-row + .inbox-item-row {
     border-top: 2px solid var(--color-border-default);
   }
 
-  :global([data-theme="memphis"]) .inbox-item.selected {
+  :global([data-theme="memphis"]) .inbox-item-row.selected .inbox-item {
     transform: translate(-1px, -1px);
     background: color-mix(in srgb, var(--color-accent-primary) 14%, var(--color-surface-1));
     box-shadow: 4px 4px 0 var(--color-border-default);
@@ -557,6 +601,14 @@
   .status-dot.reviewed {
     border: 1.5px solid var(--color-status-success);
     background: transparent;
+  }
+
+  :global([data-theme="memphis"]) .done-button {
+    right: 16px;
+    bottom: 15px;
+    border-width: 2px;
+    border-radius: 7px;
+    box-shadow: 2px 2px 0 var(--color-border-default);
   }
 
   .status-dot.spinning {
