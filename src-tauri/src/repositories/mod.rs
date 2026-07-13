@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod card_notes;
 pub mod notes;
 pub mod parse_jobs;
 pub mod tags;
@@ -6,6 +7,7 @@ pub mod tags;
 use chrono::{DateTime, SecondsFormat, Utc};
 
 pub use actions::ActionItemRepository;
+pub use card_notes::CardNoteRepository;
 pub use notes::NoteRepository;
 pub use parse_jobs::ParseJobRepository;
 pub use tags::TagRepository;

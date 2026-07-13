@@ -23,12 +23,15 @@
   let followupOpen = $state(false);
   let followupText = $state("");
   let followupLane = $state("");
+  let cardNoteOpen = $state(false);
+  let cardNoteText = $state("");
   let currentNoteId = $state<string | null>(null);
   let reparseFeedbackInput = $state<HTMLTextAreaElement | null>(null);
 
   const suggestedActions = $derived(note?.actionItems.filter((action) => action.status === "suggested") ?? []);
   const acceptedActions = $derived(note?.actionItems.filter((action) => action.status === "accepted") ?? []);
   const doneActions = $derived(note?.actionItems.filter((action) => action.status === "done") ?? []);
+  const cardNotes = $derived(note?.cardNotes ?? []);
 
   const dispatch = createEventDispatcher<{
     retryParse: void;
@@ -42,6 +45,7 @@
     completeAction: string;
     reopenAction: string;
     createFollowup: { text: string; lane: string | null; done: () => void };
+    addCardNote: { text: string; done: () => void };
     saveCleaned: { title: string; summary: string; cleanedText: string; done: () => void };
     saveRaw: { rawText: string; done: () => void };
   }>();
@@ -61,6 +65,8 @@
       followupOpen = false;
       followupText = "";
       followupLane = "";
+      cardNoteOpen = false;
+      cardNoteText = "";
     }
   });
 
@@ -235,6 +241,26 @@
     });
   }
 
+  function dispatchAddCardNote(event: SubmitEvent) {
+    event.preventDefault();
+    const text = cardNoteText.trim();
+    if (!text) {
+      return;
+    }
+
+    const noteId = currentNoteId;
+    dispatch("addCardNote", {
+      text,
+      done: () => {
+        if (currentNoteId !== noteId) {
+          return;
+        }
+        cardNoteText = "";
+        cardNoteOpen = false;
+      },
+    });
+  }
+
   function actionMeta(action: ActionItem): string {
     return [action.owner ? `@${action.owner}` : null, action.dueDate ? formatDue(action.dueDate) : null]
       .filter(Boolean)
@@ -284,6 +310,9 @@
         {/if}
         <button class="ghost-button" type="button" onclick={openReparseDialog} disabled={loading}>
           Reparse with feedback
+        </button>
+        <button class="ghost-button" type="button" onclick={() => (cardNoteOpen = true)} disabled={loading}>
+          Add note
         </button>
         {#if note.isArchived}
           <button class="ghost-button" type="button" onclick={() => dispatch("restoreNote")} disabled={loading}>
@@ -338,6 +367,25 @@
         </form>
       {/if}
 
+      {#if cardNoteOpen}
+        <form class="card-note-form" aria-label="Add card note" onsubmit={dispatchAddCardNote}>
+          <label>
+            <span>Note</span>
+            <textarea
+              bind:value={cardNoteText}
+              aria-label="Card note"
+              disabled={loading}
+              placeholder="Add context, an update, or a decision…"
+              rows="3"
+            ></textarea>
+          </label>
+          <footer>
+            <button class="secondary-action" type="button" onclick={() => (cardNoteOpen = false)} disabled={loading}>Cancel</button>
+            <button class="primary-action" type="submit" disabled={loading || !cardNoteText.trim()}>Add note</button>
+          </footer>
+        </form>
+      {/if}
+
       {#if note.parseStatus === "failed"}
         <div class="detail-banner error">
           <strong>Parser failed</strong>
@@ -356,6 +404,13 @@
             </span>
           </div>
         </div>
+      {/if}
+
+      {#if note.completedAt && note.completionNote}
+        <section class="resolution-block" aria-label="Resolution note">
+          <span>Resolution</span>
+          <p>{note.completionNote}</p>
+        </section>
       {/if}
 
       {#if note.summary && note.summary !== note.title}
@@ -414,6 +469,25 @@
         {:else}
           <p>Waiting for parser output.</p>
         {/if}
+      </section>
+
+      <section class="detail-section" aria-label="Card notes">
+        <div class="section-head">
+          <span>Notes</span>
+          <small>{cardNotes.length}</small>
+        </div>
+        <div class="card-notes">
+          {#if cardNotes.length === 0}
+            <p class="muted">No added notes</p>
+          {:else}
+            {#each cardNotes as cardNote}
+              <article class="card-note">
+                <p>{cardNote.text}</p>
+                <small>{formatDate(cardNote.createdAt)}</small>
+              </article>
+            {/each}
+          {/if}
+        </div>
       </section>
 
       <section class="detail-section" aria-label="Tags">
@@ -797,12 +871,18 @@
     box-shadow: 3px 3px 0 var(--color-border-default);
   }
 
-  .summary-block {
+  .summary-block,
+  .resolution-block {
     margin-bottom: 22px;
     padding: 10px 14px;
     border-left: 3px solid var(--color-accent-primary);
     border-radius: 0 8px 8px 0;
     background: color-mix(in srgb, var(--color-accent-primary) 10%, var(--color-surface-1));
+  }
+
+  .resolution-block {
+    border-left-color: var(--color-status-success);
+    background: color-mix(in srgb, var(--color-status-success) 10%, var(--color-surface-1));
   }
 
   :global([data-theme="memphis"]) .summary-block {
@@ -811,10 +891,12 @@
   }
 
   .summary-block span,
+  .resolution-block span,
   .section-head span,
   .reparse-dialog label span,
   .raw-editor label span,
-  .followup-form label span {
+  .followup-form label span,
+  .card-note-form label span {
     display: inline-flex;
     color: var(--color-accent-primary);
     font-size: 11px;
@@ -823,7 +905,8 @@
     text-transform: uppercase;
   }
 
-  .summary-block p {
+  .summary-block p,
+  .resolution-block p {
     margin-top: 4px;
     color: var(--color-text-primary);
     font-size: 14.5px;
@@ -981,6 +1064,27 @@
     background: color-mix(in srgb, var(--color-surface-1) 86%, transparent);
   }
 
+  .card-note-form {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 10px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-surface-1) 86%, transparent);
+  }
+
+  .card-note-form label {
+    display: grid;
+    gap: 5px;
+  }
+
+  .card-note-form footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   .followup-fields {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(120px, 180px);
@@ -1013,7 +1117,8 @@
   }
 
   .reparse-dialog textarea,
-  .raw-editor textarea {
+  .raw-editor textarea,
+  .card-note-form textarea {
     width: 100%;
     min-height: 118px;
     resize: vertical;
@@ -1029,7 +1134,8 @@
   }
 
   .reparse-dialog textarea:focus,
-  .raw-editor textarea:focus {
+  .raw-editor textarea:focus,
+  .card-note-form textarea:focus {
     border-color: var(--color-accent-primary);
   }
 
@@ -1076,6 +1182,32 @@
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
+  }
+
+  .card-notes {
+    display: grid;
+    gap: 8px;
+  }
+
+  .card-note {
+    display: grid;
+    gap: 5px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border-default);
+    border-radius: 7px;
+    background: var(--color-surface-1);
+  }
+
+  .card-note p {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .card-note small {
+    color: var(--color-text-muted);
+    font-size: 10.5px;
   }
 
   .tag,

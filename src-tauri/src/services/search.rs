@@ -1,6 +1,6 @@
 use crate::app_state::AppRepositories;
 use crate::domain::{
-    ActionItem, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, TagAssignment,
+    ActionItem, CardNote, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, TagAssignment,
 };
 
 use super::{ServiceError, ServiceResult};
@@ -10,6 +10,7 @@ pub struct NoteDetail {
     pub note: Note,
     pub tags: Vec<TagAssignment>,
     pub action_items: Vec<ActionItem>,
+    pub card_notes: Vec<CardNote>,
     pub parse_error: Option<String>,
 }
 
@@ -45,6 +46,7 @@ impl SearchService {
             })?;
         let tags = self.repositories.tags.list_for_note(id)?;
         let action_items = self.repositories.action_items.list_for_note(id)?;
+        let card_notes = self.repositories.card_notes.list_for_note(id)?;
         let parse_error = if note.parse_status == ParseStatus::Failed {
             self.repositories.parse_jobs.latest_error_for_note(id)?
         } else {
@@ -55,6 +57,7 @@ impl SearchService {
             note,
             tags,
             action_items,
+            card_notes,
             parse_error,
         })
     }

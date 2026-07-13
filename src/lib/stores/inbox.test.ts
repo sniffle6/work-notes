@@ -276,11 +276,37 @@ describe("createWorkNotesStore", () => {
     const store = createWorkNotesStore(api);
 
     await store.loadInbox();
-    await store.completeInboxNote("note-1");
+    await store.completeInboxNote("note-1", "Finance confirmed the corrected export.");
 
-    expect(api.completeNote).toHaveBeenCalledWith("note-1");
+    expect(api.completeNote).toHaveBeenCalledWith("note-1", "Finance confirmed the corrected export.");
     expect(get(store.inbox).map((item) => item.id)).toEqual(["note-2"]);
     expect(get(store.selectedNote)?.id).toBe("note-2");
+  });
+
+  it("adds a card note to the selected note", async () => {
+    const detail: NoteDetail = { ...note(), actionItems: [], cardNotes: [] };
+    const updated: NoteDetail = {
+      ...detail,
+      cardNotes: [
+        {
+          id: "card-note-1",
+          noteId: detail.id,
+          text: "Waiting for Finance confirmation.",
+          createdAt: "2026-07-13T14:00:00.000Z",
+        },
+      ],
+    };
+    const api = testApi({
+      getNote: vi.fn().mockResolvedValue(detail),
+      addCardNote: vi.fn().mockResolvedValue(updated),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote(detail.id);
+    await store.addCardNoteToSelectedNote("Waiting for Finance confirmation.");
+
+    expect(api.addCardNote).toHaveBeenCalledWith(detail.id, "Waiting for Finance confirmation.");
+    expect(get(store.selectedNote)?.cardNotes).toEqual(updated.cardNotes);
   });
 
   it("loads archived notes in archive mode only", async () => {
@@ -850,7 +876,7 @@ describe("nav summary", () => {
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
 
 function testApi(overrides: Partial<TestApi> = {}): TestApi {
-  const detail: NoteDetail = { ...note(), actionItems: [] };
+  const detail: NoteDetail = { ...note(), actionItems: [], cardNotes: [] };
 
   return {
     saveCaptureNote: vi.fn<(rawText: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
@@ -865,7 +891,8 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
       .mockResolvedValue(detail),
     updateNoteRaw: vi.fn<(noteId: string, rawText: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
     deleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
-    completeNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    completeNote: vi.fn<(noteId: string, completionNote: string | null) => Promise<void>>().mockResolvedValue(undefined),
+    addCardNote: vi.fn<(noteId: string, text: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
     reopenNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     restoreNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     permanentlyDeleteNote: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),

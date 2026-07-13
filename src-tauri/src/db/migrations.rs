@@ -15,7 +15,16 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           parse_status TEXT NOT NULL,
           review_status TEXT NOT NULL,
           is_archived INTEGER NOT NULL DEFAULT 0,
-          completed_at TEXT
+          completed_at TEXT,
+          completion_note TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS card_notes (
+          id TEXT PRIMARY KEY,
+          note_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -94,6 +103,8 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           ON notes(review_status);
         CREATE INDEX IF NOT EXISTS idx_note_tags_tag_id
           ON note_tags(tag_id);
+        CREATE INDEX IF NOT EXISTS idx_card_notes_note_id_created_at
+          ON card_notes(note_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_action_items_note_id
           ON action_items(note_id);
         CREATE INDEX IF NOT EXISTS idx_parse_jobs_status_created_at
@@ -131,6 +142,12 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
         "cleaned_edited INTEGER NOT NULL DEFAULT 0",
     )?;
     ensure_column(connection, "notes", "completed_at", "completed_at TEXT")?;
+    ensure_column(
+        connection,
+        "notes",
+        "completion_note",
+        "completion_note TEXT",
+    )?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_action_items_status_followup_state
          ON action_items(status, followup_state)",

@@ -88,15 +88,15 @@ impl NoteRepository {
         Ok(())
     }
 
-    pub fn complete(&self, id: NoteId) -> RepositoryResult<()> {
+    pub fn complete(&self, id: NoteId, completion_note: Option<&str>) -> RepositoryResult<()> {
         let id_text = id.to_string();
         let now = now_db_string();
         let connection = self.db.connection()?;
         let changed = connection.execute(
             "UPDATE notes
-             SET completed_at = ?2, is_archived = 0, updated_at = ?2
+             SET completed_at = ?2, completion_note = ?3, is_archived = 0, updated_at = ?2
              WHERE id = ?1",
-            params![id_text, now],
+            params![id_text, now, completion_note],
         )?;
 
         if changed == 0 {
@@ -153,6 +153,10 @@ impl NoteRepository {
         let transaction = connection.transaction()?;
 
         transaction.execute(
+            "DELETE FROM card_notes WHERE note_id = ?1",
+            params![&id_text],
+        )?;
+        transaction.execute(
             "DELETE FROM note_tags WHERE note_id = ?1",
             params![&id_text],
         )?;
@@ -192,7 +196,7 @@ impl NoteRepository {
             .query_row(
                 "SELECT id, title, raw_text, cleaned_text, summary, created_at, updated_at,
                         capture_source, parse_status, review_status, is_archived, completed_at,
-                        cleaned_edited
+                        completion_note, cleaned_edited
                  FROM notes
                  WHERE id = ?1",
                 [id_text],
@@ -503,6 +507,7 @@ struct NoteRecord {
     review_status: String,
     is_archived: i64,
     completed_at: Option<String>,
+    completion_note: Option<String>,
     cleaned_edited: i64,
 }
 
@@ -521,7 +526,8 @@ impl NoteRecord {
             review_status: row.get(9)?,
             is_archived: row.get(10)?,
             completed_at: row.get(11)?,
-            cleaned_edited: row.get(12)?,
+            completion_note: row.get(12)?,
+            cleaned_edited: row.get(13)?,
         })
     }
 
@@ -539,6 +545,7 @@ impl NoteRecord {
             review_status: ReviewStatus::from_db(&self.review_status)?,
             is_archived: self.is_archived != 0,
             completed_at: optional_db_datetime("completed_at", self.completed_at)?,
+            completion_note: self.completion_note,
             cleaned_edited: self.cleaned_edited != 0,
         })
     }
@@ -750,10 +757,16 @@ mod tests {
         let _keep_db_alive = db;
         let note = notes.create_raw_note("finish this").expect("create note");
 
-        notes.complete(note.id).expect("complete note");
+        notes
+            .complete(note.id, Some("Deployed and verified."))
+            .expect("complete note");
 
         let completed = notes.get(note.id).expect("get note").expect("note exists");
         assert!(completed.completed_at.is_some());
+        assert_eq!(
+            completed.completion_note.as_deref(),
+            Some("Deployed and verified.")
+        );
         assert!(!completed.is_archived);
         assert!(notes
             .list_inbox(InboxFilters::default())
@@ -767,7 +780,7 @@ mod tests {
         let _keep_db_alive = db;
         let note = notes.create_raw_note("finish this").expect("create note");
 
-        notes.complete(note.id).expect("complete note");
+        notes.complete(note.id, None).expect("complete note");
         let completed = notes
             .list_inbox(InboxFilters {
                 include_completed: true,
@@ -793,6 +806,7 @@ mod tests {
         let tags = TagRepository::new(db.clone());
         let actions = ActionItemRepository::new(db.clone());
         let parse_jobs = ParseJobRepository::new(db.clone());
+        let card_notes = crate::repositories::CardNoteRepository::new(db.clone());
         let note = notes.create_raw_note("delete me").expect("create note");
 
         let tag = tags.upsert("cleanup", TagKind::Topic).expect("create tag");
@@ -801,6 +815,9 @@ mod tests {
             .expect("add action");
         tags.apply_to_note(note.id, tag.id, "parser", Some(0.8))
             .expect("tag note");
+        card_notes
+            .add(note.id, "Temporary investigation note")
+            .expect("add card note");
 
         parse_jobs
             .record_run(note.id, "test", "test-v1", "raw response", "{}", None)
@@ -814,6 +831,7 @@ mod tests {
         let connection = db.connection().expect("connect db");
         for table in [
             "note_tags",
+            "card_notes",
             "action_items",
             "parse_jobs",
             "parse_runs",

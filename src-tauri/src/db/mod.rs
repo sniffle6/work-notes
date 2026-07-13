@@ -65,6 +65,7 @@ mod tests {
         for table in [
             "notes",
             "notes_fts",
+            "card_notes",
             "tags",
             "note_tags",
             "action_items",
@@ -112,6 +113,12 @@ mod tests {
         assert!(
             note_columns.iter().any(|column| column == "completed_at"),
             "notes.completed_at should exist"
+        );
+        assert!(
+            note_columns
+                .iter()
+                .any(|column| column == "completion_note"),
+            "notes.completion_note should exist"
         );
     }
 }

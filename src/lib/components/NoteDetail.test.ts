@@ -98,6 +98,41 @@ describe("NoteDetail", () => {
     expect(reopenNote).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the resolution on a completed note", () => {
+    render(NoteDetail, {
+      props: {
+        note: {
+          ...noteDetail(),
+          completedAt: "2026-07-10T14:00:00.000Z",
+          completionNote: "Robert confirmed local inference meets the privacy requirement.",
+        },
+      },
+    });
+
+    expect(screen.getByRole("region", { name: "Resolution note" })).toBeTruthy();
+    expect(screen.getByText("Robert confirmed local inference meets the privacy requirement.")).toBeTruthy();
+  });
+
+  it("adds a timestamped card note without clearing until the save completes", async () => {
+    const addCardNote = vi.fn();
+    render(NoteDetail, {
+      props: { note: noteDetail() },
+      events: { addCardNote },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    const input = screen.getByLabelText<HTMLTextAreaElement>("Card note");
+    await fireEvent.input(input, { target: { value: "  Waiting for Robert's benchmark.  " } });
+    await fireEvent.click(within(screen.getByRole("form", { name: "Add card note" })).getByRole("button", { name: "Add note" }));
+
+    expect(addCardNote.mock.calls[0][0].detail.text).toBe("Waiting for Robert's benchmark.");
+    expect(input.value).toBe("  Waiting for Robert's benchmark.  ");
+
+    addCardNote.mock.calls[0][0].detail.done();
+    await tick();
+    expect(screen.queryByLabelText("Card note")).toBeNull();
+  });
+
   it("dispatches manual follow-up text and lane without clearing until done", async () => {
     const createFollowup = vi.fn();
 

@@ -1,6 +1,6 @@
 use crate::db::{Database, DatabaseError};
 use crate::repositories::{
-    ActionItemRepository, NoteRepository, ParseJobRepository, TagRepository,
+    ActionItemRepository, CardNoteRepository, NoteRepository, ParseJobRepository, TagRepository,
 };
 use crate::services::draft::DraftService;
 use crate::services::parse_queue::{ParseQueueConfig, ParserProviderConfig};
@@ -49,6 +49,7 @@ pub struct AppRepositories {
     pub notes: NoteRepository,
     pub tags: TagRepository,
     pub action_items: ActionItemRepository,
+    pub card_notes: CardNoteRepository,
     pub parse_jobs: ParseJobRepository,
 }
 
@@ -59,6 +60,7 @@ impl AppRepositories {
             notes: NoteRepository::new(database.clone()),
             tags: TagRepository::new(database.clone()),
             action_items: ActionItemRepository::new(database.clone()),
+            card_notes: CardNoteRepository::new(database.clone()),
             parse_jobs: ParseJobRepository::new(database),
         }
     }

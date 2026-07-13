@@ -2,6 +2,7 @@ import { derived, get, writable } from "svelte/store";
 
 import {
   acceptActionItem,
+  addCardNote,
   completeActionItem,
   completeNote,
   createManualFollowup,
@@ -61,6 +62,7 @@ type WorkNotesApi = {
   updateNoteRaw: typeof updateNoteRaw;
   deleteNote: typeof deleteNote;
   completeNote: typeof completeNote;
+  addCardNote: typeof addCardNote;
   reopenNote: typeof reopenNote;
   restoreNote: typeof restoreNote;
   permanentlyDeleteNote: typeof permanentlyDeleteNote;
@@ -87,6 +89,7 @@ const defaultApi: WorkNotesApi = {
   updateNoteRaw,
   deleteNote,
   completeNote,
+  addCardNote,
   reopenNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -590,14 +593,14 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await refreshNavSummary();
   }
 
-  async function completeInboxNote(noteId: string): Promise<void> {
+  async function completeInboxNote(noteId: string, completionNote: string | null): Promise<void> {
     const currentItems = get(inbox);
     const completedIndex = currentItems.findIndex((item) => item.id === noteId);
 
     error.set(null);
 
     try {
-      await api.completeNote(noteId);
+      await api.completeNote(noteId, completionNote);
       if (get(selectedNote)?.id === noteId) {
         selectedNote.set(null);
       }
@@ -607,6 +610,23 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not complete note."));
+    }
+  }
+
+  async function addCardNoteToSelectedNote(text: string): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+    try {
+      selectedNote.set(await api.addCardNote(note.id, text));
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not add note."));
+    } finally {
+      loadingNote.set(false);
     }
   }
 
@@ -872,6 +892,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     saveRawEdit,
     deleteSelectedNote,
     completeInboxNote,
+    addCardNoteToSelectedNote,
     showInbox,
     showDone,
     showArchive,

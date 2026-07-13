@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
 use crate::domain::{
-    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState,
-    InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus, Tag, TagAssignment, TagId,
-    TagKind,
+    ActionItem, ActionItemId, ActionReviewItem, ActionStatus, CardNote, FollowupItem,
+    FollowupState, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus, Tag,
+    TagAssignment, TagId, TagKind,
 };
 use crate::repositories::RepositoryError;
 use crate::services::actions::ActionItemService;
@@ -136,9 +136,11 @@ pub struct NoteDetailDto {
     pub review_status: ReviewStatus,
     pub is_archived: bool,
     pub completed_at: Option<DateTime<Utc>>,
+    pub completion_note: Option<String>,
     pub cleaned_edited: bool,
     pub tags: Vec<TagAssignmentDto>,
     pub action_items: Vec<ActionItemDto>,
+    pub card_notes: Vec<CardNoteDto>,
     pub parse_error: Option<String>,
 }
 
@@ -158,9 +160,11 @@ impl From<NoteDetail> for NoteDetailDto {
             review_status: note.review_status,
             is_archived: note.is_archived,
             completed_at: note.completed_at,
+            completion_note: note.completion_note,
             cleaned_edited: note.cleaned_edited,
             tags: detail.tags.into_iter().map(Into::into).collect(),
             action_items: detail.action_items.into_iter().map(Into::into).collect(),
+            card_notes: detail.card_notes.into_iter().map(Into::into).collect(),
             parse_error: detail.parse_error,
         }
     }
@@ -181,10 +185,32 @@ impl From<Note> for NoteDetailDto {
             review_status: note.review_status,
             is_archived: note.is_archived,
             completed_at: note.completed_at,
+            completion_note: note.completion_note,
             cleaned_edited: note.cleaned_edited,
             tags: Vec::new(),
             action_items: Vec::new(),
+            card_notes: Vec::new(),
             parse_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardNoteDto {
+    pub id: String,
+    pub note_id: String,
+    pub text: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<CardNote> for CardNoteDto {
+    fn from(note: CardNote) -> Self {
+        Self {
+            id: note.id.to_string(),
+            note_id: note.note_id.to_string(),
+            text: note.text,
+            created_at: note.created_at,
         }
     }
 }
@@ -499,10 +525,29 @@ pub async fn delete_note(
 pub async fn complete_note(
     state: tauri::State<'_, AppState>,
     note_id: String,
+    completion_note: Option<String>,
 ) -> Result<(), CommandError> {
     let note_id = parse_note_id(&note_id)?;
-    state.repositories.notes.complete(note_id)?;
+    let completion_note = optional_user_note(completion_note)?;
+    state
+        .repositories
+        .notes
+        .complete(note_id, completion_note.as_deref())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn add_card_note(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+    text: String,
+) -> Result<NoteDetailDto, CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    let text = required_user_note(&text)?;
+    SearchService::new(state.repositories.clone()).get_note(note_id)?;
+    state.repositories.card_notes.add(note_id, text)?;
+    let detail = SearchService::new(state.repositories.clone()).get_note(note_id)?;
+    Ok(detail.into())
 }
 
 #[tauri::command]
@@ -698,10 +743,30 @@ fn parse_action_item_id(id: &str) -> Result<ActionItemId, CommandError> {
     ActionItemId::parse(id).map_err(|_| CommandError::invalid_input("invalid action item id"))
 }
 
+const MAX_USER_NOTE_CHARS: usize = 4_000;
+
+fn required_user_note(value: &str) -> Result<&str, CommandError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(CommandError::invalid_input("note text is required"));
+    }
+    if value.chars().count() > MAX_USER_NOTE_CHARS {
+        return Err(CommandError::invalid_input("note text is too long"));
+    }
+    Ok(value)
+}
+
+fn optional_user_note(value: Option<String>) -> Result<Option<String>, CommandError> {
+    value
+        .map(|value| required_user_note(&value).map(str::to_string))
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::commands::{
-        ActionReviewItemDto, AppSettingsDto, CommandError, FollowupItemDto, NoteListItemDto,
+        optional_user_note, required_user_note, ActionReviewItemDto, AppSettingsDto, CommandError,
+        FollowupItemDto, NoteListItemDto,
     };
     use crate::domain::{
         ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState, NoteId,
@@ -710,6 +775,17 @@ mod tests {
     use crate::services::ServiceError;
     use chrono::Utc;
     use serde_json::json;
+
+    #[test]
+    fn user_note_validation_trims_and_limits_text() {
+        assert_eq!(required_user_note("  resolved  ").unwrap(), "resolved");
+        assert_eq!(
+            optional_user_note(Some("  shipped  ".to_string())).unwrap(),
+            Some("shipped".to_string())
+        );
+        assert!(required_user_note("   ").is_err());
+        assert!(required_user_note(&"x".repeat(4_001)).is_err());
+    }
 
     #[test]
     fn command_dtos_serialize_camel_case_fields() {

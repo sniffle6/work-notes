@@ -20,7 +20,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `src/routes/+page.svelte`: top-level route, window-label branching, quick-capture focus event subscription, note-captured event emission.
 - `src/lib/api.ts`: the only frontend module that invokes Tauri commands. It also normalizes DTOs and provides browser fallback data.
 - `src/lib/types.ts`: frontend note, tag, action item, filter, and settings types.
-- `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, parse retry, note completion, delete/archive, action status changes, filters, and settings.
+- `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, card notes, parse retry, note completion and resolution, delete/archive, action status changes, filters, and settings.
 - `src/lib/stores/filters.ts`: filter creation and client-side matching helpers used by tests and fallback paths.
 - `src/lib/events.ts`: named frontend/native event contract.
 - `src/lib/markdown.ts`: small Markdown renderer for parser-cleaned notes.
@@ -33,7 +33,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `InboxList.svelte`: inbox rows, Notes/Actions modes, search, status/tag filters, selection, and suggested-action counts.
 - `today.ts`: calendar projection module that turns each action item into linked captured, due, and completed occurrences, including same-day merging and month counts.
 - `TodayView.svelte`: month calendar that renders projected action-item lifecycle occurrences; defaults to the current day and exposes accept, complete, and reopen controls.
-- `NoteDetail.svelte`: title, raw/Markdown cleaned text, summary, tags, suggested actions, parse retry, reparse feedback, delete event.
+- `NoteDetail.svelte`: title, raw/Markdown cleaned text, summary, user-added card notes, completion resolution, tags, suggested actions, parse retry, reparse feedback, delete event.
 - `MarkdownView.svelte`: renders parser-provided Markdown safely for note detail.
 - `QuickCapturePanel.svelte`: compact note entry; preserves `Enter`, `Shift+Enter`, and `Esc` behavior.
 - `ReviewQueue.svelte`: standalone accept/dismiss surface for suggested action items; current main flow reviews actions through the inbox Actions mode and note detail.
@@ -63,6 +63,7 @@ SQLite is opened from the app data directory described in `docs/development.md`:
 Core tables:
 
 - `notes`: title, raw and derived note fields, parse status, review status, archive flag, and note completion timestamp.
+- `card_notes`: timestamped user-added context attached to a note.
 - `notes_fts`: FTS5 index over raw text, cleaned text, and summary.
 - `tags` and `note_tags`: normalized tags and note assignments.
 - `action_items`: parser-suggested or user-managed actions, including open/done lifecycle state and the timestamp recorded when work is completed.
@@ -82,6 +83,7 @@ retry_parse
 retry_parse_with_feedback
 delete_note
 complete_note
+add_card_note
 reopen_note
 accept_action_item
 dismiss_action_item
@@ -93,7 +95,8 @@ hide_quick_capture
 Rust DTOs serialize with camelCase for frontend ergonomics. Inbox rows include `actionItemCount` and `suggestedActionItemCount` so the frontend can render action counts and the Actions mode without fetching every note detail. Parser JSON also uses camelCase. Backend domain enums serialize as snake_case status strings.
 
 `delete_note` is a soft-delete/archive command: it marks the note archived through `is_archived` rather than removing the SQLite row.
-`complete_note` records `completed_at` and removes the note from the active inbox without archiving or deleting it.
+`complete_note` records `completed_at` plus an optional completion resolution and removes the note from the active inbox without archiving or deleting it.
+`add_card_note` appends timestamped user context to an existing note without changing its parser-derived fields.
 `reopen_note` clears `completed_at` and returns a completed note to the active inbox.
 
 ## Native Runtime

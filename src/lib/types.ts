@@ -10,6 +10,13 @@ export type ActionStatus = "suggested" | "accepted" | "dismissed" | "done";
 
 export type ActionItemStatus = ActionStatus;
 
+export type CardNote = {
+  id: string;
+  noteId: string;
+  text: string;
+  createdAt: string;
+};
+
 export type FollowupState = "open" | "waiting" | "blocked";
 
 export type FollowupDisplayState = FollowupState | "done";
@@ -85,6 +92,7 @@ export type NoteListItem = {
   reviewStatus: ReviewStatus;
   isArchived?: boolean;
   completedAt?: string | null;
+  completionNote?: string | null;
   tags: Tag[];
   actionItemCount: number;
   suggestedActionItemCount: number;
@@ -92,6 +100,7 @@ export type NoteListItem = {
 
 export type NoteDetail = NoteListItem & {
   actionItems: ActionItem[];
+  cardNotes?: CardNote[];
   parseError?: string | null;
   cleanedEdited?: boolean;
 };

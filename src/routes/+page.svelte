@@ -356,6 +356,15 @@
     }
   }
 
+  async function addCardNoteFromNote(event: CustomEvent<{ text: string; done: () => void }>) {
+    try {
+      await workNotes.addCardNoteToSelectedNote(event.detail.text);
+      event.detail.done();
+    } catch {
+      // The store exposes the error; keep the form open so the user can retry.
+    }
+  }
+
   async function saveRawFromNote(event: CustomEvent<{ rawText: string; done: () => void }>) {
     try {
       await workNotes.saveRawEdit(event.detail.rawText);
@@ -494,7 +503,7 @@
             loading={$loadingInbox}
             viewMode={$viewMode}
             on:select={(event) => void workNotes.selectNote(event.detail)}
-            on:complete={(event) => void workNotes.completeInboxNote(event.detail)}
+            on:complete={(event) => void workNotes.completeInboxNote(event.detail.noteId, event.detail.completionNote)}
             on:filter={(event) => void workNotes.updateFilters(event.detail)}
           />
         {/if}
@@ -526,6 +535,7 @@
             on:completeAction={(event) => void workNotes.completeAction(event.detail)}
             on:reopenAction={(event) => void workNotes.reopenAction(event.detail)}
             on:createFollowup={(event) => void createFollowupFromNote(event)}
+            on:addCardNote={(event) => void addCardNoteFromNote(event)}
             on:saveCleaned={(event) => void saveCleanedFromNote(event)}
             on:saveRaw={(event) => void saveRawFromNote(event)}
           />

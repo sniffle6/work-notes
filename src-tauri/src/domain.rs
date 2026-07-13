@@ -54,6 +54,7 @@ macro_rules! id_type {
 }
 
 id_type!(NoteId);
+id_type!(CardNoteId);
 id_type!(TagId);
 id_type!(ActionItemId);
 id_type!(ParseJobId);
@@ -250,7 +251,16 @@ pub struct Note {
     pub review_status: ReviewStatus,
     pub is_archived: bool,
     pub completed_at: Option<DateTime<Utc>>,
+    pub completion_note: Option<String>,
     pub cleaned_edited: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardNote {
+    pub id: CardNoteId,
+    pub note_id: NoteId,
+    pub text: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

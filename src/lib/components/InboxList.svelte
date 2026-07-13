@@ -13,6 +13,8 @@
 
   let { items, filters, selectedId, loading = false, viewMode = "inbox" }: Props = $props();
   let mode = $state<"notes" | "actions">("notes");
+  let completionTargetId = $state<string | null>(null);
+  let completionNote = $state("");
 
   const availableTags = $derived(uniqueTags(items));
   const suggestedActionCount = $derived(items.reduce((total, item) => total + item.suggestedActionItemCount, 0));
@@ -23,7 +25,7 @@
 
   const dispatch = createEventDispatcher<{
     select: string;
-    complete: string;
+    complete: { noteId: string; completionNote: string | null };
     filter: Partial<InboxFilters>;
   }>();
 
@@ -131,6 +133,28 @@
   function suggestedActionLabel(count: number): string {
     return `${count} suggested ${count === 1 ? "action" : "actions"}`;
   }
+
+  function openCompletion(noteId: string) {
+    completionTargetId = noteId;
+    completionNote = "";
+  }
+
+  function cancelCompletion() {
+    completionTargetId = null;
+    completionNote = "";
+  }
+
+  function submitCompletion(event: SubmitEvent) {
+    event.preventDefault();
+    if (!completionTargetId) {
+      return;
+    }
+    dispatch("complete", {
+      noteId: completionTargetId,
+      completionNote: completionNote.trim() || null,
+    });
+    cancelCompletion();
+  }
 </script>
 
 <section class="inbox-list" aria-label="Inbox notes">
@@ -237,7 +261,7 @@
               class="done-button"
               type="button"
               aria-label={`Mark ${item.title} done`}
-              onclick={() => dispatch("complete", item.id)}
+              onclick={() => openCompletion(item.id)}
             >
               Done
             </button>
@@ -268,6 +292,35 @@
     {/if}
   </div>
 </section>
+
+{#if completionTargetId}
+  <div class="completion-backdrop" aria-hidden="true" onclick={cancelCompletion}></div>
+  <div class="completion-dialog" role="dialog" aria-modal="true" aria-label="Complete note">
+   <form onsubmit={submitCompletion}>
+    <header>
+      <div>
+        <span>Mark done</span>
+        <h2>{items.find((item) => item.id === completionTargetId)?.title ?? "Note"}</h2>
+      </div>
+      <button type="button" aria-label="Cancel completion" onclick={cancelCompletion}>x</button>
+    </header>
+    <label>
+      <span>Resolution note <small>optional</small></span>
+      <textarea
+        bind:value={completionNote}
+        aria-label="Resolution note"
+        placeholder="What was resolved or decided?"
+        rows="4"
+        disabled={loading}
+      ></textarea>
+    </label>
+    <footer>
+      <button class="secondary-action" type="button" onclick={cancelCompletion}>Cancel</button>
+      <button class="primary-action" type="submit" disabled={loading}>Mark done</button>
+    </footer>
+   </form>
+  </div>
+{/if}
 
 <style>
   .inbox-list {
@@ -819,6 +872,106 @@
   .empty-state p {
     margin-top: 4px;
     font-size: 12.5px;
+  }
+
+  .completion-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: color-mix(in srgb, var(--color-app-bg) 70%, rgba(0, 0, 0, 0.68));
+    backdrop-filter: blur(2px);
+  }
+
+  .completion-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 41;
+    display: grid;
+    width: min(520px, calc(100vw - 32px));
+    gap: 14px;
+    transform: translate(-50%, -50%);
+    border: 1px solid var(--color-border-default);
+    border-radius: 10px;
+    padding: 14px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-1);
+    box-shadow: 0 22px 44px -18px rgba(0, 0, 0, 0.58);
+  }
+
+  .completion-dialog header,
+  .completion-dialog footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .completion-dialog form {
+    display: contents;
+  }
+
+  .completion-dialog header span,
+  .completion-dialog label > span {
+    color: var(--color-accent-primary);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .completion-dialog label small {
+    color: var(--color-text-muted);
+    font-size: 10px;
+  }
+
+  .completion-dialog h2 {
+    margin-top: 3px;
+    font-size: 15px;
+  }
+
+  .completion-dialog label {
+    display: grid;
+    gap: 7px;
+  }
+
+  .completion-dialog textarea {
+    width: 100%;
+    min-height: 100px;
+    resize: vertical;
+    border: 1px solid var(--color-border-default);
+    border-radius: 8px;
+    outline: none;
+    padding: 10px;
+    color: var(--color-text-primary);
+    background: var(--color-surface-input);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .completion-dialog textarea:focus {
+    border-color: var(--color-accent-primary);
+  }
+
+  .completion-dialog footer {
+    justify-content: flex-end;
+  }
+
+  .completion-dialog footer button {
+    min-height: 30px;
+    padding: 0 12px;
+  }
+
+  .completion-dialog .primary-action {
+    color: var(--color-surface-1);
+    border-color: var(--color-accent-primary);
+    background: var(--color-accent-primary);
+  }
+
+  .completion-dialog .secondary-action {
+    color: var(--color-text-primary);
+    background: var(--color-surface-input);
   }
 
   @media (max-width: 980px) {

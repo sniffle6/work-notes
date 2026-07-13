@@ -5,6 +5,7 @@ import type {
   ActionItem,
   ActionReviewItem,
   AppSettings,
+  CardNote,
   FollowupItem,
   FollowupState,
   InboxFilters,
@@ -52,6 +53,7 @@ let fallbackNotes: NoteDetail[] = [
     actionItemCount: 0,
     suggestedActionItemCount: 0,
     actionItems: [],
+    cardNotes: [],
   },
   {
     id: "n-1024",
@@ -71,6 +73,7 @@ let fallbackNotes: NoteDetail[] = [
     ],
     actionItemCount: 4,
     suggestedActionItemCount: 2,
+    cardNotes: [],
     actionItems: [
       {
         id: "a-1024",
@@ -138,6 +141,7 @@ let fallbackNotes: NoteDetail[] = [
     actionItemCount: 0,
     suggestedActionItemCount: 0,
     actionItems: [],
+    cardNotes: [],
     parseError: "Codex parser timed out.",
   },
   {
@@ -154,6 +158,7 @@ let fallbackNotes: NoteDetail[] = [
     tags: [{ id: "tag-front-desk", name: "Front desk", kind: "project", source: "ai", confidence: 0.86 }],
     actionItemCount: 4,
     suggestedActionItemCount: 0,
+    cardNotes: [],
     actionItems: [
       {
         id: "a-1022",
@@ -297,8 +302,13 @@ export async function deleteNote(noteId: string): Promise<void> {
   await invokeCommand<void>("delete_note", { noteId });
 }
 
-export async function completeNote(noteId: string): Promise<void> {
-  await invokeCommand<void>("complete_note", { noteId });
+export async function completeNote(noteId: string, completionNote: string | null): Promise<void> {
+  await invokeCommand<void>("complete_note", { noteId, completionNote });
+}
+
+export async function addCardNote(noteId: string, text: string): Promise<NoteDetail> {
+  const note = await invokeCommand<unknown>("add_card_note", { noteId, text });
+  return normalizeNoteDetail(note);
 }
 
 export async function reopenNote(noteId: string): Promise<void> {
@@ -403,6 +413,7 @@ export const api = {
   updateNoteRaw,
   deleteNote,
   completeNote,
+  addCardNote,
   reopenNote,
   restoreNote,
   permanentlyDeleteNote,
@@ -474,6 +485,7 @@ function normalizeNoteListItem(value: unknown): NoteListItem {
     reviewStatus: normalizeReviewStatus(getString(record, "reviewStatus", "review_status")),
     isArchived: getBoolean(record, "isArchived", "is_archived") ?? false,
     completedAt: getNullableString(record, "completedAt", "completed_at"),
+    completionNote: getNullableString(record, "completionNote", "completion_note"),
     tags: getArray(record, "tags").map(normalizeTag),
     actionItemCount,
     suggestedActionItemCount,
@@ -490,10 +502,21 @@ function normalizeNoteDetail(value: unknown): NoteDetail {
   return {
     ...base,
     actionItems,
+    cardNotes: getArray(record, "cardNotes", "card_notes").map(normalizeCardNote),
     suggestedActionItemCount: actionItems.filter((item) => item.status === "suggested").length,
     actionItemCount: actionItems.length || base.actionItemCount,
     parseError: getNullableString(record, "parseError", "parse_error", "lastError", "last_error"),
     cleanedEdited: getBoolean(record, "cleanedEdited", "cleaned_edited") ?? false,
+  };
+}
+
+function normalizeCardNote(value: unknown): CardNote {
+  const record = asRecord(value);
+  return {
+    id: getString(record, "id") ?? crypto.randomUUID(),
+    noteId: getString(record, "noteId", "note_id") ?? "",
+    text: getString(record, "text") ?? "",
+    createdAt: getString(record, "createdAt", "created_at") ?? fallbackNow,
   };
 }
 
@@ -612,6 +635,7 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
         actionItemCount: 0,
         suggestedActionItemCount: 0,
         actionItems: [],
+        cardNotes: [],
       };
       fallbackNotes = [note, ...fallbackNotes];
       return normalizeNoteListItem(note) as T;
@@ -691,10 +715,27 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       const note = fallbackNotes.find((item) => item.id === args?.noteId);
       if (note) {
         note.completedAt = new Date().toISOString();
+        note.completionNote = typeof args?.completionNote === "string" ? args.completionNote : null;
         note.isArchived = false;
         note.updatedAt = note.completedAt;
       }
       return undefined as T;
+    }
+    case "add_card_note": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (!note) {
+        throw new Error("note not found");
+      }
+      const text = String(args?.text ?? "").trim();
+      note.cardNotes ??= [];
+      note.cardNotes.push({
+        id: crypto.randomUUID(),
+        noteId: note.id,
+        text,
+        createdAt: new Date().toISOString(),
+      });
+      note.updatedAt = new Date().toISOString();
+      return normalizeNoteDetail(note) as T;
     }
     case "reopen_note": {
       const note = fallbackNotes.find((item) => item.id === args?.noteId);

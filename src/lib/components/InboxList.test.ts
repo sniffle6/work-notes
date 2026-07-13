@@ -83,7 +83,7 @@ describe("InboxList", () => {
     expect(screen.getByText("Parsing")).toBeTruthy();
   });
 
-  it("offers Done on active inbox rows and dispatches the note id", async () => {
+  it("captures an optional resolution before completing an active inbox row", async () => {
     const complete = vi.fn();
 
     render(InboxList, {
@@ -96,8 +96,15 @@ describe("InboxList", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Mark Maria dashboard owner done" }));
+    await fireEvent.input(screen.getByLabelText("Resolution note"), {
+      target: { value: "  Maria took ownership of the dashboard.  " },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Mark done" }));
 
-    expect(complete.mock.calls[0][0].detail).toBe("n1");
+    expect(complete.mock.calls[0][0].detail).toEqual({
+      noteId: "n1",
+      completionNote: "Maria took ownership of the dashboard.",
+    });
   });
 
   it("does not offer Done for archived rows", () => {
