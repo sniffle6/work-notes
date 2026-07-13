@@ -60,12 +60,13 @@ The parser provider invokes:
 codex exec `
   --ephemeral `
   --skip-git-repo-check `
+  --model gpt-5.6-luna `
   --output-schema schemas/parse-note.schema.json `
   -o <temporary parse-result.json> `
   -
 ```
 
-The app writes the parser prompt and raw note to stdin. The parser output is validated against `schemas/parse-note.schema.json` before it is applied. Current parser output includes a short inbox title, Markdown `cleanedText`, a summary, tags, and suggested action items.
+The app pins `gpt-5.6-luna`, writes the parser prompt and raw note to stdin, and validates parser output against `schemas/parse-note.schema.json` before applying it. Current parser output includes a short inbox title, Markdown `cleanedText`, a summary, tags, and suggested action items.
 
 Settings include:
 

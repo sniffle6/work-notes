@@ -20,6 +20,7 @@ pub const DEFAULT_CODEX_PROGRAM: &str = "codex.cmd";
 #[cfg(not(windows))]
 pub const DEFAULT_CODEX_PROGRAM: &str = "codex";
 pub const DEFAULT_SCHEMA_PATH: &str = "schemas/parse-note.schema.json";
+pub const DEFAULT_MODEL: &str = "gpt-5.6-luna";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_SCHEMA_JSON: &str = include_str!("../../../schemas/parse-note.schema.json");
 
@@ -62,6 +63,8 @@ impl CodexCommandBuilder {
                 "exec".to_string(),
                 "--ephemeral".to_string(),
                 "--skip-git-repo-check".to_string(),
+                "--model".to_string(),
+                DEFAULT_MODEL.to_string(),
                 "-s".to_string(),
                 "read-only".to_string(),
                 "--output-schema".to_string(),
@@ -419,7 +422,7 @@ fn read_parser_result(output_path: PathBuf) -> Result<ParserOutput, CodexParserE
 mod tests {
     use super::{
         default_schema_arg_path, CodexCommandBuilder, CodexParserProvider, DEFAULT_CODEX_PROGRAM,
-        DEFAULT_SCHEMA_PATH,
+        DEFAULT_MODEL, DEFAULT_SCHEMA_PATH,
     };
 
     #[test]
@@ -460,6 +463,8 @@ mod tests {
                 "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
+                "--model",
+                DEFAULT_MODEL,
                 "-s",
                 "read-only",
                 "--output-schema",

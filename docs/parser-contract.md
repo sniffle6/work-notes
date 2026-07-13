@@ -20,12 +20,15 @@ The provider invokes local Codex CLI with this shape:
 codex exec `
   --ephemeral `
   --skip-git-repo-check `
+  --model gpt-5.6-luna `
   --output-schema schemas/parse-note.schema.json `
   -o <temporary parse-result.json> `
   -
 ```
 
 On Windows the default configured executable is `codex.cmd`. The app writes the parser prompt and raw note to stdin, reads the output file, validates JSON against `schemas/parse-note.schema.json`, and deserializes the result before applying it.
+
+The parser pins `gpt-5.6-luna` rather than inheriting the user's global Codex model.
 
 Settings that affect later jobs:
 
