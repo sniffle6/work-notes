@@ -929,8 +929,19 @@
 
   .comment {
     display: grid;
-    gap: 4px;
-    margin-bottom: 16px;
+    gap: 8px;
+    padding: 14px 10px;
+    border-top: 1px solid var(--rule);
+  }
+
+  /* Every other comment is tinted from the text colour, so it follows the theme. */
+  .comment:nth-of-type(even) {
+    background: color-mix(in srgb, var(--color-text-muted) 7%, transparent);
+  }
+
+  .comment:last-of-type {
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
   }
 
   .comment-head strong {
