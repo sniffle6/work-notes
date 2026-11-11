@@ -43,6 +43,11 @@
     loadingIssue,
     savingIssue,
     error,
+    attachmentDownload,
+    attachmentThumbnails,
+    attachmentViewer,
+    openingAttachmentId,
+    downloadingAttachments,
     threads,
     activeThreadId,
     messages,
@@ -281,6 +286,20 @@
             issue={$selectedIssue}
             loading={$loadingIssue}
             saving={$savingIssue}
+            attachmentDownload={$attachmentDownload}
+            downloadingAttachments={$downloadingAttachments}
+            attachmentThumbnails={$attachmentThumbnails}
+            attachmentViewer={$attachmentViewer}
+            openingAttachmentId={$openingAttachmentId}
+            on:openAttachment={(event) => void jira.openAttachment(event.detail)}
+            on:closeAttachmentViewer={() => jira.closeAttachmentViewer()}
+            preparePrompt={(issue) => jira.ticketPrompt(issue)}
+            on:downloadAttachments={(event) => {
+              if ($selectedIssue) {
+                void jira.downloadAttachments($selectedIssue.key, event.detail);
+              }
+            }}
+            on:revealAttachment={(event) => void jira.revealAttachment(event.detail)}
             on:transition={(event) => void jira.transitionSelected(event.detail)}
             on:assignToMe={() => void jira.assignSelectedToMe()}
             on:comment={async (event) => {

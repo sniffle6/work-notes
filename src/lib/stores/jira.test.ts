@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
 import type {
+  JiraAttachment,
   JiraChatMessage,
   JiraChatThread,
   JiraIssueDetail,
@@ -49,11 +50,25 @@ function detail(overrides: Partial<JiraIssueDetail> = {}): JiraIssueDetail {
     parentKey: null,
     subtasks: [],
     linkedIssues: [],
+    attachments: [],
     comments: [],
     transitions: [{ id: "11", name: "Start work", toStatus: "In Progress" }],
     ...overrides,
   };
 }
+
+const ATTACHMENTS: JiraAttachment[] = [
+  {
+    id: "10001",
+    filename: "bench.log",
+    mimeType: "text/plain",
+    size: 2048,
+    author: "Maya Lopez",
+    created: "2026-11-02T09:00:00.000Z",
+    hasThumbnail: false,
+  },
+  { id: "10002", filename: "photo.png", mimeType: null, size: 0, author: null, created: null, hasThumbnail: true },
+];
 
 function thread(overrides: Partial<JiraChatThread> = {}): JiraChatThread {
   return {
@@ -93,6 +108,17 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
       detail({ key, comments: [{ id: "c1", author: "Me", created: "now", body: "Verified" }] }),
     ),
     assignJiraIssueToMe: vi.fn(async (key: string) => detail({ key, assignee: "Sam Dev" })),
+    downloadJiraAttachments: vi.fn(async (key: string, attachmentIds: string[] | null) => ({
+      folder: `C:\\Downloads\\Work Notes\\${key}`,
+      files: ATTACHMENTS.filter((item) => !attachmentIds || attachmentIds.includes(item.id)).map((item) => ({
+        id: item.id,
+        filename: item.filename,
+        path: `C:\\Downloads\\Work Notes\\${key}\\${item.filename}`,
+      })),
+    })),
+    revealJiraAttachment: vi.fn(async () => undefined),
+    getJiraAttachmentThumbnail: vi.fn(async (attachmentId: string) => `blob:thumbnail-${attachmentId}`),
+    readJiraAttachmentImage: vi.fn(async (_key: string, attachmentId: string) => `blob:image-${attachmentId}`),
     listJiraChatThreads: vi.fn(async () => [thread()]),
     createJiraChatThread: vi.fn(async () => thread({ id: "thread-new" })),
     deleteJiraChatThread: vi.fn(async () => undefined),
@@ -114,6 +140,209 @@ function deferred<T>() {
 }
 
 describe("createJiraStore", () => {
+  describe("attachments", () => {
+    async function openWithAttachments(overrides: Partial<JiraApi> = {}) {
+      const api = fakeApi({
+        getJiraIssue: vi.fn(async (key: string) => detail({ key, attachments: ATTACHMENTS })),
+        ...overrides,
+      });
+      const store = createJiraStore(api);
+      await store.open();
+      return { api, store };
+    }
+
+    it("loads a thumbnail for each attachment of the open ticket that has one", async () => {
+      const { api, store } = await openWithAttachments();
+
+      await vi.waitFor(() =>
+        expect(get(store.attachmentThumbnails)).toEqual({ "10002": "blob:thumbnail-10002" }),
+      );
+      expect(api.getJiraAttachmentThumbnail).toHaveBeenCalledTimes(1);
+      expect(api.getJiraAttachmentThumbnail).toHaveBeenCalledWith("10002");
+    });
+
+    it("does not load a thumbnail again when the ticket is shown again", async () => {
+      const { api, store } = await openWithAttachments();
+      await vi.waitFor(() => expect(get(store.attachmentThumbnails)).toHaveProperty("10002"));
+
+      await store.commentOnSelected("Verified");
+      await store.selectIssue("AB-7");
+
+      expect(api.getJiraAttachmentThumbnail).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves out a thumbnail that fails to load without reporting an error", async () => {
+      const getJiraAttachmentThumbnail = vi.fn(async () => {
+        throw new Error("Jira returned 404 for attachment/thumbnail/10002");
+      });
+      const { store } = await openWithAttachments({
+        getJiraAttachmentThumbnail,
+        addJiraComment: vi.fn(async (key: string) => detail({ key, attachments: ATTACHMENTS })),
+      });
+      await vi.waitFor(() => expect(getJiraAttachmentThumbnail).toHaveBeenCalledTimes(1));
+
+      await store.commentOnSelected("Verified");
+
+      expect(get(store.attachmentThumbnails)).toEqual({});
+      expect(get(store.error)).toBeNull();
+      // A failed thumbnail is not asked for again.
+      expect(getJiraAttachmentThumbnail).toHaveBeenCalledTimes(1);
+    });
+
+    it("opens an attachment in the viewer after downloading it", async () => {
+      const { api, store } = await openWithAttachments();
+
+      await store.openAttachment("10002");
+
+      expect(api.downloadJiraAttachments).toHaveBeenCalledWith("AB-7", ["10002"]);
+      expect(api.readJiraAttachmentImage).toHaveBeenCalledWith("AB-7", "10002", null);
+      expect(get(store.attachmentViewer)).toEqual({
+        attachmentId: "10002",
+        filename: "photo.png",
+        url: "blob:image-10002",
+        path: "C:\\Downloads\\Work Notes\\AB-7\\photo.png",
+      });
+      expect(get(store.attachmentDownload)?.files.map((file) => file.id)).toEqual(["10002"]);
+      expect(get(store.openingAttachmentId)).toBeNull();
+    });
+
+    it("reports an attachment the viewer cannot show and opens nothing", async () => {
+      const { store } = await openWithAttachments({
+        readJiraAttachmentImage: vi.fn(async () => {
+          throw new Error("photo.png is too large to show in the app");
+        }),
+      });
+
+      await store.openAttachment("10002");
+
+      expect(get(store.attachmentViewer)).toBeNull();
+      expect(get(store.error)).toBe("photo.png is too large to show in the app");
+      expect(get(store.openingAttachmentId)).toBeNull();
+    });
+
+    it("does not read the image when its download fails", async () => {
+      const { api, store } = await openWithAttachments({
+        downloadJiraAttachments: vi.fn(async () => {
+          throw new Error("could not reach Jira: timed out");
+        }),
+      });
+
+      await store.openAttachment("10002");
+
+      expect(api.readJiraAttachmentImage).not.toHaveBeenCalled();
+      expect(get(store.attachmentViewer)).toBeNull();
+      expect(get(store.error)).toBe("could not reach Jira: timed out");
+    });
+
+    it("closes the viewer on request and when another ticket is opened", async () => {
+      const { store } = await openWithAttachments();
+      await store.openAttachment("10002");
+
+      store.closeAttachmentViewer();
+      expect(get(store.attachmentViewer)).toBeNull();
+
+      await store.openAttachment("10002");
+      await store.selectIssue("AB-8");
+      expect(get(store.attachmentViewer)).toBeNull();
+    });
+
+    it("downloads one attachment, then the rest, and keeps both results for the open ticket", async () => {
+      const { api, store } = await openWithAttachments();
+
+      await store.downloadAttachments("AB-7", "10002");
+
+      expect(api.downloadJiraAttachments).toHaveBeenCalledWith("AB-7", ["10002"]);
+      expect(get(store.attachmentDownload)?.files.map((file) => file.id)).toEqual(["10002"]);
+
+      await store.downloadAttachments("AB-7", "10001");
+
+      expect(get(store.attachmentDownload)?.files.map((file) => file.id)).toEqual(["10002", "10001"]);
+      expect(get(store.attachmentDownload)?.folder).toBe("C:\\Downloads\\Work Notes\\AB-7");
+      expect(get(store.downloadingAttachments)).toBe(false);
+    });
+
+    it("downloads every attachment when no id is given", async () => {
+      const { api, store } = await openWithAttachments();
+
+      const files = await store.downloadAttachments("AB-7");
+
+      expect(api.downloadJiraAttachments).toHaveBeenCalledWith("AB-7", null);
+      expect(files?.map((file) => file.filename)).toEqual(["bench.log", "photo.png"]);
+    });
+
+    it("shows downloads only for the ticket they belong to", async () => {
+      const { store } = await openWithAttachments();
+      await store.downloadAttachments("AB-7");
+
+      await store.selectIssue("AB-8");
+
+      expect(get(store.attachmentDownload)).toBeNull();
+    });
+
+    it("reports a failed download and stops showing it as running", async () => {
+      const { store } = await openWithAttachments({
+        downloadJiraAttachments: vi.fn(async () => {
+          throw new Error("attachment download failed: disk full");
+        }),
+      });
+
+      const files = await store.downloadAttachments("AB-7");
+
+      expect(files).toBeUndefined();
+      expect(get(store.error)).toBe("attachment download failed: disk full");
+      expect(get(store.downloadingAttachments)).toBe(false);
+      expect(get(store.attachmentDownload)).toBeNull();
+    });
+
+    it("builds the ticket prompt with the downloaded attachment paths", async () => {
+      const { api, store } = await openWithAttachments();
+      const open = get(store.selectedIssue);
+
+      const prompt = await store.ticketPrompt(open!);
+
+      expect(api.downloadJiraAttachments).toHaveBeenCalledWith("AB-7", null);
+      expect(prompt).toContain("- bench.log (2.0 KB, text/plain): C:\\Downloads\\Work Notes\\AB-7\\bench.log");
+      expect(prompt).toContain("- photo.png: C:\\Downloads\\Work Notes\\AB-7\\photo.png");
+    });
+
+    it("still builds the prompt when the download fails, and says what is missing", async () => {
+      const { store } = await openWithAttachments({
+        downloadJiraAttachments: vi.fn(async () => {
+          throw new Error("could not reach Jira: timed out");
+        }),
+      });
+
+      const prompt = await store.ticketPrompt(get(store.selectedIssue)!);
+
+      expect(prompt).toContain("The ticket has attachments that were not downloaded.");
+      expect(get(store.error)).toBe("could not reach Jira: timed out");
+    });
+
+    it("builds the prompt without downloading when the ticket has no attachments", async () => {
+      const api = fakeApi();
+      const store = createJiraStore(api);
+      await store.open();
+
+      const prompt = await store.ticketPrompt(get(store.selectedIssue)!);
+
+      expect(api.downloadJiraAttachments).not.toHaveBeenCalled();
+      expect(prompt).not.toContain("## Attachments");
+    });
+
+    it("reveals a downloaded file and reports when that fails", async () => {
+      const { api, store } = await openWithAttachments();
+
+      await store.revealAttachment("C:\\Downloads\\Work Notes\\AB-7\\bench.log");
+
+      expect(api.revealJiraAttachment).toHaveBeenCalledWith("C:\\Downloads\\Work Notes\\AB-7\\bench.log");
+
+      vi.mocked(api.revealJiraAttachment).mockRejectedValueOnce(new Error("file is gone"));
+      await store.revealAttachment("C:\\missing.log");
+
+      expect(get(store.error)).toBe("file is gone");
+    });
+  });
+
   it("does not query tickets until Jira is configured", async () => {
     const api = fakeApi({
       getJiraStatus: vi.fn(async () =>

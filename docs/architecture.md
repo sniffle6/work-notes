@@ -41,7 +41,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `QuickCapturePanel.svelte`: compact note entry; preserves `Enter`, `Shift+Enter`, and `Esc` behavior.
 - `ReviewQueue.svelte`: standalone accept/dismiss surface for suggested action items; current main flow reviews actions through the inbox Actions mode and note detail.
 - `JiraView.svelte`: Jira screen. Takes the Jira store and lays out the filter bar, ticket list, ticket pane, and agent chat; shows setup steps when Jira is not configured.
-- `JiraIssueDetail.svelte`: one ticket with transitions, description, comments, comment entry, and summary/description editing.
+- `JiraIssueDetail.svelte`: one ticket with transitions, description, attachments, comments, comment entry, and summary/description editing.
 - `JiraIssueForm.svelte`: new-ticket form, optionally prefilled from a note.
 - `JiraChat.svelte`: agent conversation, lookup results, and Approve/Reject controls for proposed changes.
 - `SettingsView.svelte`: hotkey, parser timeout, Codex command path, Jira site/project/filters, startup/tray, theme settings, and settings-save errors.
@@ -120,6 +120,9 @@ update_jira_issue
 transition_jira_issue
 add_jira_comment
 assign_jira_issue_to_me
+download_jira_attachments
+get_jira_attachment_thumbnail
+read_jira_attachment_image
 list_jira_chat_threads
 create_jira_chat_thread
 delete_jira_chat_thread

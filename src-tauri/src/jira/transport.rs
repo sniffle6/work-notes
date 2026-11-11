@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -6,6 +7,8 @@ use super::JiraError;
 
 const GATEWAY_ROOT: &str = "https://api.atlassian.com/ex/jira";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Attachments can be large, so a download gets longer than a JSON request.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_ERROR_MESSAGE_CHARS: usize = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,10 +28,14 @@ impl Method {
     }
 }
 
-/// Sends one request to `rest/api/3/{path}` and returns the JSON body.
-/// Empty success bodies are returned as `Value::Null`.
 pub trait JiraTransport {
+    /// Sends one request to `rest/api/3/{path}` and returns the JSON body.
+    /// Empty success bodies are returned as `Value::Null`.
     fn send(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value, JiraError>;
+
+    /// Streams the body of `GET rest/api/3/{path}` into `sink` and returns
+    /// the number of bytes written. A failure can leave `sink` partly written.
+    fn download(&self, path: &str, sink: &mut dyn Write) -> Result<u64, JiraError>;
 }
 
 #[derive(Clone)]
@@ -83,6 +90,25 @@ impl JiraTransport for GatewayTransport {
             return Ok(Value::Null);
         }
         serde_json::from_str(&text).map_err(|error| JiraError::InvalidResponse(error.to_string()))
+    }
+
+    fn download(&self, path: &str, sink: &mut dyn Write) -> Result<u64, JiraError> {
+        // Jira answers attachment content with a redirect to its media
+        // host. reqwest follows it and drops the Authorization header when
+        // the host changes, so the token still only reaches the gateway.
+        let mut response = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .basic_auth(&self.credentials.email, Some(&self.credentials.api_token))
+            .timeout(DOWNLOAD_TIMEOUT)
+            .send()
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let text = response.text().map_err(network_error)?;
+            return Err(error_from_response(Method::Get, path, status, &text));
+        }
+        std::io::copy(&mut response, sink).map_err(|error| JiraError::Download(error.to_string()))
     }
 }
 
@@ -232,6 +258,7 @@ fn error_message_from_body(body: &str) -> String {
 pub(crate) mod testing {
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::io::Write;
 
     use serde_json::Value;
 
@@ -246,9 +273,11 @@ pub(crate) mod testing {
     }
 
     /// Replays queued responses in call order and records each request.
+    /// Downloads replay from their own queue and are recorded as GETs.
     #[derive(Default)]
     pub(crate) struct FakeTransport {
         responses: RefCell<VecDeque<Result<Value, JiraError>>>,
+        downloads: RefCell<VecDeque<Result<Vec<u8>, JiraError>>>,
         requests: RefCell<Vec<RecordedRequest>>,
     }
 
@@ -256,8 +285,13 @@ pub(crate) mod testing {
         pub(crate) fn with_responses(responses: Vec<Result<Value, JiraError>>) -> Self {
             Self {
                 responses: RefCell::new(responses.into()),
-                requests: RefCell::new(Vec::new()),
+                ..Self::default()
             }
+        }
+
+        pub(crate) fn with_downloads(self, downloads: Vec<Result<Vec<u8>, JiraError>>) -> Self {
+            *self.downloads.borrow_mut() = downloads.into();
+            self
         }
 
         pub(crate) fn requests(&self) -> Vec<RecordedRequest> {
@@ -282,6 +316,22 @@ pub(crate) mod testing {
                 .pop_front()
                 .unwrap_or_else(|| panic!("no fake response queued for {} {path}", method.as_str()))
         }
+
+        fn download(&self, path: &str, sink: &mut dyn Write) -> Result<u64, JiraError> {
+            self.requests.borrow_mut().push(RecordedRequest {
+                method: Method::Get,
+                path: path.to_string(),
+                body: None,
+            });
+            let bytes = self
+                .downloads
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| panic!("no fake download queued for {path}"))?;
+            sink.write_all(&bytes)
+                .map_err(|error| JiraError::Download(error.to_string()))?;
+            Ok(bytes.len() as u64)
+        }
     }
 
     impl<T: JiraTransport> JiraTransport for &T {
@@ -292,6 +342,10 @@ pub(crate) mod testing {
             body: Option<&Value>,
         ) -> Result<Value, JiraError> {
             (**self).send(method, path, body)
+        }
+
+        fn download(&self, path: &str, sink: &mut dyn Write) -> Result<u64, JiraError> {
+            (**self).download(path, sink)
         }
     }
 }

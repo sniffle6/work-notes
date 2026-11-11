@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 
 import type { JiraIssueDetail as JiraIssue } from "$lib/types";
 import JiraIssueDetail from "./JiraIssueDetail.svelte";
@@ -29,6 +29,7 @@ function issue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     parentKey: null,
     subtasks: [],
     linkedIssues: [],
+    attachments: [],
     comments: [{ id: "c1", author: "Maya Lopez", created: "2026-11-02T09:00:00.000Z", body: "Reproduced on bench 1." }],
     transitions: [
       { id: "11", name: "Start work", toStatus: "In Progress" },
@@ -38,7 +39,284 @@ function issue(overrides: Partial<JiraIssue> = {}): JiraIssue {
   };
 }
 
+const ATTACHMENTS: JiraIssue["attachments"] = [
+  {
+    id: "10001",
+    filename: "bench.log",
+    mimeType: "text/plain",
+    size: 2048,
+    author: "Maya Lopez",
+    created: "2026-11-02T09:00:00.000Z",
+    hasThumbnail: false,
+  },
+  { id: "10002", filename: "photo.png", mimeType: null, size: 0, author: null, created: null, hasThumbnail: true },
+];
+const BENCH_LOG_PATH = "C:\\Downloads\\Work Notes\\AB-7\\bench.log";
+
 describe("JiraIssueDetail", () => {
+  describe("attachments", () => {
+    it("shows no attachments section for a ticket without any", () => {
+      render(JiraIssueDetail, { props: { issue: issue() } });
+
+      expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Download all" })).toBeNull();
+    });
+
+    it("lists each attachment with its size and author", () => {
+      render(JiraIssueDetail, { props: { issue: issue({ attachments: ATTACHMENTS }) } });
+
+      expect(screen.getByRole("heading", { name: "Attachments (2)" })).toBeTruthy();
+      expect(screen.getByText("bench.log")).toBeTruthy();
+      expect(screen.getByText(/2\.0 KB · Maya Lopez/)).toBeTruthy();
+      expect(screen.getByText("photo.png")).toBeTruthy();
+    });
+
+    it("asks for one attachment or all of them", async () => {
+      const downloadAttachments = vi.fn();
+      render(JiraIssueDetail, {
+        props: { issue: issue({ attachments: ATTACHMENTS }) },
+        events: { downloadAttachments },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Download photo.png" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Download all" }));
+
+      expect(downloadAttachments.mock.calls.map((call) => call[0].detail)).toEqual(["10002", null]);
+    });
+
+    it("offers to show a downloaded file instead of downloading it again", async () => {
+      const revealAttachment = vi.fn();
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ attachments: ATTACHMENTS }),
+          attachmentDownload: {
+            folder: "C:\\Downloads\\Work Notes\\AB-7",
+            files: [{ id: "10001", filename: "bench.log", path: BENCH_LOG_PATH }],
+          },
+        },
+        events: { revealAttachment },
+      });
+
+      expect(screen.queryByRole("button", { name: "Download bench.log" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Download photo.png" })).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole("button", { name: "Show bench.log in folder" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Show folder" }));
+
+      expect(revealAttachment.mock.calls.map((call) => call[0].detail)).toEqual([BENCH_LOG_PATH, BENCH_LOG_PATH]);
+    });
+
+    it("shows a loaded thumbnail, and clicking it asks to open the attachment in the app", async () => {
+      const downloadAttachments = vi.fn();
+      const openAttachment = vi.fn();
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ attachments: ATTACHMENTS }),
+          attachmentThumbnails: { "10002": "blob:thumbnail-10002" },
+        },
+        events: { downloadAttachments, openAttachment },
+      });
+
+      const preview = screen.getByRole("button", { name: "Open photo.png" });
+      expect(preview.querySelector("img")?.getAttribute("src")).toBe("blob:thumbnail-10002");
+      expect(screen.queryByRole("button", { name: "Open bench.log" })).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+
+      await fireEvent.click(preview);
+
+      expect(openAttachment.mock.calls.map((call) => call[0].detail)).toEqual(["10002"]);
+      expect(downloadAttachments).not.toHaveBeenCalled();
+    });
+
+    it("disables the thumbnail being opened", () => {
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ attachments: ATTACHMENTS }),
+          attachmentThumbnails: { "10002": "blob:thumbnail-10002" },
+          openingAttachmentId: "10002",
+        },
+      });
+
+      expect((screen.getByRole("button", { name: "Open photo.png" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    describe("viewer", () => {
+      const photoPath = "C:\\Downloads\\Work Notes\\AB-7\\photo.png";
+
+      function renderViewer(events: Record<string, (event: CustomEvent) => void>) {
+        render(JiraIssueDetail, {
+          props: {
+            issue: issue({ attachments: ATTACHMENTS }),
+            attachmentViewer: {
+              attachmentId: "10002",
+              filename: "photo.png",
+              url: "blob:image-10002",
+              path: photoPath,
+            },
+          },
+          events,
+        });
+        return screen.getByRole("dialog", { name: "photo.png" });
+      }
+
+      it("shows the full image in the app", () => {
+        const dialog = renderViewer({});
+
+        expect(within(dialog).getByRole("img", { name: "photo.png" }).getAttribute("src")).toBe("blob:image-10002");
+      });
+
+      function zoomText(dialog: HTMLElement): string {
+        return within(dialog).getByRole("button", { name: "Fit to window" }).textContent?.trim() ?? "";
+      }
+
+      it("starts fitted to the window and zooms with the buttons", async () => {
+        const dialog = renderViewer({});
+        expect(zoomText(dialog)).toBe("Fit");
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+        expect(zoomText(dialog)).toBe("125%");
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Zoom out" }));
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Zoom out" }));
+        expect(zoomText(dialog)).toBe("80%");
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Fit to window" }));
+        expect(zoomText(dialog)).toBe("Fit");
+      });
+
+      it("sizes the image from its real width once zoomed", async () => {
+        const dialog = renderViewer({});
+        const image = within(dialog).getByRole("img", { name: "photo.png" }) as HTMLImageElement;
+        Object.defineProperty(image, "naturalWidth", { value: 400 });
+        await fireEvent.load(image);
+        expect(image.style.width).toBe("");
+
+        await fireEvent.dblClick(image);
+        expect(zoomText(dialog)).toBe("100%");
+        expect(image.style.width).toBe("400px");
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+        expect(image.style.width).toBe("500px");
+
+        await fireEvent.dblClick(image);
+        expect(zoomText(dialog)).toBe("Fit");
+        expect(image.style.width).toBe("");
+      });
+
+      it("zooms with the keyboard and with Ctrl and the mouse wheel", async () => {
+        const dialog = renderViewer({});
+        const image = within(dialog).getByRole("img", { name: "photo.png" });
+
+        await fireEvent.keyDown(window, { key: "+" });
+        expect(zoomText(dialog)).toBe("125%");
+        await fireEvent.keyDown(window, { key: "-" });
+        expect(zoomText(dialog)).toBe("100%");
+        await fireEvent.keyDown(window, { key: "0" });
+        expect(zoomText(dialog)).toBe("Fit");
+
+        await fireEvent.wheel(image, { ctrlKey: true, deltaY: -100 });
+        expect(zoomText(dialog)).toBe("125%");
+        await fireEvent.wheel(image, { ctrlKey: true, deltaY: 100 });
+        expect(zoomText(dialog)).toBe("100%");
+        // Without Ctrl the wheel scrolls the zoomed image instead.
+        await fireEvent.wheel(image, { deltaY: 100 });
+        expect(zoomText(dialog)).toBe("100%");
+      });
+
+      it("keeps the point under the cursor in place when zooming with the wheel", async () => {
+        const dialog = renderViewer({});
+        const image = within(dialog).getByRole("img", { name: "photo.png" }) as HTMLImageElement;
+        const stage = image.parentElement as HTMLElement;
+        Object.defineProperty(image, "naturalWidth", { value: 400 });
+        // A 2:1 image whose top-left corner stays at (100, 50) in the window.
+        image.getBoundingClientRect = () => {
+          const width = Number.parseFloat(image.style.width) || 400;
+          return new DOMRect(100, 50, width, width / 2);
+        };
+        await fireEvent.load(image);
+        await fireEvent.dblClick(image);
+        expect(image.style.width).toBe("400px");
+
+        // The cursor is over the image's centre, which moves by (50, 25) at 125%.
+        await fireEvent.wheel(image, { ctrlKey: true, deltaY: -100, clientX: 300, clientY: 150 });
+        await vi.waitFor(() => expect(stage.scrollLeft).toBe(50));
+        expect(image.style.width).toBe("500px");
+        expect(stage.scrollTop).toBe(25);
+      });
+
+      it("pans by dragging, and the drag does not close the viewer", async () => {
+        const closeAttachmentViewer = vi.fn();
+        const dialog = renderViewer({ closeAttachmentViewer });
+        const image = within(dialog).getByRole("img", { name: "photo.png" });
+        const stage = image.parentElement as HTMLElement;
+        stage.scrollLeft = 100;
+        stage.scrollTop = 50;
+
+        await fireEvent.mouseDown(image, { button: 0, clientX: 200, clientY: 200 });
+        await fireEvent.mouseMove(window, { clientX: 170, clientY: 180 });
+        expect(stage.scrollLeft).toBe(130);
+        expect(stage.scrollTop).toBe(70);
+
+        await fireEvent.mouseUp(window, { clientX: 170, clientY: 180 });
+        await fireEvent.click(stage);
+        expect(closeAttachmentViewer).not.toHaveBeenCalled();
+
+        // Moving the mouse after the button is released no longer pans.
+        await fireEvent.mouseMove(window, { clientX: 0, clientY: 0 });
+        expect(stage.scrollLeft).toBe(130);
+
+        await fireEvent.mouseDown(stage, { button: 0, clientX: 10, clientY: 10 });
+        await fireEvent.mouseUp(window, { clientX: 10, clientY: 10 });
+        await fireEvent.click(stage);
+        expect(closeAttachmentViewer).toHaveBeenCalledTimes(1);
+      });
+
+      it("goes to the folder the image was downloaded to", async () => {
+        const revealAttachment = vi.fn();
+        const dialog = renderViewer({ revealAttachment });
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Show in folder" }));
+
+        expect(revealAttachment.mock.calls.map((call) => call[0].detail)).toEqual([photoPath]);
+      });
+
+      it("closes from the close button, the Escape key, and a click outside the image", async () => {
+        const closeAttachmentViewer = vi.fn();
+        const dialog = renderViewer({ closeAttachmentViewer });
+
+        await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+        await fireEvent.keyDown(window, { key: "Escape" });
+        await fireEvent.click(dialog);
+        await fireEvent.click(within(dialog).getByRole("img", { name: "photo.png" }));
+
+        expect(closeAttachmentViewer).toHaveBeenCalledTimes(3);
+      });
+    });
+
+    it("blocks further downloads while one is running", () => {
+      render(JiraIssueDetail, {
+        props: { issue: issue({ attachments: ATTACHMENTS }), downloadingAttachments: true },
+      });
+
+      expect((screen.getByRole("button", { name: "Downloading" }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole("button", { name: "Download photo.png" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("copies the prompt it is given for the open ticket", async () => {
+      const writeText = vi.fn(async () => undefined);
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+      const preparePrompt = vi.fn(async () => "prompt with attachment paths");
+      const open = issue({ attachments: ATTACHMENTS });
+      render(JiraIssueDetail, { props: { issue: open, preparePrompt } });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
+
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy());
+      expect(preparePrompt).toHaveBeenCalledWith(open);
+      expect(writeText).toHaveBeenCalledWith("prompt with attachment paths");
+    });
+  });
+
   it("prompts for a selection when no ticket is open", () => {
     render(JiraIssueDetail, { props: { issue: null } });
 

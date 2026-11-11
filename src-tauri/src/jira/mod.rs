@@ -11,8 +11,8 @@ pub mod types;
 
 pub use client::{JiraClient, JiraOps};
 pub use types::{
-    Assignee, IssueKey, IssueUpdate, JiraComment, JiraIssueDetail, JiraIssueSummary,
-    JiraTransition, JiraUser, NewIssue, TransitionOutcome,
+    Assignee, IssueKey, IssueUpdate, JiraAttachment, JiraComment, JiraIssueDetail,
+    JiraIssueSummary, JiraTransition, JiraUser, NewIssue, TransitionOutcome,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -36,6 +36,9 @@ pub enum JiraError {
     Network(String),
     #[error("Jira response was not understood: {0}")]
     InvalidResponse(String),
+    /// An attachment's content could not be read from Jira or saved to disk.
+    #[error("attachment download failed: {0}")]
+    Download(String),
     #[error("{0}")]
     InvalidInput(String),
 }

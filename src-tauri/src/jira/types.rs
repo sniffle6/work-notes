@@ -134,6 +134,22 @@ pub struct JiraLinkedIssue {
     pub issue: JiraRelatedIssue,
 }
 
+/// A file attached to an issue. The content is fetched separately by `id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraAttachment {
+    pub id: String,
+    /// The name Jira reports. It is not safe to use as a local file name.
+    pub filename: String,
+    pub mime_type: Option<String>,
+    /// Size in bytes; 0 when Jira does not report one.
+    pub size: u64,
+    pub author: Option<String>,
+    pub created: Option<String>,
+    /// True when Jira offers a small preview image for this attachment.
+    pub has_thumbnail: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraIssueDetail {
@@ -147,6 +163,7 @@ pub struct JiraIssueDetail {
     pub parent_key: Option<String>,
     pub subtasks: Vec<JiraRelatedIssue>,
     pub linked_issues: Vec<JiraLinkedIssue>,
+    pub attachments: Vec<JiraAttachment>,
     pub comments: Vec<JiraComment>,
     pub transitions: Vec<JiraTransition>,
 }

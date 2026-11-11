@@ -1,12 +1,16 @@
 import { isoDate, workInstructions } from "./agent-prompt";
-import type { JiraComment, JiraIssueDetail } from "./types";
+import { formatFileSize } from "./file-size";
+import type { JiraAttachment, JiraAttachmentFile, JiraComment, JiraIssueDetail } from "./types";
 
 /**
  * Builds a prompt that hands a ticket to a coding agent. It carries the
- * ticket's facts, description, subtasks, linked issues, and comments so the
- * agent needs no Jira access.
+ * ticket's facts, description, subtasks, linked issues, attachments, and
+ * comments so the agent needs no Jira access.
+ *
+ * `attachmentFiles` are the attachments already saved to disk. Those are
+ * listed by local path; the rest are named as not downloaded.
  */
-export function buildTicketPrompt(issue: JiraIssueDetail): string {
+export function buildTicketPrompt(issue: JiraIssueDetail, attachmentFiles: JiraAttachmentFile[] = []): string {
   const facts = [
     `Type: ${issue.issueType}`,
     issue.priority ? `Priority: ${issue.priority}` : null,
@@ -39,11 +43,42 @@ export function buildTicketPrompt(issue: JiraIssueDetail): string {
         .join("\n"),
     );
   }
+  if (issue.attachments.length > 0) {
+    sections.push("## Attachments", ...attachmentSections(issue.attachments, attachmentFiles));
+  }
   if (issue.comments.length > 0) {
     sections.push("## Comments", ...issue.comments.map(commentBlock));
   }
 
   return sections.join("\n\n");
+}
+
+function attachmentSections(attachments: JiraAttachment[], files: JiraAttachmentFile[]): string[] {
+  const pathById = new Map(files.map((file) => [file.id, file.path]));
+  const anySaved = attachments.some((attachment) => pathById.has(attachment.id));
+  if (!anySaved) {
+    return [
+      "The ticket has attachments that were not downloaded. Ask me for any you need.",
+      attachments.map((attachment) => `- ${attachmentLabel(attachment)}`).join("\n"),
+    ];
+  }
+
+  return [
+    "The ticket's attachments are saved as local files. Read the ones that bear on the work.",
+    attachments
+      .map((attachment) => {
+        const path = pathById.get(attachment.id);
+        return `- ${attachmentLabel(attachment)}: ${path ?? "not downloaded; ask me for it if you need it"}`;
+      })
+      .join("\n"),
+  ];
+}
+
+function attachmentLabel(attachment: JiraAttachment): string {
+  const details = [attachment.size > 0 ? formatFileSize(attachment.size) : null, attachment.mimeType].filter(
+    (detail): detail is string => Boolean(detail),
+  );
+  return details.length > 0 ? `${attachment.filename} (${details.join(", ")})` : attachment.filename;
 }
 
 function commentBlock(comment: JiraComment): string {

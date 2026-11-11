@@ -13,6 +13,7 @@ import type {
   GeneratedTheme,
   InboxFilters,
   JiraAccount,
+  JiraAttachmentDownload,
   JiraChatMessage,
   JiraChatThread,
   JiraFilter,
@@ -500,6 +501,62 @@ export async function assignJiraIssueToMe(key: string): Promise<JiraIssueDetail>
   return normalizeJiraIssueDetail(await invokeCommand<unknown>("assign_jira_issue_to_me", { key }));
 }
 
+/**
+ * Saves a ticket's attachments to `Downloads\Work Notes\<KEY>`. `attachmentIds`
+ * limits the download; `null` saves every attachment.
+ */
+export async function downloadJiraAttachments(
+  key: string,
+  attachmentIds: string[] | null,
+): Promise<JiraAttachmentDownload> {
+  const record = asRecord(await invokeCommand<unknown>("download_jira_attachments", { key, attachmentIds }));
+  return {
+    folder: getString(record, "folder") ?? "",
+    files: getArray(record, "files").map((file) => {
+      const fileRecord = asRecord(file);
+      return {
+        id: getString(fileRecord, "id") ?? "",
+        filename: getString(fileRecord, "filename") ?? "",
+        path: getString(fileRecord, "path") ?? "",
+      };
+    }),
+  };
+}
+
+/**
+ * Fetches Jira's small preview image of an attachment and returns an object
+ * URL for it. Rejects when Jira has no preview for the attachment.
+ */
+export async function getJiraAttachmentThumbnail(attachmentId: string): Promise<string> {
+  const record = asRecord(await invokeCommand<unknown>("get_jira_attachment_thumbnail", { attachmentId }));
+  const bytes = getArray(record, "bytes").filter((byte): byte is number => typeof byte === "number");
+  return URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: getString(record, "mimeType") ?? "" }));
+}
+
+/**
+ * Reads an image attachment for the in-app viewer and returns an object URL
+ * for it. The file is downloaded to the ticket folder first when needed.
+ * Rejects when the file is not an image the app can show.
+ */
+export async function readJiraAttachmentImage(
+  key: string,
+  attachmentId: string,
+  mimeType: string | null,
+): Promise<string> {
+  const bytes = await invokeCommand<ArrayBuffer>("read_jira_attachment_image", { key, attachmentId });
+  return URL.createObjectURL(new Blob([bytes], { type: mimeType ?? "" }));
+}
+
+/** Shows a downloaded attachment in File Explorer. */
+export async function revealJiraAttachment(path: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
 export async function listJiraChatThreads(): Promise<JiraChatThread[]> {
   const threads = await invokeCommand<unknown[]>("list_jira_chat_threads");
   return threads.map(normalizeJiraChatThread);
@@ -579,6 +636,10 @@ export const api = {
   transitionJiraIssue,
   addJiraComment,
   assignJiraIssueToMe,
+  downloadJiraAttachments,
+  getJiraAttachmentThumbnail,
+  readJiraAttachmentImage,
+  revealJiraAttachment,
   listJiraChatThreads,
   createJiraChatThread,
   deleteJiraChatThread,
@@ -642,6 +703,18 @@ function normalizeJiraIssueDetail(value: unknown): JiraIssueDetail {
       ...normalizeJiraRelatedIssue(linked),
       relationship: getString(asRecord(linked), "relationship") ?? "",
     })),
+    attachments: getArray(record, "attachments").map((attachment) => {
+      const attachmentRecord = asRecord(attachment);
+      return {
+        id: getString(attachmentRecord, "id") ?? "",
+        filename: getString(attachmentRecord, "filename") ?? "",
+        mimeType: getNullableString(attachmentRecord, "mimeType"),
+        size: getNumber(attachmentRecord, "size") ?? 0,
+        author: getNullableString(attachmentRecord, "author"),
+        created: getNullableString(attachmentRecord, "created"),
+        hasThumbnail: getBoolean(attachmentRecord, "hasThumbnail") ?? false,
+      };
+    }),
     comments: getArray(record, "comments").map((comment) => {
       const commentRecord = asRecord(comment);
       return {

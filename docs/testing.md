@@ -45,7 +45,7 @@ Important frontend tests:
 - `src/lib/markdown.test.ts`: Markdown rendering, pipe tables, preserved line breaks, and HTML escaping.
 - `src/lib/stores/jira.test.ts`: Jira store sequencing with an injected fake API, including proposal approval and stale-response handling.
 - `src/lib/components/JiraView.test.ts`: Jira screen driven through the real store and a fake API.
-- `src/lib/components/JiraIssueDetail.test.ts`: transitions, comments, edits, and the flatten-formatting confirmation.
+- `src/lib/components/JiraIssueDetail.test.ts`: transitions, attachments, comments, edits, and the flatten-formatting confirmation.
 - `src/lib/components/JiraChat.test.ts`: message entry keys, lookups, and Approve/Reject on proposals.
 - `src/lib/theme/theme.test.ts`: theme token to CSS variable mapping.
 - `src/lib/scaffold.test.ts`: scaffold sanity check.
@@ -83,6 +83,7 @@ Rust tests are inline in `src-tauri/src/**`. Current coverage includes:
 - quick-capture positioning helpers
 - Jira issue key validation, ADF conversion, transition matching, and HTTP error mapping
 - Jira client requests against a fake transport
+- Jira attachment downloads into a temporary folder: file naming, skipping saved files, and failed downloads
 - Jira agent prompt, turn parsing, tool-call validation, and the approval-gated agent loop with fake agent and Jira
 - Jira chat and note-link repositories
 - structured Codex exec against a stand-in command script
@@ -113,6 +114,9 @@ Manual checks in the running app after Jira changes:
 - With setup missing, the Jira view lists the missing steps and loads nothing.
 - Filters load tickets; selecting a ticket shows description, comments, and transitions.
 - A transition, a comment, an edit, and Assign to me each update the open ticket and its list row.
+- An image attachment shows a thumbnail; clicking it opens the full image in the app, and the viewer's folder button opens File Explorer on the file.
+- A ticket with attachments lists them. Download and Download all save files to `Downloads\Work Notes\<KEY>`, and Show in folder opens File Explorer on the file.
+- Copy agent prompt on a ticket with attachments lists each attachment by local path.
 - Create ticket from a note prefills the form and shows the new key on the note afterwards.
 - An agent request to change a ticket appears as a proposal and changes nothing until approved.
 - Rejecting a proposal changes nothing in Jira.

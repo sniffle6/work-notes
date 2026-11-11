@@ -518,8 +518,8 @@ mod tests {
     use crate::jira::agent::{AgentContext, AgentRunner, JiraToolCall, ViewAction};
     use crate::jira::chat::{ChatMessage, ChatMessageStatus, ChatRole};
     use crate::jira::{
-        Assignee, IssueKey, IssueUpdate, JiraComment, JiraError, JiraIssueDetail, JiraIssueSummary,
-        JiraOps, JiraTransition, JiraUser, NewIssue, TransitionOutcome,
+        Assignee, IssueKey, IssueUpdate, JiraAttachment, JiraComment, JiraError, JiraIssueDetail,
+        JiraIssueSummary, JiraOps, JiraTransition, JiraUser, NewIssue, TransitionOutcome,
     };
     use crate::repositories::JiraChatRepository;
     use crate::services::ServiceError;
@@ -632,6 +632,7 @@ mod tests {
                 parent_key: Some("AB-1".to_string()),
                 subtasks: Vec::new(),
                 linked_issues: Vec::new(),
+                attachments: Vec::new(),
                 comments: (1..=12)
                     .map(|index| JiraComment {
                         id: index.to_string(),
@@ -699,6 +700,29 @@ mod tests {
         fn issue_types(&self, project_key: &str) -> Result<Vec<String>, JiraError> {
             self.record(format!("types {project_key}"))?;
             Ok(vec!["Bug".to_string()])
+        }
+
+        fn attachments(&self, issue_key: &IssueKey) -> Result<Vec<JiraAttachment>, JiraError> {
+            self.record(format!("attachments {issue_key}"))?;
+            Ok(Vec::new())
+        }
+
+        fn download_attachment(
+            &self,
+            attachment_id: &str,
+            _sink: &mut dyn std::io::Write,
+        ) -> Result<u64, JiraError> {
+            self.record(format!("download {attachment_id}"))?;
+            Ok(0)
+        }
+
+        fn download_attachment_thumbnail(
+            &self,
+            attachment_id: &str,
+            _sink: &mut dyn std::io::Write,
+        ) -> Result<u64, JiraError> {
+            self.record(format!("thumbnail {attachment_id}"))?;
+            Ok(0)
         }
 
         fn browse_url(&self, issue_key: &IssueKey) -> String {

@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 
 import {
   addJiraComment,
@@ -6,18 +6,26 @@ import {
   createJiraChatThread,
   createJiraIssue,
   deleteJiraChatThread,
+  downloadJiraAttachments,
+  getJiraAttachmentThumbnail,
   getJiraIssue,
   getJiraStatus,
   listJiraChatMessages,
   listJiraChatThreads,
   listJiraIssues,
   listJiraIssueTypes,
+  readJiraAttachmentImage,
   resolveJiraChatProposal,
+  revealJiraAttachment,
   sendJiraChatMessage,
   transitionJiraIssue,
   updateJiraIssue,
 } from "$lib/api";
+import { buildTicketPrompt } from "$lib/jira-prompt";
 import type {
+  JiraAttachmentDownload,
+  JiraAttachmentFile,
+  JiraAttachmentView,
   JiraChatMessage,
   JiraChatThread,
   JiraFilter,
@@ -39,6 +47,10 @@ export type JiraApi = {
   transitionJiraIssue: typeof transitionJiraIssue;
   addJiraComment: typeof addJiraComment;
   assignJiraIssueToMe: typeof assignJiraIssueToMe;
+  downloadJiraAttachments: typeof downloadJiraAttachments;
+  getJiraAttachmentThumbnail: typeof getJiraAttachmentThumbnail;
+  readJiraAttachmentImage: typeof readJiraAttachmentImage;
+  revealJiraAttachment: typeof revealJiraAttachment;
   listJiraChatThreads: typeof listJiraChatThreads;
   createJiraChatThread: typeof createJiraChatThread;
   deleteJiraChatThread: typeof deleteJiraChatThread;
@@ -57,6 +69,10 @@ const defaultApi: JiraApi = {
   transitionJiraIssue,
   addJiraComment,
   assignJiraIssueToMe,
+  downloadJiraAttachments,
+  getJiraAttachmentThumbnail,
+  readJiraAttachmentImage,
+  revealJiraAttachment,
   listJiraChatThreads,
   createJiraChatThread,
   deleteJiraChatThread,
@@ -82,6 +98,88 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const loadingIssue = writable(false);
   const savingIssue = writable(false);
   const error = writable<string | null>(null);
+
+  // Attachments saved so far for one ticket; a download for another ticket replaces it.
+  const savedAttachments = writable<(JiraAttachmentDownload & { issueKey: string }) | null>(null);
+  const downloadingAttachments = writable(false);
+  /** The open ticket's attachments that are saved to disk, if any. */
+  const attachmentDownload = derived([savedAttachments, selectedIssue], ([saved, issue]) =>
+    saved && saved.issueKey === issue?.key ? saved : null,
+  );
+  /** Preview image URLs by attachment id, kept for every ticket opened so far. */
+  const attachmentThumbnails = writable<Record<string, string>>({});
+  // Each thumbnail is asked for once, whether or not it loads.
+  const requestedThumbnails = new Set<string>();
+  /** The image open in the in-app viewer, if any. */
+  const attachmentViewer = writable<JiraAttachmentView | null>(null);
+  const openingAttachmentId = writable<string | null>(null);
+  // The ticket the viewer's image belongs to.
+  let viewerIssueKey: string | null = null;
+  selectedIssue.subscribe((issue) => {
+    if (issue?.key !== viewerIssueKey) {
+      closeAttachmentViewer();
+    }
+    if (issue) {
+      void loadThumbnails(issue);
+    }
+  });
+
+  function closeAttachmentViewer(): void {
+    const open = get(attachmentViewer);
+    if (open) {
+      URL.revokeObjectURL(open.url);
+      attachmentViewer.set(null);
+    }
+    viewerIssueKey = null;
+  }
+
+  /**
+   * Opens one of the open ticket's image attachments in the viewer. The file
+   * is downloaded to the ticket folder first when it is not saved yet.
+   */
+  async function openAttachment(attachmentId: string): Promise<void> {
+    const issue = get(selectedIssue);
+    const attachment = issue?.attachments.find((candidate) => candidate.id === attachmentId);
+    if (!issue || !attachment || get(openingAttachmentId)) {
+      return;
+    }
+
+    openingAttachmentId.set(attachmentId);
+    try {
+      const file = (await downloadAttachments(issue.key, attachmentId))?.[0];
+      if (!file) {
+        return;
+      }
+      const url = await api.readJiraAttachmentImage(issue.key, attachmentId, attachment.mimeType);
+      if (get(selectedIssue)?.key !== issue.key) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      closeAttachmentViewer();
+      viewerIssueKey = issue.key;
+      attachmentViewer.set({ attachmentId, filename: attachment.filename, url, path: file.path });
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not open the attachment."));
+    } finally {
+      openingAttachmentId.set(null);
+    }
+  }
+
+  /** Loads the previews Jira offers for a ticket's attachments, one at a time. */
+  async function loadThumbnails(issue: JiraIssueDetail): Promise<void> {
+    for (const attachment of issue.attachments) {
+      if (!attachment.hasThumbnail || requestedThumbnails.has(attachment.id)) {
+        continue;
+      }
+      requestedThumbnails.add(attachment.id);
+      try {
+        const url = await api.getJiraAttachmentThumbnail(attachment.id);
+        attachmentThumbnails.update((current) => ({ ...current, [attachment.id]: url }));
+      } catch {
+        // A preview is optional; the attachment is listed without one.
+      }
+    }
+  }
 
   const threads = writable<JiraChatThread[]>([]);
   const activeThreadId = writable<string | null>(null);
@@ -268,6 +366,51 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     return changeSelected((key) => api.assignJiraIssueToMe(key), "Could not assign the ticket.");
   }
 
+  /**
+   * Saves a ticket's attachments to disk: one when `attachmentId` is given,
+   * otherwise all. Returns the saved files, or undefined on failure.
+   */
+  async function downloadAttachments(
+    issueKey: string,
+    attachmentId: string | null = null,
+  ): Promise<JiraAttachmentFile[] | undefined> {
+    downloadingAttachments.set(true);
+    error.set(null);
+
+    try {
+      const download = await api.downloadJiraAttachments(issueKey, attachmentId ? [attachmentId] : null);
+      savedAttachments.update((saved) => {
+        const newIds = new Set(download.files.map((file) => file.id));
+        const kept = saved?.issueKey === issueKey ? saved.files.filter((file) => !newIds.has(file.id)) : [];
+        return { issueKey, folder: download.folder, files: [...kept, ...download.files] };
+      });
+      return download.files;
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not download the attachments."));
+      return undefined;
+    } finally {
+      downloadingAttachments.set(false);
+    }
+  }
+
+  async function revealAttachment(path: string): Promise<void> {
+    try {
+      await api.revealJiraAttachment(path);
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not show the file."));
+    }
+  }
+
+  /**
+   * Builds the coding-agent prompt for a ticket, downloading its attachments
+   * first so the prompt can name local files. A failed download is reported
+   * and the prompt lists the attachments as not downloaded.
+   */
+  async function ticketPrompt(issue: JiraIssueDetail): Promise<string> {
+    const files = issue.attachments.length > 0 ? await downloadAttachments(issue.key) : [];
+    return buildTicketPrompt(issue, files ?? []);
+  }
+
   async function loadThreads(): Promise<void> {
     try {
       threads.set(await api.listJiraChatThreads());
@@ -427,6 +570,11 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     loadingIssue,
     savingIssue,
     error,
+    attachmentDownload,
+    attachmentThumbnails,
+    attachmentViewer,
+    openingAttachmentId,
+    downloadingAttachments,
     threads,
     activeThreadId,
     messages,
@@ -444,6 +592,11 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     commentOnSelected,
     saveSelectedEdit,
     assignSelectedToMe,
+    downloadAttachments,
+    openAttachment,
+    closeAttachmentViewer,
+    revealAttachment,
+    ticketPrompt,
     loadThreads,
     openThread,
     newThread,

@@ -236,6 +236,43 @@ export type JiraLinkedIssue = JiraRelatedIssue & {
   relationship: string;
 };
 
+/** A file attached to a ticket. Its content is downloaded on request. */
+export type JiraAttachment = {
+  id: string;
+  filename: string;
+  mimeType: string | null;
+  /** Size in bytes; 0 when Jira does not report one. */
+  size: number;
+  author: string | null;
+  created: string | null;
+  /** True when Jira offers a small preview image for this attachment. */
+  hasThumbnail: boolean;
+};
+
+/** An attachment saved to disk. */
+export type JiraAttachmentFile = {
+  id: string;
+  /** The local file name, which can differ from the name in Jira. */
+  filename: string;
+  path: string;
+};
+
+/** An image attachment open in the in-app viewer. */
+export type JiraAttachmentView = {
+  attachmentId: string;
+  filename: string;
+  /** Object URL of the full image. */
+  url: string;
+  /** Where the file is saved on disk. */
+  path: string;
+};
+
+export type JiraAttachmentDownload = {
+  /** The ticket's folder under Downloads\Work Notes. */
+  folder: string;
+  files: JiraAttachmentFile[];
+};
+
 export type JiraIssueDetail = JiraIssueSummary & {
   description: string;
   /** False when saving a plain-text edit would flatten Jira formatting. */
@@ -244,6 +281,7 @@ export type JiraIssueDetail = JiraIssueSummary & {
   parentKey: string | null;
   subtasks: JiraRelatedIssue[];
   linkedIssues: JiraLinkedIssue[];
+  attachments: JiraAttachment[];
   comments: JiraComment[];
   transitions: JiraTransition[];
 };

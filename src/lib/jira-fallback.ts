@@ -23,6 +23,17 @@ function sampleIssue(key: string, summary: string, status: string, statusCategor
     parentKey: null as string | null,
     subtasks: [] as { key: string; summary: string; status: string }[],
     linkedIssues: [] as { relationship: string; key: string; summary: string; status: string }[],
+    attachments: [
+      {
+        id: "10001",
+        filename: "preview-log.txt",
+        mimeType: "text/plain",
+        size: 2048,
+        author: "Preview User",
+        created: new Date().toISOString(),
+        hasThumbnail: false,
+      },
+    ],
     comments: [] as { id: string; author: string; created: string; body: string }[],
     transitions: [
       { id: "11", name: "Start work", toStatus: "In Progress" },
@@ -133,6 +144,11 @@ export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): 
       issue.assignee = "Preview User";
       return issue;
     }
+    case "download_jira_attachments":
+      throw new Error("Attachments can only be downloaded in the desktop app.");
+    case "read_jira_attachment_image":
+    case "get_jira_attachment_thumbnail":
+      throw new Error("Attachment previews are only loaded in the desktop app.");
     case "list_jira_chat_threads":
       return threads;
     case "create_jira_chat_thread": {

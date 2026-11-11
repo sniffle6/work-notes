@@ -1,12 +1,14 @@
+use std::io::Write;
+
 use serde_json::{json, Value};
 
 use super::adf::{adf_round_trips_as_text, adf_to_text, text_to_adf};
 use super::transitions::match_transition;
 use super::transport::{JiraTransport, Method};
 use super::types::{
-    normalize_project_key, Assignee, IssueKey, IssueUpdate, JiraComment, JiraIssueDetail,
-    JiraIssueSummary, JiraLinkedIssue, JiraRelatedIssue, JiraTransition, JiraUser, NewIssue,
-    TransitionOutcome,
+    normalize_project_key, Assignee, IssueKey, IssueUpdate, JiraAttachment, JiraComment,
+    JiraIssueDetail, JiraIssueSummary, JiraLinkedIssue, JiraRelatedIssue, JiraTransition,
+    JiraUser, NewIssue, TransitionOutcome,
 };
 use super::JiraError;
 
@@ -24,7 +26,7 @@ const SEARCH_FIELDS: [&str; 7] = [
     "labels",
 ];
 const DETAIL_FIELDS: &str =
-    "summary,description,status,issuetype,priority,assignee,reporter,updated,labels,parent,subtasks,issuelinks";
+    "summary,description,status,issuetype,priority,assignee,reporter,updated,labels,parent,subtasks,issuelinks,attachment";
 
 /// Jira operations the app and the chat agent rely on.
 ///
@@ -50,6 +52,23 @@ pub trait JiraOps {
     fn assign(&self, key: &IssueKey, assignee: Assignee) -> Result<(), JiraError>;
     /// Lists the non-subtask issue type names available in a project.
     fn issue_types(&self, project_key: &str) -> Result<Vec<String>, JiraError>;
+    /// Lists the files attached to an issue without loading the rest of it.
+    fn attachments(&self, key: &IssueKey) -> Result<Vec<JiraAttachment>, JiraError>;
+    /// Streams one attachment's content into `sink` and returns the number
+    /// of bytes written. A failure can leave `sink` partly written.
+    fn download_attachment(
+        &self,
+        attachment_id: &str,
+        sink: &mut dyn Write,
+    ) -> Result<u64, JiraError>;
+    /// Streams Jira's small preview image of an attachment into `sink` and
+    /// returns the number of bytes written. Jira answers 404 for an
+    /// attachment it cannot preview.
+    fn download_attachment_thumbnail(
+        &self,
+        attachment_id: &str,
+        sink: &mut dyn Write,
+    ) -> Result<u64, JiraError>;
     fn browse_url(&self, key: &IssueKey) -> String;
 }
 
@@ -161,6 +180,38 @@ fn related_issue(issue: &Value) -> Option<JiraRelatedIssue> {
     })
 }
 
+/// Trims an attachment id and checks it is all digits, so it is safe to
+/// place in a REST path.
+fn attachment_id_for_path(attachment_id: &str) -> Result<&str, JiraError> {
+    let attachment_id = attachment_id.trim();
+    if attachment_id.is_empty() || !attachment_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(JiraError::InvalidInput(
+            "an attachment id is required".to_string(),
+        ));
+    }
+    Ok(attachment_id)
+}
+
+fn attachments_from(fields: &Value) -> Vec<JiraAttachment> {
+    fields["attachment"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|attachment| {
+            Some(JiraAttachment {
+                id: string_at(attachment, "id")?,
+                filename: string_at(attachment, "filename")?,
+                mime_type: string_at(attachment, "mimeType"),
+                size: attachment["size"].as_u64().unwrap_or(0),
+                author: user_name(&attachment["author"]),
+                created: string_at(attachment, "created"),
+                // Jira names a thumbnail URL only for files it can preview.
+                has_thumbnail: attachment["thumbnail"].is_string(),
+            })
+        })
+        .collect()
+}
+
 /// Jira puts the other issue under `outwardIssue` or `inwardIssue` and names
 /// the relationship for that direction on the link type.
 fn linked_issue(link: &Value) -> Option<JiraLinkedIssue> {
@@ -252,6 +303,7 @@ impl<T: JiraTransport> JiraOps for JiraClient<T> {
                 .flatten()
                 .filter_map(linked_issue)
                 .collect(),
+            attachments: attachments_from(fields),
             comments: self.comments(key)?,
             transitions: self.transitions(key)?,
         })
@@ -387,6 +439,31 @@ impl<T: JiraTransport> JiraOps for JiraClient<T> {
             .collect())
     }
 
+    fn attachments(&self, key: &IssueKey) -> Result<Vec<JiraAttachment>, JiraError> {
+        let issue = self.get(&format!("issue/{key}?fields=attachment"))?;
+        Ok(attachments_from(&issue["fields"]))
+    }
+
+    fn download_attachment(
+        &self,
+        attachment_id: &str,
+        sink: &mut dyn Write,
+    ) -> Result<u64, JiraError> {
+        let attachment_id = attachment_id_for_path(attachment_id)?;
+        self.transport
+            .download(&format!("attachment/content/{attachment_id}"), sink)
+    }
+
+    fn download_attachment_thumbnail(
+        &self,
+        attachment_id: &str,
+        sink: &mut dyn Write,
+    ) -> Result<u64, JiraError> {
+        let attachment_id = attachment_id_for_path(attachment_id)?;
+        self.transport
+            .download(&format!("attachment/thumbnail/{attachment_id}"), sink)
+    }
+
     fn browse_url(&self, key: &IssueKey) -> String {
         format!("{}/browse/{key}", self.site_url)
     }
@@ -401,7 +478,8 @@ mod tests {
     use crate::jira::transport::testing::FakeTransport;
     use crate::jira::transport::Method;
     use crate::jira::types::{
-        Assignee, IssueKey, IssueUpdate, JiraLinkedIssue, JiraRelatedIssue, NewIssue,
+        Assignee, IssueKey, IssueUpdate, JiraAttachment, JiraLinkedIssue, JiraRelatedIssue,
+        NewIssue,
     };
     use crate::jira::JiraError;
 
@@ -634,6 +712,135 @@ mod tests {
         let detail = client.get_issue(&key("AB-7")).unwrap();
 
         assert!(!detail.description_editable_losslessly);
+    }
+
+    fn attachments_json() -> Value {
+        json!([
+            {
+                "id": "10001",
+                "filename": "bench.log",
+                "mimeType": "text/plain",
+                "size": 2048,
+                "author": { "displayName": "Maya Lopez" },
+                "created": "2026-11-02T09:00:00.000+0000",
+            },
+            {
+                "id": "10002",
+                "filename": "photo.png",
+                "thumbnail": "https://example.atlassian.net/rest/api/3/attachment/thumbnail/10002",
+            },
+            { "filename": "entry without an id" },
+        ])
+    }
+
+    fn expected_attachments() -> Vec<JiraAttachment> {
+        vec![
+            JiraAttachment {
+                id: "10001".to_string(),
+                filename: "bench.log".to_string(),
+                mime_type: Some("text/plain".to_string()),
+                size: 2048,
+                author: Some("Maya Lopez".to_string()),
+                created: Some("2026-11-02T09:00:00.000+0000".to_string()),
+                has_thumbnail: false,
+            },
+            JiraAttachment {
+                id: "10002".to_string(),
+                filename: "photo.png".to_string(),
+                mime_type: None,
+                size: 0,
+                author: None,
+                created: None,
+                has_thumbnail: true,
+            },
+        ]
+    }
+
+    #[test]
+    fn get_issue_lists_attachments() {
+        let mut issue = issue_json("AB-7", "Printer jams");
+        issue["fields"]["attachment"] = attachments_json();
+        let transport = FakeTransport::with_responses(vec![
+            Ok(issue),
+            Ok(json!({ "total": 0, "comments": [] })),
+            Ok(json!({ "transitions": [] })),
+        ]);
+        let client = JiraClient::new(&transport, SITE);
+
+        let detail = client.get_issue(&key("AB-7")).unwrap();
+
+        assert!(transport.requests()[0].path.contains("attachment"));
+        // An entry without an id cannot be downloaded, so it is skipped.
+        assert_eq!(detail.attachments, expected_attachments());
+    }
+
+    #[test]
+    fn attachments_requests_only_the_attachment_field() {
+        let transport = FakeTransport::with_responses(vec![Ok(json!({
+            "key": "AB-7",
+            "fields": { "attachment": attachments_json() },
+        }))]);
+        let client = JiraClient::new(&transport, SITE);
+
+        let attachments = client.attachments(&key("AB-7")).unwrap();
+
+        assert_eq!(transport.requests()[0].path, "issue/AB-7?fields=attachment");
+        assert_eq!(attachments, expected_attachments());
+    }
+
+    #[test]
+    fn download_attachment_streams_the_content() {
+        let transport =
+            FakeTransport::default().with_downloads(vec![Ok(b"jam at 09:00".to_vec())]);
+        let client = JiraClient::new(&transport, SITE);
+        let mut sink = Vec::new();
+
+        let bytes = client.download_attachment(" 10001 ", &mut sink).unwrap();
+
+        assert_eq!(bytes, 12);
+        assert_eq!(sink, b"jam at 09:00");
+        let requests = transport.requests();
+        assert_eq!(requests[0].method, Method::Get);
+        assert_eq!(requests[0].path, "attachment/content/10001");
+    }
+
+    #[test]
+    fn download_attachment_thumbnail_streams_the_small_image() {
+        let transport = FakeTransport::default().with_downloads(vec![Ok(b"\x89PNG".to_vec())]);
+        let client = JiraClient::new(&transport, SITE);
+        let mut sink = Vec::new();
+
+        let bytes = client
+            .download_attachment_thumbnail("10002", &mut sink)
+            .unwrap();
+
+        assert_eq!(bytes, 4);
+        assert_eq!(sink, b"\x89PNG");
+        assert_eq!(transport.requests()[0].path, "attachment/thumbnail/10002");
+    }
+
+    #[test]
+    fn download_attachment_rejects_ids_that_are_not_numbers() {
+        let transport = FakeTransport::default();
+        let client = JiraClient::new(&transport, SITE);
+
+        for id in ["", "abc", "1/../2", "10001?redirect=false"] {
+            assert!(
+                matches!(
+                    client.download_attachment(id, &mut Vec::new()),
+                    Err(JiraError::InvalidInput(_))
+                ),
+                "{id:?} should be rejected"
+            );
+            assert!(
+                matches!(
+                    client.download_attachment_thumbnail(id, &mut Vec::new()),
+                    Err(JiraError::InvalidInput(_))
+                ),
+                "{id:?} should be rejected as a thumbnail"
+            );
+        }
+        assert!(transport.requests().is_empty());
     }
 
     #[test]

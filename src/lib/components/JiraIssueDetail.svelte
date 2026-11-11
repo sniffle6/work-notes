@@ -1,9 +1,24 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check";
   import Copy from "@lucide/svelte/icons/copy";
-  import { createEventDispatcher, onDestroy } from "svelte";
+  import Download from "@lucide/svelte/icons/download";
+  import FolderOpen from "@lucide/svelte/icons/folder-open";
+  import X from "@lucide/svelte/icons/x";
+  import ZoomIn from "@lucide/svelte/icons/zoom-in";
+  import ZoomOut from "@lucide/svelte/icons/zoom-out";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { formatFileSize } from "$lib/file-size";
+  import { zoomIn, zoomLabel, zoomOut } from "$lib/image-zoom";
   import { buildTicketPrompt } from "$lib/jira-prompt";
-  import type { JiraIssueDetail, JiraIssueEdit, JiraTransition } from "$lib/types";
+  import { isTypingTarget } from "$lib/ui-prefs";
+  import type {
+    JiraAttachment,
+    JiraAttachmentDownload,
+    JiraAttachmentView,
+    JiraIssueDetail,
+    JiraIssueEdit,
+    JiraTransition,
+  } from "$lib/types";
 
   import MarkdownView from "./MarkdownView.svelte";
 
@@ -20,9 +35,31 @@
     issue: JiraIssueDetail | null;
     loading?: boolean;
     saving?: boolean;
+    /** The open ticket's attachments that are already saved to disk. */
+    attachmentDownload?: JiraAttachmentDownload | null;
+    downloadingAttachments?: boolean;
+    /** Preview image URLs by attachment id. */
+    attachmentThumbnails?: Record<string, string>;
+    /** The image open in the viewer, if any. */
+    attachmentViewer?: JiraAttachmentView | null;
+    /** The attachment being fetched for the viewer, if any. */
+    openingAttachmentId?: string | null;
+    /** Builds the prompt to copy. Defaults to the ticket text without attachment files. */
+    preparePrompt?: (issue: JiraIssueDetail) => Promise<string>;
   };
 
-  let { issue, loading = false, saving = false }: Props = $props();
+  let {
+    issue,
+    loading = false,
+    saving = false,
+    attachmentDownload = null,
+    downloadingAttachments = false,
+    attachmentThumbnails = {},
+    attachmentViewer = null,
+    openingAttachmentId = null,
+    preparePrompt,
+  }: Props = $props();
+  let preparingPrompt = $state(false);
   let editing = $state(false);
   let summaryDraft = $state("");
   let descriptionDraft = $state("");
@@ -37,7 +74,38 @@
     comment: { text: string; done: () => void };
     saveEdit: { edit: JiraIssueEdit; done: () => void };
     assignToMe: void;
+    /** An attachment id, or null for every attachment. */
+    downloadAttachments: string | null;
+    /** The path of a downloaded file to show in its folder. */
+    revealAttachment: string;
+    /** The id of an image attachment to open in the viewer. */
+    openAttachment: string;
+    closeAttachmentViewer: void;
   }>();
+
+  const ACTUAL_SIZE = 1;
+  // The viewed image's scale relative to its real size; null fits it to the viewer.
+  let zoom = $state<number | null>(null);
+  let naturalWidth = $state(0);
+  let viewerImage = $state<HTMLImageElement | null>(null);
+  const zoomedWidth = $derived(zoom !== null && naturalWidth > 0 ? Math.round(naturalWidth * zoom) : null);
+
+  const PRIMARY_MOUSE_BUTTON = 0;
+  // Movement below this is a click, not a drag.
+  const PAN_THRESHOLD_PX = 3;
+  let viewerStage = $state<HTMLDivElement | null>(null);
+  // Where a drag started, and how far the stage was scrolled then.
+  let pan = $state<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
+  let panMoved = false;
+
+  $effect(() => {
+    // Each image opens fitted to the viewer.
+    void attachmentViewer?.url;
+    zoom = null;
+    naturalWidth = 0;
+  });
+
+  const savedPathById = $derived(new Map((attachmentDownload?.files ?? []).map((file) => [file.id, file.path])));
 
   const summaryChanged = $derived(Boolean(issue) && summaryDraft.trim() !== issue?.summary);
   const descriptionChanged = $derived(Boolean(issue) && descriptionDraft !== issue?.description);
@@ -74,15 +142,125 @@
   }
 
   async function copyPrompt() {
-    if (!issue) {
+    if (!issue || preparingPrompt) {
       return;
     }
+    preparingPrompt = true;
     try {
-      await navigator.clipboard.writeText(buildTicketPrompt(issue));
+      const prompt = preparePrompt ? await preparePrompt(issue) : buildTicketPrompt(issue);
+      await navigator.clipboard.writeText(prompt);
       showCopyState("copied");
     } catch {
       showCopyState("failed");
+    } finally {
+      preparingPrompt = false;
     }
+  }
+
+  /** The image's scale right now: the chosen zoom, or the scale fitting gives it. */
+  function currentScale(): number {
+    if (zoom !== null) {
+      return zoom;
+    }
+    return viewerImage && naturalWidth > 0 && viewerImage.clientWidth > 0
+      ? viewerImage.clientWidth / naturalWidth
+      : ACTUAL_SIZE;
+  }
+
+  function startPan(event: MouseEvent) {
+    if (event.button !== PRIMARY_MOUSE_BUTTON || !viewerStage) {
+      return;
+    }
+    // Stops the browser from selecting text or dragging the image instead.
+    event.preventDefault();
+    panMoved = false;
+    pan = {
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: viewerStage.scrollLeft,
+      scrollTop: viewerStage.scrollTop,
+    };
+  }
+
+  function movePan(event: MouseEvent) {
+    if (!pan || !viewerStage) {
+      return;
+    }
+    const deltaX = event.clientX - pan.startX;
+    const deltaY = event.clientY - pan.startY;
+    if (Math.abs(deltaX) > PAN_THRESHOLD_PX || Math.abs(deltaY) > PAN_THRESHOLD_PX) {
+      panMoved = true;
+    }
+    viewerStage.scrollLeft = pan.scrollLeft - deltaX;
+    viewerStage.scrollTop = pan.scrollTop - deltaY;
+  }
+
+  function zoomWithWheel(event: WheelEvent) {
+    // Without Ctrl the wheel scrolls a zoomed image.
+    if (!event.ctrlKey || event.deltaY === 0) {
+      return;
+    }
+    event.preventDefault();
+    const anchor = imagePointAt(event.clientX, event.clientY);
+    zoom = event.deltaY < 0 ? zoomIn(currentScale()) : zoomOut(currentScale());
+    if (anchor) {
+      void keepPointUnderCursor(anchor, event.clientX, event.clientY);
+    }
+  }
+
+  /** Where a window position falls on the image, as fractions of its width and height. */
+  function imagePointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = viewerImage?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) {
+      return null;
+    }
+    const withinImage = (fraction: number) => Math.min(1, Math.max(0, fraction));
+    return {
+      x: withinImage((clientX - rect.left) / rect.width),
+      y: withinImage((clientY - rect.top) / rect.height),
+    };
+  }
+
+  /** Scrolls the stage so the image point is back at the window position once the new size is laid out. */
+  async function keepPointUnderCursor(point: { x: number; y: number }, clientX: number, clientY: number) {
+    await tick();
+    const rect = viewerImage?.getBoundingClientRect();
+    if (!rect || !viewerStage) {
+      return;
+    }
+    viewerStage.scrollLeft += rect.left + point.x * rect.width - clientX;
+    viewerStage.scrollTop += rect.top + point.y * rect.height - clientY;
+  }
+
+  function handleViewerKey(event: KeyboardEvent) {
+    if (!attachmentViewer) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dispatch("closeAttachmentViewer");
+      return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) {
+      return;
+    }
+    if (event.key === "+" || event.key === "=") {
+      zoom = zoomIn(currentScale());
+    } else if (event.key === "-") {
+      zoom = zoomOut(currentScale());
+    } else if (event.key === "0") {
+      zoom = null;
+    }
+  }
+
+  function attachmentMeta(attachment: JiraAttachment): string {
+    return [
+      attachment.size > 0 ? formatFileSize(attachment.size) : "",
+      attachment.author ?? "",
+      formatDate(attachment.created),
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   function startEdit() {
@@ -160,7 +338,8 @@
           class="primary-button copy-button"
           class:failed={copyState === "failed"}
           type="button"
-          title="Copy a prompt with this ticket's details to paste into your coding agent"
+          title="Copy a prompt with this ticket's details to paste into your coding agent. Attachments are downloaded first."
+          disabled={preparingPrompt}
           onclick={() => void copyPrompt()}
         >
           {#if copyState === "copied"}
@@ -242,6 +421,84 @@
         </section>
       {/if}
 
+      {#if issue.attachments.length > 0}
+        {@const firstSavedPath = attachmentDownload?.files[0]?.path}
+        <section class="detail-section" aria-label="Attachments">
+          <div class="section-head">
+            <h2>Attachments ({issue.attachments.length})</h2>
+            <div class="section-actions">
+              {#if firstSavedPath}
+                <button
+                  class="ghost-button"
+                  type="button"
+                  title={attachmentDownload?.folder}
+                  onclick={() => dispatch("revealAttachment", firstSavedPath)}
+                >
+                  <FolderOpen size={14} aria-hidden="true" />
+                  Show folder
+                </button>
+              {/if}
+              <button
+                class="ghost-button"
+                type="button"
+                disabled={downloadingAttachments}
+                title="Save every attachment to Downloads\Work Notes\{issue.key}"
+                onclick={() => dispatch("downloadAttachments", null)}
+              >
+                <Download size={14} aria-hidden="true" />
+                {downloadingAttachments ? "Downloading" : "Download all"}
+              </button>
+            </div>
+          </div>
+          <ul class="attachment-list">
+            {#each issue.attachments as attachment (attachment.id)}
+              {@const savedPath = savedPathById.get(attachment.id)}
+              {@const thumbnail = attachmentThumbnails[attachment.id]}
+              <li class="attachment">
+                <span class="attachment-main">
+                  {#if thumbnail}
+                    <button
+                      class="thumbnail-button"
+                      type="button"
+                      disabled={openingAttachmentId !== null || (!savedPath && downloadingAttachments)}
+                      aria-label={`Open ${attachment.filename}`}
+                      title={savedPath ? "Open in the app" : "Download and open in the app"}
+                      onclick={() => dispatch("openAttachment", attachment.id)}
+                    >
+                      <img src={thumbnail} alt="" />
+                    </button>
+                  {/if}
+                  <span class="attachment-name" title={attachment.filename}>{attachment.filename}</span>
+                </span>
+                <span class="attachment-meta">{attachmentMeta(attachment)}</span>
+                {#if savedPath}
+                  <button
+                    class="ghost-button"
+                    type="button"
+                    aria-label={`Show ${attachment.filename} in folder`}
+                    title={savedPath}
+                    onclick={() => dispatch("revealAttachment", savedPath)}
+                  >
+                    <FolderOpen size={14} aria-hidden="true" />
+                  </button>
+                {:else}
+                  <button
+                    class="ghost-button"
+                    type="button"
+                    disabled={downloadingAttachments}
+                    aria-label={`Download ${attachment.filename}`}
+                    title="Download"
+                    onclick={() => dispatch("downloadAttachments", attachment.id)}
+                  >
+                    <Download size={14} aria-hidden="true" />
+                  </button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+
       <section class="detail-section" aria-label="Comments">
         <h2>Comments ({issue.comments.length})</h2>
         {#each issue.comments as comment (comment.id)}
@@ -271,11 +528,112 @@
       </section>
       </div>
     </div>
+
+    {#if attachmentViewer}
+      {@const viewed = attachmentViewer}
+      <!-- Escape closes the viewer from the window key handler. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+      <div
+        class="viewer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={viewed.filename}
+        tabindex="-1"
+        onclick={(event) => {
+          if (event.target === event.currentTarget) {
+            dispatch("closeAttachmentViewer");
+          }
+        }}
+      >
+        <header class="viewer-head">
+          <span class="viewer-name" title={viewed.path}>{viewed.filename}</span>
+          <button
+            class="ghost-button"
+            type="button"
+            aria-label="Zoom out"
+            title="Zoom out (-)"
+            onclick={() => (zoom = zoomOut(currentScale()))}
+          >
+            <ZoomOut size={14} aria-hidden="true" />
+          </button>
+          <button
+            class="ghost-button zoom-level"
+            type="button"
+            aria-label="Fit to window"
+            title="Fit to window (0)"
+            onclick={() => (zoom = null)}
+          >
+            {zoomLabel(zoom)}
+          </button>
+          <button
+            class="ghost-button"
+            type="button"
+            aria-label="Zoom in"
+            title="Zoom in (+)"
+            onclick={() => (zoom = zoomIn(currentScale()))}
+          >
+            <ZoomIn size={14} aria-hidden="true" />
+          </button>
+          <button
+            class="ghost-button"
+            type="button"
+            aria-label="Show in folder"
+            title={viewed.path}
+            onclick={() => dispatch("revealAttachment", viewed.path)}
+          >
+            <FolderOpen size={14} aria-hidden="true" />
+          </button>
+          <button
+            class="ghost-button"
+            type="button"
+            aria-label="Close"
+            title="Close (Esc)"
+            onclick={() => dispatch("closeAttachmentViewer")}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </header>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div
+          class="viewer-stage"
+          class:panning={pan !== null}
+          bind:this={viewerStage}
+          onclick={(event) => {
+            // The click that ends a drag is not a request to close.
+            if (panMoved) {
+              panMoved = false;
+              return;
+            }
+            if (event.target === event.currentTarget) {
+              dispatch("closeAttachmentViewer");
+            }
+          }}
+          onmousedown={startPan}
+          onwheel={zoomWithWheel}
+        >
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <img
+            class="viewer-image"
+            class:zoomed={zoomedWidth !== null}
+            bind:this={viewerImage}
+            src={viewed.url}
+            alt={viewed.filename}
+            draggable="false"
+            style:width={zoomedWidth === null ? null : `${zoomedWidth}px`}
+            onload={() => (naturalWidth = viewerImage?.naturalWidth ?? 0)}
+            ondblclick={() => (zoom = zoom === null ? ACTUAL_SIZE : null)}
+          />
+        </div>
+      </div>
+    {/if}
   {/if}
 </section>
 
+<svelte:window onkeydown={handleViewerKey} onmousemove={movePan} onmouseup={() => (pan = null)} />
+
 <style>
   .jira-detail {
+    position: relative;
     display: flex;
     min-width: 0;
     min-height: 0;
@@ -426,6 +784,147 @@
     margin-top: 6px;
     padding-top: 16px;
     border-top: 1px solid var(--rule);
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    margin-bottom: 6px;
+  }
+
+  .section-head h2 {
+    margin-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .section-actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+  }
+
+  .attachment-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .attachment {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 30px;
+  }
+
+  .attachment-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .thumbnail-button {
+    flex: none;
+    min-height: 0;
+    margin: 4px 0;
+    padding: 0;
+    border-color: var(--rule);
+    overflow: hidden;
+  }
+
+  .thumbnail-button:hover:not(:disabled) {
+    border-color: var(--color-accent-hot);
+  }
+
+  .thumbnail-button img {
+    display: block;
+    width: 72px;
+    height: 48px;
+    object-fit: cover;
+  }
+
+  /* The viewer covers the ticket pane, so the list and agent stay usable. */
+  .viewer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    background: color-mix(in srgb, var(--color-app-bg) 94%, transparent);
+  }
+
+  .viewer-head {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    padding: 6px 12px 6px 24px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--color-app-bg);
+  }
+
+  .viewer-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .zoom-level {
+    min-width: 52px;
+    justify-content: center;
+    font-family: var(--font-mono);
+  }
+
+  /* Scrolls a zoomed image; a fitted one is centred by its auto margins. */
+  .viewer-stage {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 24px;
+    overflow: auto;
+  }
+
+  .viewer-image {
+    max-width: 100%;
+    max-height: 100%;
+    margin: auto;
+    object-fit: contain;
+    cursor: zoom-in;
+  }
+
+  .viewer-image.zoomed {
+    flex: none;
+    max-width: none;
+    max-height: none;
+    cursor: grab;
+  }
+
+  .viewer-stage.panning,
+  .viewer-stage.panning .viewer-image {
+    cursor: grabbing;
+  }
+
+  .attachment-name {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .attachment-meta {
+    color: var(--color-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
   }
 
   .comment {

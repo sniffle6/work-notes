@@ -18,6 +18,10 @@ use crate::jira::{
 };
 use crate::services::jira::{connect, jira_status, JiraEnvironment, JiraStatus};
 use crate::services::jira_agent::{AgentProgress, JiraAgentService, NEW_THREAD_TITLE};
+use crate::services::jira_attachments::{
+    download_attachments, load_thumbnail, read_attachment_image, user_downloads_dir,
+    AttachmentDownload, AttachmentThumbnail,
+};
 use crate::services::search::SearchService;
 
 /// Emitted with [`JiraChatUpdatedPayload`] each time an agent run stores
@@ -234,6 +238,60 @@ pub async fn assign_jira_issue_to_me(
         let client = connect(&settings)?;
         client.assign(&key, Assignee::Me)?;
         Ok(client.get_issue(&key)?)
+    })
+    .await
+}
+
+/// Saves a ticket's attachments to `Downloads\Work Notes\<KEY>` and returns
+/// where each one is. `attachment_ids` limits the download; `None` saves all.
+#[tauri::command]
+pub async fn download_jira_attachments(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    attachment_ids: Option<Vec<String>>,
+) -> Result<AttachmentDownload, CommandError> {
+    let key = IssueKey::parse(&key)?;
+    let settings = state.settings.clone();
+    run_blocking(move || {
+        let downloads_dir = user_downloads_dir()?;
+        let client = connect(&settings)?;
+        Ok(download_attachments(
+            &client,
+            &key,
+            attachment_ids.as_deref(),
+            &downloads_dir,
+        )?)
+    })
+    .await
+}
+
+/// Returns Jira's small preview image of an attachment. Fails when Jira has
+/// no preview for it.
+#[tauri::command]
+pub async fn get_jira_attachment_thumbnail(
+    state: tauri::State<'_, AppState>,
+    attachment_id: String,
+) -> Result<AttachmentThumbnail, CommandError> {
+    let settings = state.settings.clone();
+    run_blocking(move || Ok(load_thumbnail(&connect(&settings)?, &attachment_id)?)).await
+}
+
+/// Returns the raw bytes of an image attachment for the in-app viewer,
+/// downloading it to the ticket folder first when needed. Fails when the
+/// file is not an image the app can show.
+#[tauri::command]
+pub async fn read_jira_attachment_image(
+    state: tauri::State<'_, AppState>,
+    key: String,
+    attachment_id: String,
+) -> Result<tauri::ipc::Response, CommandError> {
+    let key = IssueKey::parse(&key)?;
+    let settings = state.settings.clone();
+    run_blocking(move || {
+        let downloads_dir = user_downloads_dir()?;
+        let client = connect(&settings)?;
+        let bytes = read_attachment_image(&client, &key, &attachment_id, &downloads_dir)?;
+        Ok(tauri::ipc::Response::new(bytes))
     })
     .await
 }

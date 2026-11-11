@@ -4,6 +4,7 @@ pub mod capture;
 pub mod draft;
 pub mod jira;
 pub mod jira_agent;
+pub mod jira_attachments;
 pub mod note_edits;
 pub mod parse_queue;
 pub mod search;
