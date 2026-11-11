@@ -1,19 +1,32 @@
 <script lang="ts">
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import CalendarDays from "@lucide/svelte/icons/calendar-days";
+  import CircleCheck from "@lucide/svelte/icons/circle-check";
   import Flag from "@lucide/svelte/icons/flag";
   import Hash from "@lucide/svelte/icons/hash";
   import InboxIcon from "@lucide/svelte/icons/inbox";
   import ListChecks from "@lucide/svelte/icons/list-checks";
-  import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import PanelLeft from "@lucide/svelte/icons/panel-left";
+  import Plus from "@lucide/svelte/icons/plus";
+  import Settings from "@lucide/svelte/icons/settings";
+  import Ticket from "@lucide/svelte/icons/ticket";
   import Users from "@lucide/svelte/icons/users";
   import { createEventDispatcher } from "svelte";
-  import type { Snippet } from "svelte";
+  import type { Component, Snippet } from "svelte";
   import type { InboxViewMode } from "$lib/stores/inbox";
+  import { readFlag, writeFlag } from "$lib/ui-prefs";
 
   type ShellMetric = {
     label: string;
     value: string;
+  };
+
+  type NavItem = {
+    view: InboxViewMode;
+    label: string;
+    icon: Component<{ size?: number; strokeWidth?: number }>;
+    /** Label of the metric shown as this item's count. */
+    metric?: string;
   };
 
   type Props = {
@@ -32,6 +45,19 @@
     quickCapture?: Snippet;
   };
 
+  const SIDEBAR_COLLAPSED_KEY = "work-notes.sidebar-collapsed";
+  const NAV_ITEMS: NavItem[] = [
+    { view: "inbox", label: "Inbox", icon: InboxIcon, metric: "Inbox" },
+    { view: "today", label: "Calendar", icon: CalendarDays },
+    { view: "actions", label: "Actions", icon: ListChecks, metric: "Needs review" },
+    { view: "followups", label: "Follow-ups", icon: Flag, metric: "Follow-ups" },
+    { view: "jira", label: "Jira", icon: Ticket },
+    { view: "tags", label: "Tags", icon: Hash },
+    { view: "people", label: "People", icon: Users },
+    { view: "done", label: "Done", icon: CircleCheck },
+    { view: "archive", label: "Archive", icon: ArchiveIcon },
+  ];
+
   let {
     title,
     subtitle,
@@ -47,6 +73,7 @@
     children,
     quickCapture,
   }: Props = $props();
+  let collapsed = $state(readFlag(SIDEBAR_COLLAPSED_KEY, false));
 
   const dispatch = createEventDispatcher<{
     newNote: void;
@@ -56,117 +83,81 @@
 
   const visibleTags = $derived(tags.slice(0, 5));
   const hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
-  const inboxMetric = $derived(metrics.find((metric) => metric.label === "Inbox")?.value ?? "0");
-  const actionsMetric = $derived(metrics.find((metric) => metric.label === "Needs review")?.value ?? "0");
-  const followupsMetric = $derived(metrics.find((metric) => metric.label === "Follow-ups")?.value ?? "0");
   const parserBusy = $derived(parserActive || parserQueueCount > 0);
 
-  function navigate(view: InboxViewMode) {
-    dispatch("navigate", view);
+  function metricValue(label: string | undefined): string | null {
+    if (!label) {
+      return null;
+    }
+    return metrics.find((metric) => metric.label === label)?.value ?? "0";
+  }
+
+  function toggleSidebar() {
+    collapsed = !collapsed;
+    writeFlag(SIDEBAR_COLLAPSED_KEY, collapsed);
+  }
+
+  function handleShortcut(event: KeyboardEvent) {
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      toggleSidebar();
+    }
   }
 </script>
 
+<svelte:window onkeydown={handleShortcut} />
+
 <div class="app-shell" class:theme-memphis={themeId === "memphis"} data-theme={themeId} style={themeStyle}>
-  <aside class="sidebar" aria-label="Workspace">
+  <aside class="sidebar" class:collapsed aria-label="Workspace">
     <div class="sidebar-scroll">
-      <div class="brand-block">
-        <div class="brand-mark" aria-hidden="true">WN</div>
+      <div class="brand-row">
         <div class="brand-copy">
-          <p>{workspace}</p>
           <h1>{title}</h1>
+          <p>{workspace}</p>
         </div>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
+          onclick={toggleSidebar}
+        >
+          <PanelLeft size={15} strokeWidth={1.8} aria-hidden="true" />
+        </button>
       </div>
 
-      <button class="capture-button" type="button" onclick={() => dispatch("newNote")}>
-        <span class="capture-icon" aria-hidden="true">+</span>
-        <span>{subtitle ? "New note" : "Capture"}</span>
-        <span class="key-row" aria-hidden="true"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span>
+      <button
+        class="capture-button"
+        type="button"
+        title="New note (Ctrl+Shift+Space)"
+        aria-label={subtitle ? "New note" : "Capture"}
+        onclick={() => dispatch("newNote")}
+      >
+        <Plus size={15} strokeWidth={2} aria-hidden="true" />
+        <span class="capture-label">{subtitle ? "New note" : "Capture"}</span>
+        <span class="capture-keys" aria-hidden="true">Ctrl Shift Space</span>
       </button>
 
       <nav class="nav-stack" aria-label="Primary">
-        <button
-          class:active={activeView === "inbox"}
-          type="button"
-          aria-current={activeView === "inbox" ? "page" : undefined}
-          aria-label="Inbox"
-          onclick={() => navigate("inbox")}
-        >
-          <span class="nav-icon" aria-hidden="true"><InboxIcon size={15} strokeWidth={2.2} /></span>
-          <span>Inbox</span>
-          <strong aria-hidden="true">{inboxMetric}</strong>
-        </button>
-        <button
-          class:active={activeView === "today"}
-          type="button"
-          aria-current={activeView === "today" ? "page" : undefined}
-          aria-label="Calendar"
-          onclick={() => navigate("today")}
-        >
-          <span class="nav-icon" aria-hidden="true"><CalendarDays size={15} strokeWidth={2.2} /></span>
-          <span>Calendar</span>
-        </button>
-        <button
-          class:active={activeView === "actions"}
-          type="button"
-          aria-current={activeView === "actions" ? "page" : undefined}
-          aria-label="Actions"
-          onclick={() => navigate("actions")}
-        >
-          <span class="nav-icon" aria-hidden="true"><ListChecks size={15} strokeWidth={2.2} /></span>
-          <span>Actions</span>
-          <strong aria-hidden="true">{actionsMetric}</strong>
-        </button>
-        <button
-          class:active={activeView === "followups"}
-          type="button"
-          aria-current={activeView === "followups" ? "page" : undefined}
-          aria-label="Follow-ups"
-          onclick={() => navigate("followups")}
-        >
-          <span class="nav-icon" aria-hidden="true"><Flag size={15} strokeWidth={2.2} /></span>
-          <span>Follow-ups</span>
-          <strong aria-hidden="true">{followupsMetric}</strong>
-        </button>
-        <button
-          class:active={activeView === "tags"}
-          type="button"
-          aria-current={activeView === "tags" ? "page" : undefined}
-          aria-label="Tags"
-          onclick={() => navigate("tags")}
-        >
-          <span class="nav-icon" aria-hidden="true"><Hash size={15} strokeWidth={2.2} /></span>
-          <span>Tags</span>
-        </button>
-        <button
-          class:active={activeView === "people"}
-          type="button"
-          aria-current={activeView === "people" ? "page" : undefined}
-          aria-label="People"
-          onclick={() => navigate("people")}
-        >
-          <span class="nav-icon" aria-hidden="true"><Users size={15} strokeWidth={2.2} /></span>
-          <span>People</span>
-        </button>
-        <button
-          class:active={activeView === "done"}
-          type="button"
-          aria-current={activeView === "done" ? "page" : undefined}
-          aria-label="Done"
-          onclick={() => navigate("done")}
-        >
-          <span class="nav-icon" aria-hidden="true"><CircleCheck size={15} strokeWidth={2.2} /></span>
-          <span>Done</span>
-        </button>
-        <button
-          class:active={activeView === "archive"}
-          type="button"
-          aria-current={activeView === "archive" ? "page" : undefined}
-          aria-label="Archive"
-          onclick={() => navigate("archive")}
-        >
-          <span class="nav-icon" aria-hidden="true"><ArchiveIcon size={15} strokeWidth={2.2} /></span>
-          <span>Archive</span>
-        </button>
+        {#each NAV_ITEMS as item (item.view)}
+          {@const count = metricValue(item.metric)}
+          {@const Icon = item.icon}
+          <button
+            class:active={activeView === item.view}
+            type="button"
+            aria-current={activeView === item.view ? "page" : undefined}
+            aria-label={item.label}
+            title={collapsed ? item.label : undefined}
+            onclick={() => dispatch("navigate", item.view)}
+          >
+            <span class="nav-icon" aria-hidden="true"><Icon size={15} strokeWidth={1.8} /></span>
+            <span class="nav-label">{item.label}</span>
+            {#if count !== null}
+              <span class="nav-count" class:empty={count === "0"} aria-hidden="true">{count}</span>
+            {/if}
+          </button>
+        {/each}
       </nav>
 
       <div class="tag-block">
@@ -188,14 +179,16 @@
 
     <div class="parser-footer" class:active={parserBusy} role="status" aria-label="Parser activity" aria-live="polite">
       <span class="parser-dot" class:spinning={parserBusy} aria-hidden="true"></span>
-      <div>
+      <div class="parser-copy">
         <p>{parserBusy ? "Parsing notes" : "Parser ready"}</p>
         <small>
           <span>{parserCommand || "codex.cmd"}</span>
           <span>{parserQueueCount} in queue</span>
         </small>
       </div>
-      <button class="settings-button" type="button" aria-label="Settings" onclick={() => dispatch("settings")}>*</button>
+      <button class="icon-button" type="button" aria-label="Settings" title="Settings" onclick={() => dispatch("settings")}>
+        <Settings size={15} strokeWidth={1.8} aria-hidden="true" />
+      </button>
     </div>
   </aside>
 
@@ -216,8 +209,7 @@
     overflow: hidden;
     color: var(--color-text-primary);
     background: var(--color-app-bg);
-    font-family:
-      "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     letter-spacing: 0;
   }
@@ -228,176 +220,130 @@
     background-color: var(--color-app-bg);
     background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-text-muted) 22%, transparent) 1px, transparent 0);
     background-size: 12px 12px;
-    font-family:
-      "Space Grotesk", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Space Grotesk", var(--font-ui);
   }
 
   .sidebar {
     position: relative;
     z-index: 2;
     display: flex;
-    flex: 0 0 220px;
+    flex: 0 0 208px;
     flex-direction: column;
     height: 100vh;
     min-height: 0;
     min-width: 0;
-    border-right: 1px solid var(--color-border-default);
-    background: color-mix(in srgb, var(--color-surface-1) 86%, var(--color-app-bg));
+    border-right: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--color-surface-1) 55%, var(--color-app-bg));
     overflow: hidden;
+    transition: flex-basis 140ms ease;
+  }
+
+  .sidebar.collapsed {
+    flex-basis: 48px;
   }
 
   .theme-memphis .sidebar {
-    border-right-width: 2px;
+    border-right: 2px solid var(--color-border-default);
     background: var(--color-surface-1);
-  }
-
-  .theme-memphis .sidebar::after {
-    position: absolute;
-    top: 18px;
-    right: -13px;
-    width: 0;
-    height: 0;
-    border-color: transparent transparent transparent var(--color-accent-primary);
-    border-style: solid;
-    border-width: 8px 0 8px 12px;
-    content: "";
   }
 
   .sidebar-scroll {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     min-height: 0;
-    padding: 14px 10px 10px;
+    padding: 10px 8px;
+    overflow-x: hidden;
     overflow-y: auto;
   }
 
-  .brand-block {
+  .brand-row {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 0 6px;
-  }
-
-  .brand-mark {
-    display: grid;
-    width: 26px;
-    height: 26px;
-    place-items: center;
-    border-radius: 7px;
-    color: var(--color-surface-1);
-    background: var(--color-accent-primary);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 11px;
-    font-weight: 800;
-  }
-
-  .theme-memphis .brand-mark {
-    border: 2px solid var(--color-border-default);
-    box-shadow: 2px 2px 0 var(--color-border-default);
-    color: var(--color-surface-input);
+    gap: 6px;
+    min-height: 30px;
+    padding-left: 8px;
   }
 
   .brand-copy {
+    flex: 1 1 auto;
     min-width: 0;
-    line-height: 1.2;
+    line-height: 1.25;
+  }
+
+  h1 {
+    margin: 0;
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    font-weight: var(--weight-strong);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .brand-copy p,
   .tag-block p {
     margin: 0;
     color: var(--color-text-muted);
-    font-size: 10.5px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11px;
   }
 
-  .theme-memphis .brand-copy p {
-    color: var(--color-accent-primary);
+  .icon-button {
+    display: grid;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-s);
+    color: var(--color-text-muted);
+    background: transparent;
+    cursor: pointer;
   }
 
-  h1 {
-    margin: 1px 0 0;
+  .icon-button:hover {
     color: var(--color-text-primary);
-    font-size: 13.5px;
-    font-weight: 750;
-    line-height: 1.2;
+    background: var(--color-surface-2);
   }
 
   .capture-button {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 34px;
-    padding: 0 8px 0 9px;
-    border: 1px solid var(--color-accent-primary);
-    border-radius: 8px;
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+    border-radius: var(--radius-m);
     color: var(--color-text-primary);
-    background: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-surface-1));
+    background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
     font: inherit;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
+    white-space: nowrap;
     cursor: pointer;
+  }
+
+  .capture-button:hover {
+    background: color-mix(in srgb, var(--color-accent-primary) 24%, transparent);
   }
 
   .theme-memphis .capture-button {
     border: 2px solid var(--color-border-default);
-    border-radius: 10px;
     color: var(--color-surface-input);
     background: var(--color-accent-primary);
     box-shadow: var(--shadow-card);
   }
 
-  .capture-icon {
-    display: grid;
-    width: 22px;
-    height: 22px;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--color-surface-1);
-    background: var(--color-accent-primary);
-    font-weight: 900;
-  }
-
-  .theme-memphis .capture-icon {
-    color: var(--color-accent-primary);
-    background: var(--color-surface-input);
-  }
-
-  .key-row {
-    display: inline-flex;
-    gap: 2px;
-  }
-
-  kbd {
-    display: inline-grid;
-    min-width: 16px;
-    height: 17px;
-    place-items: center;
-    padding: 0 4px;
-    border: 1px solid var(--color-border-default);
-    border-bottom-width: 2px;
-    border-radius: 4px;
+  .capture-keys {
+    margin-left: auto;
     color: var(--color-text-muted);
-    background: var(--color-surface-2);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 700;
-    line-height: 1;
   }
 
-  .theme-memphis kbd {
-    border-width: 1.5px;
-    color: var(--color-text-primary);
-    background: var(--color-surface-1);
-    box-shadow: 1px 1px 0 var(--color-border-default);
-  }
-
-  .capture-button kbd {
+  .theme-memphis .capture-keys {
     color: currentColor;
-    background: color-mix(in srgb, var(--color-surface-input) 20%, transparent);
   }
 
   .nav-stack {
@@ -407,150 +353,127 @@
   }
 
   .nav-stack button {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     min-height: 28px;
-    padding: 0 9px;
-    border: 1px solid transparent;
-    border-radius: 6px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--radius-s);
     color: var(--color-text-muted);
     background: transparent;
     font: inherit;
-    font-weight: 650;
-    text-decoration: none;
     text-align: left;
+    white-space: nowrap;
     cursor: pointer;
   }
 
   .nav-icon {
     display: grid;
-    width: 18px;
-    height: 18px;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
     place-items: center;
-    color: var(--color-text-muted);
   }
 
-  .nav-stack button:hover,
+  .nav-label {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .nav-stack button:hover {
+    color: var(--color-text-primary);
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+  }
+
   .nav-stack button.active {
     color: var(--color-text-primary);
     background: var(--color-surface-2);
-  }
-
-  .nav-stack button:hover .nav-icon,
-  .nav-stack button.active .nav-icon {
-    color: var(--color-text-primary);
+    font-weight: var(--weight-medium);
   }
 
   .theme-memphis .nav-stack button.active {
-    border-color: var(--color-border-default);
-    background: var(--color-surface-2);
     box-shadow: 2px 2px 0 var(--color-border-default);
   }
 
-  .nav-stack strong {
-    min-width: 22px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    color: var(--color-accent-primary);
-    background: color-mix(in srgb, var(--color-accent-primary) 13%, var(--color-surface-2));
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  .nav-count {
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
     font-size: 11px;
-    line-height: 1.2;
-    text-align: center;
   }
 
-  .theme-memphis .nav-stack strong {
-    color: var(--color-surface-input);
-    background: var(--color-accent-primary);
+  .nav-count.empty {
+    opacity: 0.45;
   }
 
   .tag-block {
     display: grid;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
+    padding: 0 8px;
   }
 
   .tag-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    padding: 0 6px;
+    gap: 2px 10px;
   }
 
   .tag-chip,
   .quiet {
-    display: inline-flex;
-    align-items: center;
-    min-height: 22px;
-    padding: 0 8px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 999px;
     color: var(--color-text-muted);
-    background: var(--color-surface-1);
-    font-size: 11.5px;
-    font-weight: 650;
+    font-size: 12px;
+    line-height: 1.6;
   }
 
-  .theme-memphis .tag-chip {
-    border-width: 1.5px;
-    color: var(--color-text-primary);
-    background: var(--color-surface-1);
+  .tag-chip::before {
+    content: "#";
+    opacity: 0.55;
   }
 
   .quiet {
-    border-color: transparent;
-    background: transparent;
+    opacity: 0.75;
   }
 
   .parser-footer {
-    display: grid;
+    display: flex;
     flex: 0 0 auto;
-    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 9px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--color-border-default);
-    background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
+    min-height: 44px;
+    padding: 6px 8px 6px 14px;
+    border-top: 1px solid var(--rule);
   }
 
   .parser-footer.active {
-    background: color-mix(in srgb, var(--color-accent-hot) 14%, var(--color-surface-2));
+    background: color-mix(in srgb, var(--color-accent-hot) 12%, transparent);
   }
 
   .theme-memphis .parser-footer {
-    border-top-width: 2px;
+    border-top: 2px solid var(--color-border-default);
     background: var(--color-surface-2);
   }
 
-  .theme-memphis .parser-footer.active {
-    background: color-mix(in srgb, var(--color-accent-hot) 24%, var(--color-surface-2));
-  }
-
   .parser-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
     background: var(--color-status-success);
   }
 
-  .theme-memphis .parser-dot {
-    border: 1.5px solid var(--color-border-default);
-  }
-
   .parser-dot.spinning {
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
     border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
     border-top-color: var(--color-accent-hot);
     background: transparent;
     animation: parser-spin 0.8s linear infinite;
   }
 
-  .theme-memphis .parser-dot.spinning {
-    border-color: color-mix(in srgb, var(--color-border-default) 55%, var(--color-accent-hot));
-    border-top-color: var(--color-accent-hot);
+  .parser-copy {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .parser-footer p,
@@ -564,15 +487,14 @@
 
   .parser-footer p {
     font-size: 12px;
-    font-weight: 700;
   }
 
   .parser-footer small {
     display: flex;
-    gap: 5px;
+    gap: 6px;
     color: var(--color-text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 11px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
   }
 
   .parser-footer small span {
@@ -581,30 +503,64 @@
     white-space: nowrap;
   }
 
+  /* Collapsed: an icon rail. Names stay available through aria-label and title. */
+  .sidebar.collapsed .sidebar-scroll {
+    padding: 10px 6px;
+  }
+
+  .sidebar.collapsed .brand-row {
+    justify-content: center;
+    padding-left: 0;
+  }
+
+  .sidebar.collapsed .brand-copy,
+  .sidebar.collapsed .capture-label,
+  .sidebar.collapsed .capture-keys,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .tag-block,
+  .sidebar.collapsed .parser-copy,
+  .sidebar.collapsed .parser-dot:not(.spinning) {
+    display: none;
+  }
+
+  .sidebar.collapsed .capture-button,
+  .sidebar.collapsed .nav-stack button {
+    position: relative;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .sidebar.collapsed .nav-count {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 50%;
+    color: transparent;
+    background: var(--color-accent-hot);
+  }
+
+  .sidebar.collapsed .nav-count.empty {
+    display: none;
+  }
+
+  .sidebar.collapsed .parser-footer {
+    flex-direction: column;
+    justify-content: center;
+    padding: 6px;
+  }
+
   @keyframes parser-spin {
     to {
       transform: rotate(360deg);
     }
   }
 
-  .settings-button {
-    display: grid;
-    width: 26px;
-    height: 26px;
-    place-items: center;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    color: var(--color-text-muted);
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .settings-button:hover,
-  .settings-button:focus-visible {
-    border-color: var(--color-border-default);
-    color: var(--color-text-primary);
-    background: var(--color-surface-1);
-    outline: none;
+  button:focus-visible {
+    outline: 2px solid var(--color-accent-hot);
+    outline-offset: 1px;
   }
 
   .content-region {
@@ -622,16 +578,20 @@
   }
 
   @media (max-width: 860px) {
-    .sidebar {
-      flex-basis: 190px;
+    .sidebar:not(.collapsed) {
+      flex-basis: 180px;
     }
 
-    .key-row {
+    .capture-keys {
       display: none;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .sidebar {
+      transition: none;
+    }
+
     .parser-dot.spinning {
       animation: none;
     }

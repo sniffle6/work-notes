@@ -95,6 +95,33 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS jira_chat_threads (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS jira_chat_messages (
+          id TEXT PRIMARY KEY,
+          thread_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          payload TEXT,
+          status TEXT,
+          result TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(thread_id) REFERENCES jira_chat_threads(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS note_jira_links (
+          note_id TEXT NOT NULL,
+          issue_key TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(note_id, issue_key),
+          FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_notes_created_at
           ON notes(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_notes_parse_status
@@ -111,6 +138,8 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           ON parse_jobs(status, created_at);
         CREATE INDEX IF NOT EXISTS idx_parse_runs_note_id
           ON parse_runs(note_id);
+        CREATE INDEX IF NOT EXISTS idx_jira_chat_messages_thread_id_created_at
+          ON jira_chat_messages(thread_id, created_at);
         ",
     )?;
 

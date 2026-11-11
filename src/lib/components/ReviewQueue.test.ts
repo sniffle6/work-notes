@@ -35,6 +35,24 @@ describe("ReviewQueue", () => {
     expect(accept.mock.calls[0][0].detail).toBe("action-1");
     expect(dismiss.mock.calls[0][0].detail).toBe("action-1");
   });
+
+  it("collapses to its header, keeps the count visible, and remembers the choice", async () => {
+    const props = { actions: actions(), busyActionId: null, loading: false };
+    render(ReviewQueue, { props });
+    const toggle = screen.getByRole("button", { name: "Suggested actions" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    await fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Bring serial list into the Tuesday sync.")).toBeNull();
+    expect(screen.getByText("1 pending")).toBeTruthy();
+
+    cleanup();
+    render(ReviewQueue, { props });
+    expect(screen.queryByText("Bring serial list into the Tuesday sync.")).toBeNull();
+    localStorage.clear();
+  });
 });
 
 function actions(): ActionReviewItem[] {

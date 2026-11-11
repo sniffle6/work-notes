@@ -187,6 +187,51 @@ impl CodexParserProvider {
     }
 }
 
+/// Runs one `codex exec` turn whose final message must match `schema_json`.
+///
+/// Returns the raw text Codex wrote to its output file; the caller validates
+/// it. The process uses the read-only sandbox and an empty temporary working
+/// directory, and is killed after `timeout`.
+pub fn run_structured_exec(
+    program: &str,
+    schema_json: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<String, CodexParserError> {
+    let temp_dir = tempfile::Builder::new()
+        .prefix("work-notes-codex-exec-")
+        .tempdir()
+        .map_err(|source| CodexParserError::Io {
+            context: "create temporary codex working directory",
+            source,
+        })?;
+    let schema_path = temp_dir.path().join("output-schema.json");
+    fs::write(&schema_path, schema_json).map_err(|source| CodexParserError::Io {
+        context: "write codex output schema to temporary file",
+        source,
+    })?;
+    let output_path = temp_dir.path().join("output.json");
+    let command = CodexCommandBuilder::new(program)
+        .schema_path(&schema_path)
+        .output_path(&output_path)
+        .build();
+
+    run_codex_command(&command, prompt, timeout, Some(temp_dir.path()))?;
+
+    fs::read_to_string(&output_path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            CodexParserError::MissingOutput {
+                path: output_path.clone(),
+            }
+        } else {
+            CodexParserError::Io {
+                context: "read codex output",
+                source,
+            }
+        }
+    })
+}
+
 fn path_to_arg(path: impl AsRef<Path>) -> String {
     path.as_ref().to_string_lossy().into_owned()
 }
@@ -421,9 +466,81 @@ fn read_parser_result(output_path: PathBuf) -> Result<ParserOutput, CodexParserE
 #[cfg(test)]
 mod tests {
     use super::{
-        default_schema_arg_path, CodexCommandBuilder, CodexParserProvider, DEFAULT_CODEX_PROGRAM,
-        DEFAULT_MODEL, DEFAULT_SCHEMA_PATH,
+        default_schema_arg_path, run_structured_exec, CodexCommandBuilder, CodexParserError,
+        CodexParserProvider, DEFAULT_CODEX_PROGRAM, DEFAULT_MODEL, DEFAULT_SCHEMA_PATH,
     };
+    use std::time::Duration;
+
+    /// Writes a stand-in for the Codex CLI that runs `body` after reading the
+    /// `--output-schema` and `-o` arguments into `%SCHEMA%` and `%OUT%`.
+    #[cfg(windows)]
+    fn fake_codex(directory: &std::path::Path, body: &str) -> String {
+        let script = directory.join("fake-codex.cmd");
+        std::fs::write(
+            &script,
+            format!(
+                "@echo off\r\nsetlocal\r\n:next\r\nif \"%~1\"==\"\" goto run\r\n\
+                 if \"%~1\"==\"--output-schema\" set \"SCHEMA=%~2\"\r\n\
+                 if \"%~1\"==\"-o\" set \"OUT=%~2\"\r\nshift\r\ngoto next\r\n:run\r\n{body}\r\n"
+            ),
+        )
+        .expect("write fake codex");
+        script.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn structured_exec_reports_missing_command() {
+        let error = run_structured_exec(
+            "work-notes-missing-codex-binary",
+            "{}",
+            "prompt",
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, CodexParserError::MissingCommand { .. }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn structured_exec_passes_schema_file_and_returns_output_text() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let program = fake_codex(temp_dir.path(), "copy /y \"%SCHEMA%\" \"%OUT%\" >nul");
+        let schema = r#"{"type":"object"}"#;
+
+        let output = run_structured_exec(&program, schema, "prompt", Duration::from_secs(30))
+            .expect("structured exec");
+
+        assert_eq!(output, schema);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn structured_exec_reports_missing_output_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let program = fake_codex(temp_dir.path(), "exit /b 0");
+
+        let error =
+            run_structured_exec(&program, "{}", "prompt", Duration::from_secs(30)).unwrap_err();
+
+        assert!(matches!(error, CodexParserError::MissingOutput { .. }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn structured_exec_reports_non_zero_exit() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let program = fake_codex(temp_dir.path(), "echo not logged in 1>&2\r\nexit /b 3");
+
+        let error =
+            run_structured_exec(&program, "{}", "prompt", Duration::from_secs(30)).unwrap_err();
+
+        let CodexParserError::NonZeroExit { code, stderr } = error else {
+            panic!("expected non-zero exit");
+        };
+        assert_eq!(code, Some(3));
+        assert!(stderr.contains("not logged in"), "{stderr}");
+    }
 
     #[test]
     fn default_codex_program_uses_runnable_platform_shim() {

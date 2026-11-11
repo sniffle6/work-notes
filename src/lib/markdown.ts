@@ -1,15 +1,44 @@
-export function renderMarkdown(markdown: string): string {
+export type RenderMarkdownOptions = {
+  /** Keep single line breaks inside a paragraph instead of joining lines with spaces. */
+  preserveLineBreaks?: boolean;
+};
+
+const TABLE_ROW = /^\|.*\|$/;
+const TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/;
+
+export function renderMarkdown(markdown: string, options: RenderMarkdownOptions = {}): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   const paragraph: string[] = [];
   const codeLines: string[] = [];
+  const tableRows: string[][] = [];
+  let tableHasHeader = false;
   let listType: "ul" | "ol" | null = null;
   let inCodeBlock = false;
 
   function flushParagraph() {
     if (paragraph.length === 0) return;
-    output.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
+    const body = options.preserveLineBreaks
+      ? paragraph.map(renderInline).join("<br>")
+      : renderInline(paragraph.join(" "));
+    output.push(`<p>${body}</p>`);
     paragraph.length = 0;
+  }
+
+  function renderTableRow(cells: string[], cellTag: "th" | "td"): string {
+    return `<tr>${cells.map((cell) => `<${cellTag}>${renderInline(cell)}</${cellTag}>`).join("")}</tr>`;
+  }
+
+  function closeTable() {
+    if (tableRows.length === 0) return;
+    const bodyRows = tableHasHeader ? tableRows.slice(1) : tableRows;
+    output.push("<table>");
+    if (tableHasHeader) {
+      output.push(`<thead>${renderTableRow(tableRows[0], "th")}</thead>`);
+    }
+    output.push("<tbody>", ...bodyRows.map((row) => renderTableRow(row, "td")), "</tbody>", "</table>");
+    tableRows.length = 0;
+    tableHasHeader = false;
   }
 
   function closeList() {
@@ -44,6 +73,23 @@ export function renderMarkdown(markdown: string): string {
       continue;
     }
 
+    if (trimmed.length > 1 && TABLE_ROW.test(trimmed)) {
+      flushParagraph();
+      closeList();
+      const cells = trimmed
+        .slice(1, -1)
+        .split("|")
+        .map((cell) => cell.trim());
+      if (cells.every((cell) => TABLE_SEPARATOR_CELL.test(cell))) {
+        // A separator directly under the first row marks that row as the header.
+        tableHasHeader = tableHasHeader || tableRows.length === 1;
+      } else {
+        tableRows.push(cells);
+      }
+      continue;
+    }
+    closeTable();
+
     if (trimmed.startsWith("```")) {
       flushParagraph();
       closeList();
@@ -63,6 +109,13 @@ export function renderMarkdown(markdown: string): string {
       closeList();
       const level = heading[1].length;
       output.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    if (/^-{3,}$/.test(trimmed)) {
+      flushParagraph();
+      closeList();
+      output.push("<hr>");
       continue;
     }
 
@@ -87,6 +140,7 @@ export function renderMarkdown(markdown: string): string {
   if (inCodeBlock) {
     closeCodeBlock();
   }
+  closeTable();
   flushParagraph();
   closeList();
 

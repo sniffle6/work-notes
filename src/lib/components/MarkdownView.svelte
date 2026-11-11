@@ -3,10 +3,12 @@
 
   type Props = {
     markdown: string;
+    /** Keep single line breaks, for text that was not written as Markdown. */
+    preserveLineBreaks?: boolean;
   };
 
-  let { markdown }: Props = $props();
-  const html = $derived(renderMarkdown(markdown));
+  let { markdown, preserveLineBreaks = false }: Props = $props();
+  const html = $derived(renderMarkdown(markdown, { preserveLineBreaks }));
 </script>
 
 <div class="markdown-view">
@@ -27,8 +29,36 @@
   .markdown-view :global(p),
   .markdown-view :global(ul),
   .markdown-view :global(ol),
-  .markdown-view :global(pre) {
+  .markdown-view :global(pre),
+  .markdown-view :global(table) {
     margin: 0 0 12px;
+  }
+
+  .markdown-view :global(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .markdown-view :global(th),
+  .markdown-view :global(td) {
+    border: 1px solid var(--color-border-default);
+    padding: 5px 9px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .markdown-view :global(th) {
+    background: var(--color-surface-2);
+    font-weight: var(--weight-strong);
+  }
+
+  .markdown-view :global(hr) {
+    margin: 16px 0;
+    border: 0;
+    border-top: 1px solid var(--rule);
   }
 
   .markdown-view :global(h1),
@@ -36,7 +66,7 @@
   .markdown-view :global(h3),
   .markdown-view :global(h4) {
     color: var(--color-text-primary);
-    font-weight: 850;
+    font-weight: var(--weight-strong);
     line-height: 1.25;
   }
 
@@ -68,7 +98,7 @@
     padding: 1px 5px;
     color: var(--color-accent-hot);
     background: var(--color-surface-input);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 

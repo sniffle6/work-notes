@@ -139,7 +139,7 @@
 
   .panel-titlebar {
     padding: 8px 10px 8px 12px;
-    border-bottom: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--rule);
     background: var(--color-surface-2);
   }
 
@@ -159,12 +159,12 @@
 
   .title-left {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
   }
 
   .title-right {
     color: var(--color-text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10.5px;
   }
 
@@ -272,7 +272,7 @@
 
   .panel-actions {
     padding: 9px 12px 11px;
-    border-top: 1px solid var(--color-border-default);
+    border-top: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-surface-2) 55%, transparent);
   }
 
@@ -298,9 +298,9 @@
     border-radius: 4px;
     color: var(--color-text-muted);
     background: var(--color-surface-2);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: var(--weight-medium);
     line-height: 1;
   }
 
@@ -316,7 +316,7 @@
     background: var(--color-accent-primary);
     font: inherit;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
     cursor: pointer;
   }
 

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://work-notes.local/schemas/theme-agent.schema.json",
+  "title": "Work Notes Theme Agent Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "notes",
+    "tokens"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appBg",
+        "surface1",
+        "surface2",
+        "surfaceInput",
+        "borderDefault",
+        "borderStrong",
+        "textPrimary",
+        "textMuted",
+        "accentPrimary",
+        "accentHot",
+        "statusSuccess",
+        "statusWarning",
+        "statusError"
+      ],
+      "properties": {
+        "appBg": {
+          "type": "string"
+        },
+        "surface1": {
+          "type": "string"
+        },
+        "surface2": {
+          "type": "string"
+        },
+        "surfaceInput": {
+          "type": "string"
+        },
+        "borderDefault": {
+          "type": "string"
+        },
+        "borderStrong": {
+          "type": "string"
+        },
+        "textPrimary": {
+          "type": "string"
+        },
+        "textMuted": {
+          "type": "string"
+        },
+        "accentPrimary": {
+          "type": "string"
+        },
+        "accentHot": {
+          "type": "string"
+        },
+        "statusSuccess": {
+          "type": "string"
+        },
+        "statusWarning": {
+          "type": "string"
+        },
+        "statusError": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -7,8 +7,8 @@ pub mod types;
 pub mod validate;
 
 pub use codex_provider::{
-    CodexCommandBuilder, CodexCommandSpec, CodexParserError, CodexParserProvider,
-    DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH, DEFAULT_TIMEOUT,
+    run_structured_exec, CodexCommandBuilder, CodexCommandSpec, CodexParserError,
+    CodexParserProvider, DEFAULT_CODEX_PROGRAM, DEFAULT_SCHEMA_PATH, DEFAULT_TIMEOUT,
 };
 pub use directives::{extract_directives, ExtractedNote};
 pub use fake_provider::FakeParserProvider;

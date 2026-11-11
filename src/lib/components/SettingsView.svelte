@@ -5,17 +5,15 @@
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Info from "@lucide/svelte/icons/info";
   import Keyboard from "@lucide/svelte/icons/keyboard";
-  import Moon from "@lucide/svelte/icons/moon";
   import Palette from "@lucide/svelte/icons/palette";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
-  import Sun from "@lucide/svelte/icons/sun";
+  import Ticket from "@lucide/svelte/icons/ticket";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import X from "@lucide/svelte/icons/x";
   import { createEventDispatcher } from "svelte";
   import { selectLinkedWorkspaceDirectory } from "$lib/api";
-  import type { AppSettings } from "$lib/types";
-  import { themes } from "$lib/theme/themes";
-  import { groupThemeFamilies, resolveVariant, modeOf, familyOf, type ThemeFamily } from "$lib/theme/families";
+  import type { AppSettings, GeneratedTheme, JiraFilter } from "$lib/types";
+  import { allThemes, draftThemeDefinition } from "$lib/theme/custom";
   import type { ThemeDefinition } from "$lib/theme/tokens";
 
   type Props = {
@@ -24,11 +22,31 @@
     open?: boolean;
     error?: string | null;
     appVersion?: string;
+    /** Theme the theme agent built that is being previewed. */
+    themeDraft?: GeneratedTheme | null;
+    themeBusy?: boolean;
+    themeError?: string | null;
   };
 
-  type SettingsSection = "appearance" | "capture" | "parser" | "about";
+  const THEME_SUGGESTIONS = [
+    "Amber phosphor terminal",
+    "Paper logbook with blue ink",
+    "Slot floor at night: green felt and brass",
+  ];
 
-  let { settings, saving = false, open = true, error = null, appVersion = "unknown" }: Props = $props();
+  type SettingsSection = "appearance" | "capture" | "parser" | "jira" | "about";
+
+  let {
+    settings,
+    saving = false,
+    open = true,
+    error = null,
+    appVersion = "unknown",
+    themeDraft = null,
+    themeBusy = false,
+    themeError = null,
+  }: Props = $props();
+  let themeRequest = $state("");
   let activeSection = $state<SettingsSection>("appearance");
   let hotkey = $state("");
   let parserTimeoutSeconds = $state(90);
@@ -39,12 +57,20 @@
   let selectedTheme = $state("dark-compact");
   let launchAtStartup = $state(false);
   let minimizeToTray = $state(true);
+  let jiraSiteUrl = $state("");
+  let jiraProjectKey = $state("");
+  let jiraFilters = $state<JiraFilter[]>([]);
 
   const dispatch = createEventDispatcher<{
     save: AppSettings;
     close: void;
     selectTheme: string;
     checkUpdates: void;
+    /** Ask the theme agent for a theme, or for a change to the one being previewed. */
+    buildTheme: string;
+    keepTheme: void;
+    discardTheme: void;
+    deleteTheme: string;
   }>();
 
   $effect(() => {
@@ -57,6 +83,9 @@
     selectedTheme = settings?.selectedTheme ?? "dark-compact";
     launchAtStartup = settings?.launchAtStartup ?? false;
     minimizeToTray = settings?.minimizeToTray ?? true;
+    jiraSiteUrl = settings?.jiraSiteUrl ?? "";
+    jiraProjectKey = settings?.jiraProjectKey ?? "";
+    jiraFilters = (settings?.jiraFilters ?? []).map((filter) => ({ ...filter }));
   });
 
   function handleSubmit() {
@@ -69,7 +98,24 @@
       selectedTheme,
       launchAtStartup,
       minimizeToTray,
+      jiraSiteUrl: jiraSiteUrl.trim(),
+      jiraProjectKey: jiraProjectKey.trim(),
+      // Resolved by the backend from the site URL; passed through untouched.
+      jiraCloudId: settings?.jiraCloudId ?? "",
+      jiraFilters: jiraFilters
+        .map((filter) => ({ name: filter.name.trim(), jql: filter.jql.trim() }))
+        .filter((filter) => filter.name || filter.jql),
+      // Managed from the Appearance section; passed through untouched.
+      customThemes: settings?.customThemes ?? [],
     });
+  }
+
+  function addJiraFilter() {
+    jiraFilters = [...jiraFilters, { name: "", jql: "" }];
+  }
+
+  function removeJiraFilter(index: number) {
+    jiraFilters = jiraFilters.filter((_, filterIndex) => filterIndex !== index);
   }
 
   async function addLinkedWorkspacePath() {
@@ -106,25 +152,24 @@
     return paths;
   }
 
-  function themePreviewStyle(theme: ThemeDefinition): string {
+  const themeList = $derived(allThemes(settings?.customThemes ?? []));
+  const customThemeIds = $derived(new Set((settings?.customThemes ?? []).map((theme) => theme.id)));
+  const draftDefinition = $derived(themeDraft ? draftThemeDefinition(themeDraft) : null);
+
+  // A small block painted in the theme's own colours.
+  function specimenStyle(theme: ThemeDefinition): string {
     const tokens = theme.tokens;
 
     return [
-      `--preview-bg: ${tokens["app.bg"]}`,
-      `--preview-surface: ${tokens["surface.1"]}`,
-      `--preview-surface-2: ${tokens["surface.2"]}`,
-      `--preview-border: ${tokens["border.default"]}`,
-      `--preview-text: ${tokens["text.primary"]}`,
-      `--preview-muted: ${tokens["text.muted"]}`,
-      `--preview-accent: ${tokens["accent.primary"]}`,
-      `--preview-hot: ${tokens["accent.hot"]}`,
+      `--specimen-bg: ${tokens["app.bg"]}`,
+      `--specimen-surface: ${tokens["surface.2"]}`,
+      `--specimen-border: ${tokens["border.default"]}`,
+      `--specimen-text: ${tokens["text.primary"]}`,
+      `--specimen-muted: ${tokens["text.muted"]}`,
+      `--specimen-accent: ${tokens["accent.primary"]}`,
+      `--specimen-hot: ${tokens["accent.hot"]}`,
     ].join("; ");
   }
-
-  const families = groupThemeFamilies(themes);
-  let selectedMode = $derived(modeOf(selectedTheme));
-  let selectedFamily = $derived(familyOf(selectedTheme));
-  let selectedFamilyObject = $derived(families.find((family) => family.family === selectedFamily));
 
   function applyTheme(themeId: string): void {
     if (themeId === selectedTheme) {
@@ -134,14 +179,19 @@
     dispatch("selectTheme", themeId);
   }
 
-  function selectFamily(family: ThemeFamily): void {
-    applyTheme(resolveVariant(family, selectedMode).id);
+  function requestTheme(): void {
+    const text = themeRequest.trim();
+    if (!text || themeBusy) {
+      return;
+    }
+    themeRequest = "";
+    dispatch("buildTheme", text);
   }
 
-  function applyVariant(mode: "dark" | "light"): void {
-    const target = selectedFamilyObject?.[mode];
-    if (target) {
-      applyTheme(target.id);
+  function handleThemeKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      requestTheme();
     }
   }
 </script>
@@ -157,7 +207,6 @@
   >
     <header class="settings-header">
       <div>
-        <p class="eyebrow">Work Notes</p>
         <h2 id="settings-title">Settings</h2>
         <p id="settings-description">Configure capture, parser behavior, and local workspace context.</p>
       </div>
@@ -196,6 +245,15 @@
           <span>Parser</span>
         </button>
         <button
+          class:active={activeSection === "jira"}
+          type="button"
+          aria-current={activeSection === "jira" ? "page" : undefined}
+          onclick={() => (activeSection = "jira")}
+        >
+          <Ticket size={16} strokeWidth={2.2} />
+          <span>Jira</span>
+        </button>
+        <button
           class:active={activeSection === "about"}
           type="button"
           aria-current={activeSection === "about" ? "page" : undefined}
@@ -215,76 +273,126 @@
           {#if activeSection === "appearance"}
             <section class="settings-section" aria-labelledby="appearance-title">
               <div class="section-head">
-                <span class="section-icon" aria-hidden="true"><Palette size={18} strokeWidth={2.2} /></span>
                 <div>
                   <h3 id="appearance-title">Appearance</h3>
-                  <p>Choose the theme used across the main window and quick capture.</p>
+                  <p>Pick a theme, or describe one and have it built. A theme applies to the main window and quick capture as soon as you pick it.</p>
                 </div>
               </div>
 
-              <div class="variant-toggle" role="group" aria-label="Theme mode">
-                <button
-                  class:active={selectedMode === "dark"}
-                  type="button"
-                  aria-pressed={selectedMode === "dark"}
-                  disabled={!selectedFamilyObject?.dark}
-                  onclick={() => applyVariant("dark")}
-                >
-                  <Moon size={14} strokeWidth={2.2} aria-hidden="true" />
-                  <span>Dark</span>
-                </button>
-                <button
-                  class:active={selectedMode === "light"}
-                  type="button"
-                  aria-pressed={selectedMode === "light"}
-                  disabled={!selectedFamilyObject?.light}
-                  onclick={() => applyVariant("light")}
-                >
-                  <Sun size={14} strokeWidth={2.2} aria-hidden="true" />
-                  <span>Light</span>
-                </button>
+              {#snippet specimen(theme: ThemeDefinition)}
+                <span class="specimen" style={specimenStyle(theme)} aria-hidden="true">
+                  <span class="specimen-text">Aa</span>
+                  <span class="specimen-row"></span>
+                  <span class="specimen-dot hot"></span>
+                  <span class="specimen-dot"></span>
+                </span>
+              {/snippet}
+
+              <div class="theme-list" role="group" aria-label="Theme">
+                {#each themeList as theme (theme.id)}
+                  <div class="theme-row" class:active={theme.id === selectedTheme}>
+                    <button
+                      class="theme-pick"
+                      type="button"
+                      aria-label={theme.label}
+                      aria-pressed={theme.id === selectedTheme}
+                      onclick={() => applyTheme(theme.id)}
+                    >
+                      {@render specimen(theme)}
+                      <span class="theme-name">{theme.label}</span>
+                      <span class="theme-mode">{theme.mode === "dark" ? "Dark" : "Light"}</span>
+                      <span class="theme-in-use">
+                        {#if theme.id === selectedTheme}
+                          <Check size={13} strokeWidth={2.2} aria-hidden="true" />In use
+                        {/if}
+                      </span>
+                    </button>
+                    {#if customThemeIds.has(theme.id)}
+                      <button
+                        class="theme-delete"
+                        type="button"
+                        aria-label={`Delete ${theme.label}`}
+                        title="Delete this theme"
+                        onclick={() => dispatch("deleteTheme", theme.id)}
+                      >
+                        <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
               </div>
 
-              <div class="theme-grid" aria-label="Theme">
-                {#each families as family}
-                  {@const previewVariant = resolveVariant(family, selectedMode)}
-                  <button
-                    class:active={family.family === selectedFamily}
-                    class="theme-card"
-                    type="button"
-                    aria-label={family.label}
-                    aria-pressed={family.family === selectedFamily}
-                    onclick={() => selectFamily(family)}
-                  >
-                    <span class="theme-preview" style={themePreviewStyle(previewVariant)}>
-                      <span class="preview-sidebar">
-                        <span class="preview-nav"></span>
-                        <span class="preview-nav"></span>
-                        <span class="preview-nav"></span>
-                      </span>
-                      <span class="preview-content">
-                        <span class="preview-note">
-                          <span class="preview-line strong"></span>
-                          <span class="preview-line"></span>
-                          <span class="preview-line short"></span>
-                          <span class="preview-button">Accent</span>
-                        </span>
-                      </span>
-                    </span>
-                    <span class="theme-meta">
-                      <strong>{family.label}</strong>
-                      {#if family.family === selectedFamily}
-                        <span class="selected-badge"><Check size={13} strokeWidth={2.5} />In use</span>
+              <div class="theme-builder">
+                <div>
+                  <h4>Build a theme</h4>
+                  <p>Describe the look. The theme agent picks the colours and checks that text stays readable. It takes about half a minute.</p>
+                </div>
+
+                {#if draftDefinition && themeDraft}
+                  <div class="theme-draft" role="group" aria-label={`Previewing ${themeDraft.name}`}>
+                    {@render specimen(draftDefinition)}
+                    <div class="draft-copy">
+                      <strong>{themeDraft.name} <small>previewing</small></strong>
+                      <span>{themeDraft.notes}</span>
+                      {#if themeDraft.warnings.length > 0}
+                        <ul class="draft-warnings">
+                          {#each themeDraft.warnings as warning}
+                            <li>{warning}</li>
+                          {/each}
+                        </ul>
                       {/if}
-                    </span>
+                    </div>
+                    <div class="draft-actions">
+                      <button class="quiet" type="button" disabled={themeBusy} onclick={() => dispatch("discardTheme")}>
+                        Discard
+                      </button>
+                      <button class="primary" type="button" disabled={themeBusy} onclick={() => dispatch("keepTheme")}>
+                        Keep theme
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="theme-request">
+                  <textarea
+                    bind:value={themeRequest}
+                    aria-label="Describe a theme"
+                    rows="2"
+                    placeholder={themeDraft
+                      ? "Ask for a change, for example: warmer accent, lighter panels"
+                      : "For example: amber phosphor terminal, low glare"}
+                    onkeydown={handleThemeKeydown}
+                  ></textarea>
+                  <button
+                    class="primary"
+                    type="button"
+                    aria-label="Build theme"
+                    disabled={themeBusy || !themeRequest.trim()}
+                    onclick={requestTheme}
+                  >
+                    {themeDraft ? "Change" : "Build"}
                   </button>
-                {/each}
+                </div>
+
+                {#if themeBusy}
+                  <p class="theme-status" role="status">
+                    <span class="theme-spinner" aria-hidden="true"></span>
+                    Building theme
+                  </p>
+                {:else if themeError}
+                  <p class="theme-error" role="alert">{themeError}</p>
+                {:else if !themeDraft}
+                  <div class="theme-suggestions">
+                    {#each THEME_SUGGESTIONS as suggestion}
+                      <button type="button" onclick={() => (themeRequest = suggestion)}>{suggestion}</button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             </section>
           {:else if activeSection === "capture"}
             <section class="settings-section" aria-labelledby="capture-title">
               <div class="section-head">
-                <span class="section-icon" aria-hidden="true"><Keyboard size={18} strokeWidth={2.2} /></span>
                 <div>
                   <h3 id="capture-title">Capture</h3>
                   <p>Keep quick capture predictable from the keyboard and tray.</p>
@@ -337,7 +445,6 @@
           {:else if activeSection === "parser"}
             <section class="settings-section" aria-labelledby="parser-title">
               <div class="section-head">
-                <span class="section-icon" aria-hidden="true"><Bot size={18} strokeWidth={2.2} /></span>
                 <div>
                   <h3 id="parser-title">Parser</h3>
                   <p>Codex runs locally and can inspect linked folders when a note needs repo context.</p>
@@ -421,10 +528,91 @@
                 {/if}
               </div>
             </section>
+          {:else if activeSection === "jira"}
+            <section class="settings-section" aria-labelledby="jira-title">
+              <div class="section-head">
+                <div>
+                  <h3 id="jira-title">Jira</h3>
+                  <p>
+                    Sign-in comes from the JIRA_EMAIL (or BITBUCKET_EMAIL) and JIRA_API_TOKEN environment
+                    variables. The token is never stored here.
+                  </p>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label class="field">
+                  <span>Jira site URL</span>
+                  <input
+                    bind:value={jiraSiteUrl}
+                    aria-label="Jira site URL"
+                    disabled={!settings || saving}
+                    placeholder="https://your-team.atlassian.net"
+                  />
+                  <small>The address you open Jira at in the browser.</small>
+                </label>
+
+                <label class="field">
+                  <span>Project key</span>
+                  <input
+                    bind:value={jiraProjectKey}
+                    aria-label="Project key"
+                    disabled={!settings || saving}
+                    placeholder="ABC"
+                  />
+                  <small>New tickets are created here. It also scopes the built-in filters.</small>
+                </label>
+              </div>
+
+              <div class="workspace-field">
+                <div class="workspace-head">
+                  <div>
+                    <span>Ticket filters</span>
+                    <small>
+                      Leave empty for the built-in filters: my open tickets, all open, and unassigned.
+                    </small>
+                  </div>
+                  <button class="secondary compact" type="button" disabled={!settings || saving} onclick={addJiraFilter}>
+                    Add filter
+                  </button>
+                </div>
+
+                {#if jiraFilters.length}
+                  <ul class="jira-filter-list" aria-label="Jira ticket filters">
+                    {#each jiraFilters as filter, index}
+                      <li>
+                        <input
+                          bind:value={filter.name}
+                          aria-label={`Filter ${index + 1} name`}
+                          disabled={!settings || saving}
+                          placeholder="Name"
+                        />
+                        <input
+                          bind:value={filter.jql}
+                          aria-label={`Filter ${index + 1} JQL`}
+                          disabled={!settings || saving}
+                          placeholder="project = ABC AND statusCategory != Done"
+                        />
+                        <button
+                          class="remove-path"
+                          type="button"
+                          disabled={!settings || saving}
+                          aria-label={`Remove filter ${filter.name || index + 1}`}
+                          onclick={() => removeJiraFilter(index)}
+                        >
+                          <Trash2 size={14} strokeWidth={2.2} />
+                        </button>
+                      </li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <p class="empty-workspaces">Using the built-in filters.</p>
+                {/if}
+              </div>
+            </section>
           {:else}
             <section class="settings-section" aria-labelledby="about-title">
               <div class="section-head">
-                <span class="section-icon" aria-hidden="true"><Info size={18} strokeWidth={2.2} /></span>
                 <div>
                   <h3 id="about-title">About</h3>
                   <p>Installed version and update controls for this app.</p>
@@ -516,7 +704,7 @@
     justify-content: space-between;
     gap: 16px;
     padding: 18px 20px 16px;
-    border-bottom: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--rule);
     background: var(--color-surface-1);
   }
 
@@ -530,20 +718,11 @@
     margin: 0;
   }
 
-  .eyebrow {
-    margin-bottom: 5px;
-    color: var(--color-accent-primary);
-    font-size: 10.5px;
-    font-weight: 850;
-    letter-spacing: 0.06em;
-    line-height: 1;
-    text-transform: uppercase;
-  }
 
   h2 {
     color: var(--color-text-primary);
     font-size: 19px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
     line-height: 1.15;
   }
 
@@ -560,7 +739,6 @@
 
   .icon-button,
   .settings-nav button,
-  .theme-card,
   .toggle,
   .remove-path,
   input,
@@ -604,7 +782,7 @@
     gap: 4px;
     min-height: 0;
     padding: 12px 10px;
-    border-right: 1px solid var(--color-border-default);
+    border-right: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-surface-1) 86%, transparent);
   }
 
@@ -624,7 +802,7 @@
     color: var(--color-text-muted);
     background: transparent;
     font-size: 13px;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
     text-align: left;
     cursor: pointer;
   }
@@ -674,172 +852,303 @@
 
   .section-head {
     display: grid;
-    grid-template-columns: 34px minmax(0, 1fr);
-    align-items: start;
     gap: 10px;
-  }
-
-  .section-icon {
-    display: grid;
-    width: 34px;
-    height: 34px;
-    place-items: center;
-    border: 1px solid var(--color-border-default);
-    border-radius: 7px;
-    color: var(--color-accent-primary);
-    background: var(--color-surface-1);
   }
 
   h3 {
     color: var(--color-text-primary);
     font-size: 16px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
     line-height: 1.2;
   }
 
-  .theme-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+  h4 {
+    margin: 0 0 3px;
+    font-size: 13px;
+    font-weight: var(--weight-strong);
   }
 
-  .variant-toggle {
-    display: inline-flex;
-    gap: 4px;
-    margin-bottom: 12px;
-    padding: 3px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 8px;
-    background: var(--color-surface-1);
+  /* Themes are a ruled list: one line each, painted with their own colours. */
+  .theme-list {
+    border-top: 1px solid var(--rule);
   }
 
-  .variant-toggle button {
-    display: inline-flex;
+  .theme-row {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .theme-row.active {
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+
+  .theme-pick {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: auto minmax(0, 1fr) 48px 72px;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
     border: 0;
-    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--color-text-primary);
     background: transparent;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  /* Built-in themes have no delete button; keep their columns aligned with rows that do. */
+  .theme-row:not(:has(.theme-delete)) .theme-pick {
+    padding-right: 44px;
+  }
+
+  .theme-pick:hover {
+    background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+
+  .theme-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .theme-row.active .theme-name {
+    font-weight: var(--weight-medium);
+  }
+
+  .theme-mode,
+  .theme-in-use {
     color: var(--color-text-muted);
     font-size: 12px;
-    font-weight: 700;
+  }
+
+  .theme-in-use {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    color: var(--color-accent-hot);
+  }
+
+  .theme-delete {
+    display: grid;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    margin-right: 6px;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-s);
+    padding: 0;
+    color: var(--color-text-muted);
+    background: transparent;
     cursor: pointer;
   }
 
-  .variant-toggle button.active {
-    background: var(--color-surface-2);
-    color: var(--color-text-primary);
+  .theme-delete:hover {
+    color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
   }
 
-  .variant-toggle button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .specimen {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 5px;
+    width: 92px;
+    height: 28px;
+    border: 1px solid var(--specimen-border);
+    border-radius: var(--radius-s);
+    padding: 0 7px;
+    background: var(--specimen-bg);
   }
 
-  .theme-card {
+  .specimen-text {
+    color: var(--specimen-text);
+    font-size: 12px;
+    font-weight: var(--weight-medium);
+    line-height: 1;
+  }
+
+  .specimen-row {
+    height: 10px;
+    border-radius: 2px;
+    background: var(--specimen-surface);
+  }
+
+  .specimen-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--specimen-accent);
+  }
+
+  .specimen-dot.hot {
+    background: var(--specimen-hot);
+  }
+
+  .theme-builder {
     display: grid;
     gap: 10px;
-    padding: 10px;
-    background: var(--color-surface-1);
-    cursor: pointer;
-    text-align: left;
+    margin-top: 8px;
   }
 
-  .theme-card.active,
-  .theme-card:hover,
-  .theme-card:focus-visible {
-    border-color: var(--color-accent-primary);
-    outline: none;
+  .theme-builder p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
-  .theme-preview {
+  .theme-request {
     display: grid;
-    grid-template-columns: 52px minmax(0, 1fr);
-    height: 108px;
-    overflow: hidden;
-    border: 1px solid var(--preview-border);
-    border-radius: 6px;
-    background: var(--preview-bg);
-  }
-
-  .preview-sidebar {
-    border-right: 1px solid var(--preview-border);
-    background: var(--preview-surface);
-  }
-
-  .preview-content {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
     gap: 8px;
-    padding: 12px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-m);
+    padding: 8px 8px 8px 10px;
+    background: var(--color-surface-input);
   }
 
-  .preview-line {
-    display: block;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--preview-muted);
+  .theme-request:focus-within {
+    border-color: var(--color-accent-hot);
   }
 
-  .preview-line.strong {
-    background: var(--preview-text);
+  .theme-request textarea {
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    color: var(--color-text-primary);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    outline: none;
+    resize: none;
   }
 
-  .preview-line.short {
-    width: 62%;
+  .theme-draft {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 12px;
+    border-left: 2px solid var(--color-accent-hot);
+    padding: 4px 0 4px 12px;
   }
 
-  .preview-nav {
-    height: 8px;
-    margin: 8px 8px 0;
-    border-radius: 999px;
-    background: var(--preview-muted);
+  .draft-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
-  .preview-note {
+  .draft-copy strong {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: var(--weight-medium);
+  }
+
+  .draft-copy small {
+    margin-left: 6px;
+    color: var(--color-accent-hot);
+    font-size: 11.5px;
+    font-weight: var(--weight-regular);
+  }
+
+  .draft-warnings {
+    margin: 2px 0 0;
+    padding-left: 16px;
+    color: var(--color-status-warning);
+    font-size: 12px;
+  }
+
+  .draft-actions {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    border: 1px solid var(--preview-border);
-    border-radius: 6px;
-    background: var(--preview-surface-2);
+    gap: 6px;
   }
 
-  .preview-button {
-    align-self: flex-start;
-    margin-top: 2px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: var(--preview-accent);
-    color: var(--preview-bg);
-    font-size: 9px;
-    font-weight: 800;
+  .quiet {
+    min-height: 30px;
+    border: 0;
+    border-radius: var(--radius-s);
+    padding: 0 10px;
+    color: var(--color-text-muted);
+    background: transparent;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
   }
 
-  .theme-meta,
-  .selected-badge {
+  .quiet:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-surface-2);
+  }
+
+  .theme-status {
     display: flex;
     align-items: center;
+    gap: 8px;
   }
 
-  .theme-meta {
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 22px;
+  .theme-spinner {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, var(--color-accent-hot) 24%, transparent);
+    border-top-color: var(--color-accent-hot);
+    border-radius: 50%;
+    animation: theme-spin 0.8s linear infinite;
   }
 
-  .theme-meta strong {
+  @keyframes theme-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .theme-builder .theme-error {
+    border-left: 2px solid var(--color-status-error);
+    padding: 6px 10px;
+    color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 8%, transparent);
+    overflow-wrap: anywhere;
+  }
+
+  .theme-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+
+  .theme-suggestions button {
+    border: 0;
+    padding: 2px 0;
+    color: var(--color-text-muted);
+    background: transparent;
+    font: inherit;
     font-size: 12.5px;
+    cursor: pointer;
   }
 
-  .selected-badge {
-    gap: 4px;
-    color: var(--color-accent-primary);
-    font-size: 11px;
-    font-weight: 800;
+  .theme-suggestions button::before {
+    margin-right: 6px;
+    content: "›";
+  }
+
+  .theme-suggestions button:hover {
+    color: var(--color-accent-hot);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .theme-spinner {
+      animation: none;
+    }
   }
 
   .field-row {
@@ -861,7 +1170,7 @@
     display: block;
     color: var(--color-text-primary);
     font-size: 12px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
   }
 
   input {
@@ -882,7 +1191,7 @@
     align-items: center;
     gap: 16px;
     padding: 14px 0;
-    border-top: 1px solid var(--color-border-default);
+    border-top: 1px solid var(--rule);
   }
 
   .toggle-row:first-of-type {
@@ -963,6 +1272,21 @@
     white-space: nowrap;
   }
 
+  .jira-filter-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .jira-filter-list li {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr) 30px;
+    align-items: center;
+    gap: 8px;
+  }
+
   .remove-path {
     display: grid;
     width: 30px;
@@ -1012,9 +1336,8 @@
   .about-label {
     color: var(--color-text-muted);
     font-size: 11px;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
     line-height: 1;
-    text-transform: uppercase;
   }
 
   .about-card strong,
@@ -1046,7 +1369,7 @@
     justify-content: flex-end;
     gap: 8px;
     padding: 12px 18px;
-    border-top: 1px solid var(--color-border-default);
+    border-top: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-surface-1) 94%, var(--color-app-bg));
   }
 
@@ -1055,7 +1378,7 @@
     min-height: 32px;
     padding: 0 14px;
     font-size: 12px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
     cursor: pointer;
   }
 
@@ -1095,7 +1418,7 @@
       flex-direction: row;
       overflow-x: auto;
       border-right: 0;
-      border-bottom: 1px solid var(--color-border-default);
+      border-bottom: 1px solid var(--rule);
     }
 
     .settings-nav button {
@@ -1106,7 +1429,6 @@
       padding: 18px;
     }
 
-    .theme-grid,
     .field-row,
     .about-card {
       grid-template-columns: 1fr;

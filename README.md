@@ -8,7 +8,8 @@ Work Notes is a Windows-only local desktop app for fast coworker drive-by note c
 - Svelte, SvelteKit, TypeScript, and Vite for the UI.
 - Rust for commands, SQLite persistence, parsing, and window ownership.
 - SQLite with FTS5 for local note storage and search.
-- Local `codex exec` for parsing through the user's Codex subscription.
+- Local `codex exec` for parsing and the Jira chat agent through the user's Codex subscription.
+- Jira Cloud REST API for tickets, using an API token from the environment.
 
 The app does not use OpenAI API keys or an OpenAI API billing path. Parser work runs through the local Codex CLI and the user's Codex subscription.
 
@@ -48,6 +49,14 @@ Raw note text is saved first and remains the source of truth. Parser output is s
 Saving a note enqueues parse work. The background parser worker claims one queued job at a time, invokes local `codex exec`, validates JSON against `schemas/parse-note.schema.json`, records the parse run, and applies a title, Markdown cleaned text, summary, tags, and suggested action items as derived data.
 
 Action items stay `suggested` until accepted, dismissed, or completed by the user. Failed or unsatisfactory parses can be retried, including with user feedback.
+
+## Jira
+
+The Jira view pulls the tickets that need work, shows each ticket with its comments, and lets you move, edit, comment on, assign, and create tickets without opening Jira. A note can be turned into a ticket, and the ticket key stays linked to the note.
+
+The view also has a chat agent that runs through local `codex exec`. It looks tickets up on its own. Any change it wants to make appears as a proposal, and nothing reaches Jira until you approve it.
+
+Jira needs a site URL and project key in Settings, plus the `JIRA_EMAIL` (or `BITBUCKET_EMAIL`) and `JIRA_API_TOKEN` environment variables. Setup, the agent contract, and the trust rules are in [docs/jira.md](docs/jira.md).
 
 ## Verification
 

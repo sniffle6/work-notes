@@ -30,6 +30,8 @@ On Windows the default configured executable is `codex.cmd`. The app writes the 
 
 The parser pins `gpt-5.6-luna` rather than inheriting the user's global Codex model.
 
+`run_structured_exec` in the same module runs one `codex exec` turn against a caller-supplied output schema with the same flags, from an empty temporary directory, and returns the raw output text. The Jira chat agent uses it; see `docs/jira.md`. It shares the parser's failure modes for a missing command, timeout, non-zero exit, and missing output file.
+
 Settings that affect later jobs:
 
 - `codexCommandPath`

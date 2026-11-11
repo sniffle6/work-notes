@@ -1,9 +1,20 @@
 <script lang="ts">
+  import ArchiveIcon from "@lucide/svelte/icons/archive";
+  import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
+  import Flag from "@lucide/svelte/icons/flag";
+  import MessageSquareText from "@lucide/svelte/icons/message-square-text";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+  import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
+  import StickyNote from "@lucide/svelte/icons/sticky-note";
+  import TicketPlus from "@lucide/svelte/icons/ticket-plus";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import { createEventDispatcher, tick } from "svelte";
   import type { ActionItem, NoteDetail, ParseStatus, ReviewStatus } from "$lib/types";
 
   import CleanedEditor from "./CleanedEditor.svelte";
   import MarkdownView from "./MarkdownView.svelte";
+
+  type ToolbarIcon = typeof RefreshCw;
 
   type Props = {
     note: NoteDetail | null;
@@ -48,6 +59,7 @@
     addCardNote: { text: string; done: () => void };
     saveCleaned: { title: string; summary: string; cleanedText: string; done: () => void };
     saveRaw: { rawText: string; done: () => void };
+    createJiraTicket: void;
   }>();
 
   $effect(() => {
@@ -302,42 +314,56 @@
         <span>{reviewLabel(note.reviewStatus)}</span>
       </div>
       <div class="header-actions">
+        {#snippet toolbarButton(label: string, Icon: ToolbarIcon, onclick: () => void, danger = false)}
+          <button
+            class={danger ? "delete-button" : "ghost-button"}
+            type="button"
+            aria-label={label}
+            title={label}
+            {onclick}
+            disabled={loading}
+          >
+            <Icon size={15} strokeWidth={1.8} aria-hidden="true" />
+            <span class="button-label">{label}</span>
+          </button>
+        {/snippet}
+
         {#if note.parseStatus === "failed"}
-          <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Retry</button>
+          {@render toolbarButton("Retry", RefreshCw, requestRetry)}
         {/if}
         {#if note.parseStatus === "parsed"}
-          <button class="ghost-button" type="button" onclick={requestRetry} disabled={loading}>Reparse</button>
+          {@render toolbarButton("Reparse", RefreshCw, requestRetry)}
         {/if}
-        <button class="ghost-button" type="button" onclick={openReparseDialog} disabled={loading}>
-          Reparse with feedback
-        </button>
-        <button class="ghost-button" type="button" onclick={() => (cardNoteOpen = true)} disabled={loading}>
-          Add note
-        </button>
+        {@render toolbarButton("Reparse with feedback", MessageSquareText, openReparseDialog)}
+        <span class="toolbar-rule" aria-hidden="true"></span>
+        {@render toolbarButton("Add note", StickyNote, () => (cardNoteOpen = true))}
+        {@render toolbarButton("Create Jira ticket", TicketPlus, () => dispatch("createJiraTicket"))}
         {#if note.isArchived}
-          <button class="ghost-button" type="button" onclick={() => dispatch("restoreNote")} disabled={loading}>
-            Restore
-          </button>
-          <button class="delete-button" type="button" onclick={() => dispatch("permanentlyDeleteNote")} disabled={loading}>
-            Delete permanently
-          </button>
+          <span class="toolbar-rule" aria-hidden="true"></span>
+          {@render toolbarButton("Restore", ArchiveRestore, () => dispatch("restoreNote"))}
+          {@render toolbarButton("Delete permanently", Trash2, () => dispatch("permanentlyDeleteNote"), true)}
         {:else if note.completedAt}
-          <button class="ghost-button" type="button" onclick={() => dispatch("reopenNote")} disabled={loading}>
-            Reopen
-          </button>
+          <span class="toolbar-rule" aria-hidden="true"></span>
+          {@render toolbarButton("Reopen", RotateCcw, () => dispatch("reopenNote"))}
         {:else}
-          <button class="ghost-button" type="button" onclick={openFollowupForm} disabled={loading}>
-            Add follow-up
-          </button>
-          <button class="delete-button" type="button" onclick={() => dispatch("deleteNote")} disabled={loading}>
-            Archive
-          </button>
+          {@render toolbarButton("Add follow-up", Flag, openFollowupForm)}
+          <span class="toolbar-rule" aria-hidden="true"></span>
+          {@render toolbarButton("Archive", ArchiveIcon, () => dispatch("deleteNote"), true)}
         {/if}
       </div>
     </header>
 
     <div class="detail-scroll">
       <h1>{note.title}</h1>
+
+      {#if note.jiraIssueKeys?.length}
+        <div class="jira-links" role="group" aria-label="Jira tickets">
+          <span>Jira</span>
+          {#each note.jiraIssueKeys as issueKey}
+            <span class="jira-key">{issueKey}</span>
+          {/each}
+        </div>
+      {/if}
 
       {#if followupOpen}
         <form class="followup-form" aria-label="Manual follow-up" onsubmit={dispatchCreateFollowup}>
@@ -664,14 +690,16 @@
     background-size: 12px 12px;
   }
 
+  /* One line at any width: the labels drop out before anything wraps. */
   .detail-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 22px;
-    border-bottom: 1px solid var(--color-border-default);
-    background: var(--color-surface-1);
+    min-height: 44px;
+    padding: 0 10px 0 28px;
+    border-bottom: 1px solid var(--rule);
+    container-type: inline-size;
   }
 
   :global([data-theme="memphis"]) .detail-header {
@@ -680,11 +708,20 @@
 
   .head-meta {
     display: flex;
-    flex-wrap: wrap;
+    flex: 0 1 auto;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+    overflow: hidden;
     color: var(--color-text-muted);
     font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .head-meta span:not(.status-dot) + span:not(.status-dot)::before {
+    margin-right: 8px;
+    content: "·";
+    opacity: 0.6;
   }
 
   .status-dot {
@@ -727,9 +764,35 @@
 
   .header-actions {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .header-actions button {
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
+    white-space: nowrap;
+  }
+
+  .toolbar-rule {
+    width: 1px;
+    height: 16px;
+    margin: 0 4px;
+    background: var(--rule);
+  }
+
+  @container (max-width: 980px) {
+    .header-actions .button-label {
+      display: none;
+    }
+
+    .header-actions button {
+      width: 30px;
+      padding: 0;
+      justify-content: center;
+    }
   }
 
   .ghost-button,
@@ -742,12 +805,11 @@
   .secondary-action,
   .primary-action {
     border: 1px solid var(--color-border-default);
-    border-radius: 6px;
+    border-radius: var(--radius-s);
     color: var(--color-text-primary);
     background: var(--color-surface-input);
     font: inherit;
-    font-size: 12px;
-    font-weight: 800;
+    font-size: 12.5px;
     cursor: pointer;
   }
 
@@ -755,10 +817,19 @@
   .delete-button {
     min-height: 28px;
     padding: 0 10px;
+    border-color: transparent;
+    color: var(--color-text-muted);
+    background: transparent;
   }
 
-  .delete-button {
+  .ghost-button:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-surface-2);
+  }
+
+  .delete-button:hover:not(:disabled) {
     color: var(--color-status-error);
+    background: color-mix(in srgb, var(--color-status-error) 10%, transparent);
   }
 
   .ghost-button:disabled,
@@ -789,9 +860,26 @@
   h1 {
     margin-bottom: 18px;
     color: var(--color-text-primary);
-    font-size: 22px;
-    font-weight: 800;
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: var(--weight-strong);
     line-height: 1.3;
+  }
+
+  .jira-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: -8px 0 16px;
+    color: var(--color-text-muted);
+    font-size: 11.5px;
+    font-weight: var(--weight-medium);
+  }
+
+  .jira-key {
+    color: var(--color-accent-hot);
+    font-family: var(--font-mono);
   }
 
   :global([data-theme="memphis"]) h1 {
@@ -816,7 +904,7 @@
 
   .detail-banner span {
     color: var(--color-text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 
@@ -874,15 +962,12 @@
   .summary-block,
   .resolution-block {
     margin-bottom: 22px;
-    padding: 10px 14px;
-    border-left: 3px solid var(--color-accent-primary);
-    border-radius: 0 8px 8px 0;
-    background: color-mix(in srgb, var(--color-accent-primary) 10%, var(--color-surface-1));
+    padding: 2px 0 2px 14px;
+    border-left: 2px solid var(--color-accent-hot);
   }
 
   .resolution-block {
     border-left-color: var(--color-status-success);
-    background: color-mix(in srgb, var(--color-status-success) 10%, var(--color-surface-1));
   }
 
   :global([data-theme="memphis"]) .summary-block {
@@ -898,11 +983,9 @@
   .followup-form label span,
   .card-note-form label span {
     display: inline-flex;
-    color: var(--color-accent-primary);
-    font-size: 11px;
-    font-weight: 900;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-weight: var(--weight-medium);
   }
 
   .summary-block p,
@@ -992,7 +1075,7 @@
     padding: 14px 16px;
     color: var(--color-text-muted);
     background: var(--color-surface-input);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12.5px;
     line-height: 1.6;
     white-space: pre-wrap;
@@ -1034,7 +1117,7 @@
   .reparse-dialog h2 {
     color: var(--color-text-primary);
     font-size: 15px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
     line-height: 1.2;
   }
 
@@ -1174,7 +1257,7 @@
 
   .section-head small {
     color: var(--color-text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10.5px;
   }
 
@@ -1192,10 +1275,8 @@
   .card-note {
     display: grid;
     gap: 5px;
-    padding: 10px 12px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 7px;
-    background: var(--color-surface-1);
+    padding-left: 12px;
+    border-left: 2px solid var(--rule);
   }
 
   .card-note p {
@@ -1215,23 +1296,18 @@
     display: inline-flex;
     align-items: center;
     min-height: 22px;
-    padding: 0 9px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 999px;
+    margin-right: 6px;
     color: var(--color-text-muted);
-    background: var(--color-surface-1);
-    font-size: 11.5px;
-    font-weight: 700;
+    font-size: 12.5px;
+  }
+
+  .tag::before {
+    content: "#";
+    opacity: 0.55;
   }
 
   :global([data-theme="memphis"]) .tag {
-    border-width: 2px;
     color: var(--color-text-primary);
-  }
-
-  .muted {
-    border-color: transparent;
-    background: transparent;
   }
 
   .actions {
@@ -1259,7 +1335,6 @@
   .action-row p {
     color: var(--color-text-primary);
     font-size: 13px;
-    font-weight: 700;
     line-height: 1.4;
   }
 
@@ -1326,7 +1401,7 @@
     border-radius: 14px;
     color: var(--color-text-primary);
     background: var(--color-surface-2);
-    font-weight: 900;
+    font-weight: var(--weight-strong);
   }
 
   :global([data-theme="memphis"]) .empty-mark {
@@ -1358,8 +1433,6 @@
 
   .edited-indicator {
     font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--text-muted);
     border: 1px solid var(--border-default);
     border-radius: 999px;
@@ -1367,11 +1440,6 @@
   }
 
   @media (max-width: 700px) {
-    .detail-header {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
     .detail-scroll {
       padding: 18px 18px 48px;
     }

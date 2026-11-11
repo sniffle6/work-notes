@@ -1,19 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import { jiraFallbackCommand } from "$lib/jira-fallback";
 import { withRetry } from "$lib/retry";
 import type {
   ActionItem,
   ActionReviewItem,
   AppSettings,
   CardNote,
+  CustomTheme,
   FollowupItem,
   FollowupState,
+  GeneratedTheme,
   InboxFilters,
+  JiraAccount,
+  JiraChatMessage,
+  JiraChatThread,
+  JiraFilter,
+  JiraIssueDetail,
+  JiraIssueDraft,
+  JiraIssueEdit,
+  JiraIssueSummary,
+  JiraStatus,
   NoteDetail,
   NoteListItem,
   ParseStatus,
   ReviewStatus,
   Tag,
+  ThemeTokenValues,
 } from "$lib/types";
 
 type UnknownRecord = Record<string, unknown>;
@@ -247,6 +260,9 @@ const RETRYABLE_READ_COMMANDS = new Set([
 
 async function invokeCommand<T>(command: string, args?: UnknownRecord): Promise<T> {
   if (!isTauriRuntime()) {
+    if (command.includes("jira")) {
+      return jiraFallbackCommand(command, args) as T;
+    }
     return fallbackCommand<T>(command, args);
   }
 
@@ -339,6 +355,11 @@ export async function reopenActionItem(actionItemId: string): Promise<void> {
   await invokeCommand<void>("reopen_action_item", { actionId: actionItemId });
 }
 
+/** Stops tracking an open follow-up without marking it done. */
+export async function dropFollowup(actionItemId: string): Promise<void> {
+  await invokeCommand<void>("drop_followup", { actionId: actionItemId });
+}
+
 export async function listFollowups(limit = 200): Promise<FollowupItem[]> {
   const followups = await invokeCommand<unknown[]>("list_followups", { limit });
   return followups.map(normalizeFollowupItem);
@@ -380,6 +401,15 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
   return normalizeSettings(saved);
 }
 
+/**
+ * Asks the theme agent for a theme. With `base`, the agent refines that
+ * theme. Nothing is saved; keep the result through the settings.
+ */
+export async function generateTheme(request: string, base: GeneratedTheme | null = null): Promise<GeneratedTheme> {
+  const theme = await invokeCommand<unknown>("generate_theme", { request, base });
+  return normalizeGeneratedTheme(theme);
+}
+
 export async function selectLinkedWorkspaceDirectory(): Promise<string | null> {
   if (!isTauriRuntime()) {
     return null;
@@ -403,6 +433,113 @@ export async function hideQuickCapture(): Promise<void> {
   await invokeCommand<void>("hide_quick_capture");
 }
 
+export async function getJiraStatus(): Promise<JiraStatus> {
+  const record = asRecord(await invokeCommand<unknown>("get_jira_status"));
+  return {
+    configured: getBoolean(record, "configured") ?? false,
+    missing: normalizeStringArray(getArray(record, "missing")),
+    siteUrl: getString(record, "siteUrl") ?? "",
+    projectKey: getString(record, "projectKey") ?? "",
+    filters: normalizeJiraFilters(getArray(record, "filters")),
+  };
+}
+
+export async function testJiraConnection(): Promise<JiraAccount> {
+  const record = asRecord(await invokeCommand<unknown>("test_jira_connection"));
+  return {
+    accountId: getString(record, "accountId") ?? "",
+    displayName: getString(record, "displayName") ?? "",
+  };
+}
+
+export async function listJiraIssues(jql: string): Promise<JiraIssueSummary[]> {
+  const issues = await invokeCommand<unknown[]>("list_jira_issues", { jql });
+  return issues.map(normalizeJiraIssueSummary);
+}
+
+export async function getJiraIssue(key: string): Promise<JiraIssueDetail> {
+  return normalizeJiraIssueDetail(await invokeCommand<unknown>("get_jira_issue", { key }));
+}
+
+export async function listJiraIssueTypes(): Promise<string[]> {
+  return normalizeStringArray(await invokeCommand<unknown[]>("list_jira_issue_types"));
+}
+
+export async function createJiraIssue(draft: JiraIssueDraft): Promise<JiraIssueDetail> {
+  const created = await invokeCommand<unknown>("create_jira_issue", {
+    input: {
+      issueType: draft.issueType,
+      summary: draft.summary,
+      description: draft.description,
+      noteId: draft.noteId ?? null,
+    },
+  });
+  return normalizeJiraIssueDetail(created);
+}
+
+export async function updateJiraIssue(key: string, edit: JiraIssueEdit): Promise<JiraIssueDetail> {
+  const updated = await invokeCommand<unknown>("update_jira_issue", {
+    key,
+    input: { summary: edit.summary ?? null, description: edit.description ?? null },
+  });
+  return normalizeJiraIssueDetail(updated);
+}
+
+export async function transitionJiraIssue(key: string, transitionId: string): Promise<JiraIssueDetail> {
+  return normalizeJiraIssueDetail(
+    await invokeCommand<unknown>("transition_jira_issue", { key, transitionId }),
+  );
+}
+
+export async function addJiraComment(key: string, text: string): Promise<JiraIssueDetail> {
+  return normalizeJiraIssueDetail(await invokeCommand<unknown>("add_jira_comment", { key, text }));
+}
+
+export async function assignJiraIssueToMe(key: string): Promise<JiraIssueDetail> {
+  return normalizeJiraIssueDetail(await invokeCommand<unknown>("assign_jira_issue_to_me", { key }));
+}
+
+export async function listJiraChatThreads(): Promise<JiraChatThread[]> {
+  const threads = await invokeCommand<unknown[]>("list_jira_chat_threads");
+  return threads.map(normalizeJiraChatThread);
+}
+
+export async function createJiraChatThread(): Promise<JiraChatThread> {
+  return normalizeJiraChatThread(await invokeCommand<unknown>("create_jira_chat_thread"));
+}
+
+export async function deleteJiraChatThread(threadId: string): Promise<void> {
+  await invokeCommand<void>("delete_jira_chat_thread", { threadId });
+}
+
+export async function listJiraChatMessages(threadId: string): Promise<JiraChatMessage[]> {
+  const messages = await invokeCommand<unknown[]>("list_jira_chat_messages", { threadId });
+  return messages.map(normalizeJiraChatMessage);
+}
+
+/** Runs one agent turn. Resolves with the whole thread once the agent stops. */
+export async function sendJiraChatMessage(
+  threadId: string,
+  text: string,
+  focusIssueKey: string | null,
+): Promise<JiraChatMessage[]> {
+  const messages = await invokeCommand<unknown[]>("send_jira_chat_message", {
+    threadId,
+    text,
+    focusIssueKey,
+  });
+  return messages.map(normalizeJiraChatMessage);
+}
+
+/** Approves (runs) or rejects a change the agent proposed. */
+export async function resolveJiraChatProposal(
+  messageId: string,
+  approve: boolean,
+): Promise<JiraChatMessage[]> {
+  const messages = await invokeCommand<unknown[]>("resolve_jira_chat_proposal", { messageId, approve });
+  return messages.map(normalizeJiraChatMessage);
+}
+
 export const api = {
   saveCaptureNote,
   listInbox,
@@ -421,6 +558,7 @@ export const api = {
   dismissActionItem,
   completeActionItem,
   reopenActionItem,
+  dropFollowup,
   listFollowups,
   createManualFollowup,
   updateFollowupState,
@@ -430,7 +568,120 @@ export const api = {
   saveSettings,
   selectLinkedWorkspaceDirectory,
   hideQuickCapture,
+  getJiraStatus,
+  testJiraConnection,
+  listJiraIssues,
+  getJiraIssue,
+  listJiraIssueTypes,
+  createJiraIssue,
+  updateJiraIssue,
+  transitionJiraIssue,
+  addJiraComment,
+  assignJiraIssueToMe,
+  listJiraChatThreads,
+  createJiraChatThread,
+  deleteJiraChatThread,
+  listJiraChatMessages,
+  sendJiraChatMessage,
+  resolveJiraChatProposal,
 };
+
+function normalizeJiraFilters(values: unknown[]): JiraFilter[] {
+  return values
+    .map((value) => {
+      const record = asRecord(value);
+      return {
+        name: (getString(record, "name") ?? "").trim(),
+        jql: (getString(record, "jql") ?? "").trim(),
+      };
+    })
+    .filter((filter) => filter.name && filter.jql);
+}
+
+function normalizeJiraIssueSummary(value: unknown): JiraIssueSummary {
+  const record = asRecord(value);
+  const category = getString(record, "statusCategory");
+
+  return {
+    key: getString(record, "key") ?? "",
+    summary: getString(record, "summary") ?? "",
+    status: getString(record, "status") ?? "Unknown",
+    statusCategory:
+      category === "new" || category === "indeterminate" || category === "done" ? category : "unknown",
+    issueType: getString(record, "issueType") ?? "",
+    priority: getNullableString(record, "priority"),
+    assignee: getNullableString(record, "assignee"),
+    updated: getNullableString(record, "updated"),
+    labels: normalizeStringArray(getArray(record, "labels")),
+    url: getString(record, "url") ?? "",
+  };
+}
+
+function normalizeJiraIssueDetail(value: unknown): JiraIssueDetail {
+  const record = asRecord(value);
+
+  return {
+    ...normalizeJiraIssueSummary(value),
+    description: getString(record, "description") ?? "",
+    descriptionEditableLosslessly: getBoolean(record, "descriptionEditableLosslessly") ?? true,
+    reporter: getNullableString(record, "reporter"),
+    parentKey: getNullableString(record, "parentKey"),
+    comments: getArray(record, "comments").map((comment) => {
+      const commentRecord = asRecord(comment);
+      return {
+        id: getString(commentRecord, "id") ?? "",
+        author: getString(commentRecord, "author") ?? "",
+        created: getString(commentRecord, "created") ?? "",
+        body: getString(commentRecord, "body") ?? "",
+      };
+    }),
+    transitions: getArray(record, "transitions").map((transition) => {
+      const transitionRecord = asRecord(transition);
+      return {
+        id: getString(transitionRecord, "id") ?? "",
+        name: getString(transitionRecord, "name") ?? "",
+        toStatus: getString(transitionRecord, "toStatus") ?? "",
+      };
+    }),
+  };
+}
+
+function normalizeJiraChatThread(value: unknown): JiraChatThread {
+  const record = asRecord(value);
+
+  return {
+    id: getString(record, "id") ?? "",
+    title: getString(record, "title") ?? "New chat",
+    createdAt: getString(record, "createdAt") ?? fallbackNow,
+    updatedAt: getString(record, "updatedAt") ?? fallbackNow,
+  };
+}
+
+const JIRA_CHAT_ROLES: JiraChatMessage["role"][] = ["user", "assistant", "tool", "proposal"];
+const JIRA_CHAT_STATUSES: NonNullable<JiraChatMessage["status"]>[] = [
+  "pending",
+  "approved",
+  "rejected",
+  "failed",
+  "ok",
+  "error",
+];
+
+function normalizeJiraChatMessage(value: unknown): JiraChatMessage {
+  const record = asRecord(value);
+  const role = getString(record, "role");
+  const status = getString(record, "status");
+
+  return {
+    id: getString(record, "id") ?? "",
+    threadId: getString(record, "threadId") ?? "",
+    role: JIRA_CHAT_ROLES.find((candidate) => candidate === role) ?? "assistant",
+    content: getString(record, "content") ?? "",
+    status: JIRA_CHAT_STATUSES.find((candidate) => candidate === status) ?? null,
+    result: getNullableString(record, "result"),
+    createdAt: getString(record, "createdAt") ?? fallbackNow,
+  };
+}
 
 function toBackendFilters(filters: InboxFilters): UnknownRecord {
   return {
@@ -456,6 +707,11 @@ function toBackendSettings(settings: AppSettings): UnknownRecord {
     theme: settings.selectedTheme,
     launchAtStartup: settings.launchAtStartup ?? false,
     minimizeToTray: settings.minimizeToTray ?? true,
+    jiraSiteUrl: settings.jiraSiteUrl ?? "",
+    jiraProjectKey: settings.jiraProjectKey ?? "",
+    jiraCloudId: settings.jiraCloudId ?? "",
+    jiraFilters: settings.jiraFilters ?? [],
+    customThemes: settings.customThemes ?? [],
   };
 }
 
@@ -612,6 +868,99 @@ function normalizeSettings(value: unknown): AppSettings {
     ),
     launchAtStartup: getBoolean(record, "launchAtStartup", "launch_at_startup") ?? fallbackSettings.launchAtStartup,
     minimizeToTray: getBoolean(record, "minimizeToTray", "minimize_to_tray") ?? fallbackSettings.minimizeToTray,
+    jiraSiteUrl: getString(record, "jiraSiteUrl") ?? "",
+    jiraProjectKey: getString(record, "jiraProjectKey") ?? "",
+    jiraCloudId: getString(record, "jiraCloudId") ?? "",
+    jiraFilters: normalizeJiraFilters(getArray(record, "jiraFilters")),
+    customThemes: normalizeCustomThemes(getArray(record, "customThemes")),
+  };
+}
+
+const THEME_TOKEN_KEYS: (keyof ThemeTokenValues)[] = [
+  "appBg",
+  "surface1",
+  "surface2",
+  "surfaceInput",
+  "borderDefault",
+  "borderStrong",
+  "textPrimary",
+  "textMuted",
+  "accentPrimary",
+  "accentHot",
+  "statusSuccess",
+  "statusWarning",
+  "statusError",
+];
+
+function normalizeThemeTokens(value: unknown): ThemeTokenValues | null {
+  const record = asRecord(value);
+  const tokens = {} as ThemeTokenValues;
+  for (const key of THEME_TOKEN_KEYS) {
+    const colour = getString(record, key);
+    if (!colour) {
+      return null;
+    }
+    tokens[key] = colour;
+  }
+  return tokens;
+}
+
+function normalizeThemeMode(value: string | undefined): "dark" | "light" {
+  return value === "light" ? "light" : "dark";
+}
+
+// A saved theme missing an id, a name, or a colour cannot be painted, so it is left out.
+function normalizeCustomThemes(values: unknown[] | undefined): CustomTheme[] {
+  const themes: CustomTheme[] = [];
+  for (const value of values ?? []) {
+    const record = asRecord(value);
+    const id = getString(record, "id");
+    const label = getString(record, "label");
+    const tokens = normalizeThemeTokens(record.tokens);
+    if (id && label && tokens) {
+      themes.push({ id, label, mode: normalizeThemeMode(getString(record, "mode")), tokens });
+    }
+  }
+  return themes;
+}
+
+function normalizeGeneratedTheme(value: unknown): GeneratedTheme {
+  const record = asRecord(value);
+  const tokens = normalizeThemeTokens(record.tokens);
+  if (!tokens) {
+    throw new Error("The theme agent returned an incomplete theme.");
+  }
+  return {
+    name: getString(record, "name") ?? "Custom theme",
+    mode: normalizeThemeMode(getString(record, "mode")),
+    tokens,
+    notes: getString(record, "notes") ?? "",
+    warnings: normalizeStringArray(getArray(record, "warnings")),
+  };
+}
+
+// The browser preview has no Codex, so it answers with one fixed theme.
+function fallbackGeneratedTheme(request: string): GeneratedTheme {
+  return {
+    name: "Amber Terminal",
+    mode: "dark",
+    tokens: {
+      appBg: "#1c1410",
+      surface1: "#241a14",
+      surface2: "#2e2219",
+      surfaceInput: "#17100c",
+      borderDefault: "#4a382b",
+      borderStrong: "#6b5240",
+      textPrimary: "#f3e6d4",
+      textMuted: "#b39b84",
+      accentPrimary: "#a8591c",
+      accentHot: "#ffb454",
+      statusSuccess: "#8fbf6a",
+      statusWarning: "#e6b450",
+      statusError: "#e06c5a",
+    },
+    notes: `Sample theme for the browser preview. You asked for: ${request}`,
+    warnings: [],
   };
 }
 
@@ -809,6 +1158,14 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       }
       return undefined as T;
     }
+    case "drop_followup": {
+      const actionItemId = String(args?.actionId ?? "");
+      const action = fallbackNotes.flatMap((note) => note.actionItems).find((item) => item.id === actionItemId);
+      if (action && action.status === "accepted") {
+        action.status = "dismissed";
+      }
+      return undefined as T;
+    }
     case "list_followups":
       return fallbackNotes
         .filter((note) => !note.isArchived)
@@ -890,6 +1247,8 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
             ),
         )
         .slice(0, Number(args?.limit ?? 100)) as T;
+    case "generate_theme":
+      return fallbackGeneratedTheme(String(args?.request ?? "")) as T;
     case "get_settings":
       return normalizeSettings(fallbackSettings) as T;
     case "save_settings":

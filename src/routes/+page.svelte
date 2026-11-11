@@ -8,6 +8,7 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import FollowupsView from "$lib/components/FollowupsView.svelte";
   import InboxList from "$lib/components/InboxList.svelte";
+  import JiraView from "$lib/components/JiraView.svelte";
   import NoteDetail from "$lib/components/NoteDetail.svelte";
   import PeopleView from "$lib/components/PeopleView.svelte";
   import QuickCapturePanel from "$lib/components/QuickCapturePanel.svelte";
@@ -16,14 +17,27 @@
   import TagsView from "$lib/components/TagsView.svelte";
   import TodayView from "$lib/components/TodayView.svelte";
   import { runUpdateCheck, createTauriUpdaterPort } from "$lib/updater";
-  import { NOTE_CAPTURED_EVENT, CHECK_FOR_UPDATES_EVENT, type NoteCapturedPayload } from "$lib/events";
+  import {
+    NOTE_CAPTURED_EVENT,
+    CHECK_FOR_UPDATES_EVENT,
+    JIRA_CHAT_UPDATED_EVENT,
+    JIRA_VIEW_ACTION_EVENT,
+    type JiraChatUpdatedPayload,
+    type JiraViewActionPayload,
+    type NoteCapturedPayload,
+  } from "$lib/events";
   import { createWorkNotesStore, type InboxViewMode } from "$lib/stores/inbox";
+  import { createJiraStore } from "$lib/stores/jira";
   import type { AppSettings } from "$lib/types";
   import { toCssVariables } from "$lib/theme/applyTheme";
-  import { getThemeById } from "$lib/theme/themes";
+  import { draftThemeDefinition, resolveTheme } from "$lib/theme/custom";
+  import { createThemeBuilderStore } from "$lib/stores/theme-builder";
   import packageMetadata from "../../package.json";
 
   const workNotes = createWorkNotesStore();
+  const jira = createJiraStore();
+  const themeBuilder = createThemeBuilderStore();
+  const { draft: themeDraft, busy: themeBusy, error: themeError } = themeBuilder;
   const appVersion = packageMetadata.version;
   const {
     inbox,
@@ -55,7 +69,12 @@
 
   const selectedId = $derived($selectedNote?.id);
   const isQuickCaptureWindow = $derived(currentWindowLabel === "quick-capture");
-  const currentTheme = $derived(getThemeById($settings?.selectedTheme));
+  // A theme the agent just built is painted straight away so it can be judged in place.
+  const currentTheme = $derived(
+    $themeDraft
+      ? draftThemeDefinition($themeDraft)
+      : resolveTheme($settings?.selectedTheme, $settings?.customThemes ?? []),
+  );
   const themeId = $derived(currentTheme.id);
   const themeStyle = $derived(
     Object.entries(toCssVariables(currentTheme))
@@ -152,6 +171,11 @@
           return;
         }
 
+        if (get(viewMode) === "jira") {
+          // Stay on the tickets; the captured note is waiting in the inbox.
+          return;
+        }
+
         if (event.payload.noteId) {
           void workNotes.showCapturedNote(event.payload.noteId);
           void workNotes.loadSuggestedActions();
@@ -159,6 +183,14 @@
           void workNotes.loadInbox();
           void workNotes.loadSuggestedActions();
         }
+      }).then(registerUnlisten);
+
+      void listen<JiraChatUpdatedPayload>(JIRA_CHAT_UPDATED_EVENT, (event) => {
+        void jira.handleThreadUpdated(event.payload.threadId);
+      }).then(registerUnlisten);
+
+      void listen<JiraViewActionPayload>(JIRA_VIEW_ACTION_EVENT, (event) => {
+        void jira.applyViewAction(event.payload.action);
       }).then(registerUnlisten);
     }
 
@@ -245,14 +277,59 @@
   async function saveSettings(event: CustomEvent<AppSettings>) {
     try {
       await workNotes.persistSettings(event.detail);
-      settingsOpen = false;
+      closeSettings();
+      if (get(viewMode) === "jira") {
+        // Jira settings may have changed; reload status and tickets.
+        void jira.open();
+      }
     } catch {
       settingsOpen = true;
     }
   }
 
+  async function createJiraTicketFromNote() {
+    const note = $selectedNote;
+    if (!note) {
+      return;
+    }
+
+    workNotes.showJira();
+    await jira.open();
+    await jira.startDraft({
+      summary: note.title,
+      description: note.cleanedText?.trim() || note.rawText,
+      noteId: note.id,
+    });
+  }
+
   function selectTheme(event: CustomEvent<string>) {
+    themeBuilder.discard();
     void workNotes.setTheme(event.detail);
+  }
+
+  async function keepThemeDraft() {
+    const draft = get(themeDraft);
+    if (draft && (await workNotes.saveCustomTheme(draft))) {
+      themeBuilder.discard();
+    }
+  }
+
+  async function deleteCustomTheme(event: CustomEvent<string>) {
+    const theme = get(settings)?.customThemes?.find((item) => item.id === event.detail);
+    if (
+      !theme ||
+      (typeof window !== "undefined" && !window.confirm(`Delete the theme "${theme.label}"? This cannot be undone.`))
+    ) {
+      return;
+    }
+
+    await workNotes.deleteCustomTheme(theme.id);
+  }
+
+  function closeSettings() {
+    // A theme that was not kept should not outlive the dialog it was built in.
+    themeBuilder.discard();
+    settingsOpen = false;
   }
 
   function checkForUpdatesFromSettings() {
@@ -304,6 +381,12 @@
 
     if (event.detail === "tags") {
       await workNotes.showTags();
+      return;
+    }
+
+    if (event.detail === "jira") {
+      workNotes.showJira();
+      await jira.open();
       return;
     }
 
@@ -395,6 +478,20 @@
 
     await workNotes.permanentlyDeleteSelectedNote();
   }
+
+  async function dropFollowups(request: { ids: string[]; lane: string | null }) {
+    if (
+      request.lane !== null &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Drop all ${request.ids.length} open follow-ups in "${request.lane}"? They are removed from Follow-ups without being marked done.`,
+      )
+    ) {
+      return;
+    }
+
+    await workNotes.dropFollowups(request.ids);
+  }
 </script>
 
 <svelte:head>
@@ -457,6 +554,7 @@
         on:updateLane={(event) => void workNotes.updateFollowupLane(event.detail.id, event.detail.lane)}
         on:complete={(event) => void workNotes.completeAction(event.detail)}
         on:reopen={(event) => void workNotes.reopenAction(event.detail)}
+        on:drop={(event) => void dropFollowups(event.detail)}
       />
     {:else if $viewMode === "today"}
       <TodayView
@@ -483,6 +581,8 @@
         loadingNotes={$loadingInbox}
         on:openNote={(event) => void openNoteFromTags(event.detail)}
       />
+    {:else if $viewMode === "jira"}
+      <JiraView {jira} on:openSettings={() => (settingsOpen = true)} />
     {:else}
       <div class="workspace-grid">
         {#if $viewMode === "actions"}
@@ -538,6 +638,7 @@
             on:addCardNote={(event) => void addCardNoteFromNote(event)}
             on:saveCleaned={(event) => void saveCleanedFromNote(event)}
             on:saveRaw={(event) => void saveRawFromNote(event)}
+            on:createJiraTicket={() => void createJiraTicketFromNote()}
           />
         </div>
       </div>
@@ -550,9 +651,16 @@
       error={settingsOpen ? $error : null}
       appVersion={appVersion}
       on:save={(event) => void saveSettings(event)}
+      themeDraft={$themeDraft}
+      themeBusy={$themeBusy}
+      themeError={$themeError}
       on:selectTheme={selectTheme}
+      on:buildTheme={(event) => void themeBuilder.build(event.detail)}
+      on:keepTheme={() => void keepThemeDraft()}
+      on:discardTheme={() => themeBuilder.discard()}
+      on:deleteTheme={(event) => void deleteCustomTheme(event)}
       on:checkUpdates={checkForUpdatesFromSettings}
-      on:close={() => (settingsOpen = false)}
+      on:close={closeSettings}
     />
 
     {#snippet quickCapture()}
@@ -588,6 +696,28 @@
 
   :global(*) {
     box-sizing: border-box;
+  }
+
+  /* Shared type, weight, rule, and radius tokens. Declared where the theme
+     colours are set so the derived rule colour resolves against them. */
+  :global([data-theme]) {
+    --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-strong: 600;
+    --rule: color-mix(in srgb, var(--color-border-default) 55%, transparent);
+    --radius-s: 4px;
+    --radius-m: 6px;
+    font-family: var(--font-ui);
+  }
+
+  /* Memphis is drawn with heavy type and solid outlines on purpose. */
+  :global([data-theme="memphis"]) {
+    --weight-medium: 600;
+    --weight-strong: 750;
+    --rule: var(--color-border-default);
   }
 
   .workspace-grid {
@@ -689,7 +819,7 @@
 
   .parser-toast strong {
     font-size: 12.5px;
-    font-weight: 850;
+    font-weight: var(--weight-strong);
   }
 
   .parser-toast span {
@@ -707,7 +837,7 @@
     color: var(--color-text-muted);
     background: transparent;
     font: inherit;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
     cursor: pointer;
   }
 

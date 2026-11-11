@@ -32,6 +32,13 @@ impl ActionItemService {
         self.transition(id, ActionStatus::Done, ActionStatus::Accepted, false)
     }
 
+    /// Stops tracking an open follow-up that no longer matters, without
+    /// recording it as done. Fails with `InvalidInput` unless the action is
+    /// an open follow-up.
+    pub fn drop_followup(&self, id: ActionItemId) -> ServiceResult<()> {
+        self.transition(id, ActionStatus::Accepted, ActionStatus::Dismissed, false)
+    }
+
     pub fn list_suggested(&self, limit: u32) -> ServiceResult<Vec<ActionReviewItem>> {
         self.repositories
             .action_items
@@ -522,5 +529,62 @@ mod tests {
             error,
             ServiceError::InvalidInput("follow-up lane cannot be empty")
         ));
+    }
+
+    #[test]
+    fn dropping_a_followup_removes_it_without_marking_it_done() {
+        let repositories = repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("Move the build machine")
+            .unwrap();
+        let action = repositories
+            .action_items
+            .create_suggested(note.id, "Move the build machine", None, None, Some(0.8))
+            .unwrap();
+        let service = ActionItemService::new(repositories.clone());
+        service.accept(action.id).unwrap();
+
+        service.drop_followup(action.id).unwrap();
+
+        let stored = repositories.action_items.get(action.id).unwrap().unwrap();
+        assert_eq!(stored.status, ActionStatus::Dismissed);
+        assert!(service.list_followups(50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_an_open_followup_can_be_dropped() {
+        let repositories = repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("Two things to track")
+            .unwrap();
+        let suggested = repositories
+            .action_items
+            .create_suggested(note.id, "Still a suggestion", None, None, Some(0.8))
+            .unwrap();
+        let finished = repositories
+            .action_items
+            .create_suggested(note.id, "Already finished", None, None, Some(0.8))
+            .unwrap();
+        let service = ActionItemService::new(repositories.clone());
+        service.accept(finished.id).unwrap();
+        service.complete(finished.id).unwrap();
+
+        for id in [suggested.id, finished.id] {
+            assert!(matches!(
+                service.drop_followup(id).unwrap_err(),
+                ServiceError::InvalidInput("invalid action status transition")
+            ));
+        }
+        assert_eq!(
+            repositories
+                .action_items
+                .get(finished.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ActionStatus::Done
+        );
     }
 }

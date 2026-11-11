@@ -5,7 +5,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 
 import AppShell from "./AppShell.svelte";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 describe("AppShell", () => {
   it("marks calendar active and emits today navigation", async () => {
@@ -27,6 +30,27 @@ describe("AppShell", () => {
 
     expect(calendar.getAttribute("aria-current")).toBe("page");
     expect(navigate.mock.calls[0][0].detail).toBe("today");
+  });
+
+  it("marks jira active and emits jira navigation", async () => {
+    const navigate = vi.fn();
+
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+        activeView: "jira",
+      },
+      events: { navigate },
+    });
+
+    const jira = screen.getByRole("button", { name: "Jira" });
+    await fireEvent.click(jira);
+
+    expect(jira.getAttribute("aria-current")).toBe("page");
+    expect(navigate.mock.calls[0][0].detail).toBe("jira");
   });
 
   it("marks archive active and emits archive navigation", async () => {
@@ -179,7 +203,7 @@ describe("AppShell", () => {
 
     const primaryNav = screen.getByRole("navigation", { name: "Primary" });
 
-    expect(primaryNav.querySelectorAll("svg")).toHaveLength(8);
+    expect(primaryNav.querySelectorAll("svg")).toHaveLength(9);
     expect(primaryNav.querySelector("kbd")).toBeNull();
   });
 
@@ -196,5 +220,47 @@ describe("AppShell", () => {
 
     expect(screen.getByRole("status", { name: "Parser activity" }).textContent).toContain("Parsing notes");
     expect(screen.getByText("2 in queue")).toBeTruthy();
+  });
+
+  it("collapses the sidebar to icons, keeps navigation working, and remembers the choice", async () => {
+    const navigate = vi.fn();
+    const props = {
+      title: "Work Notes",
+      subtitle: "Fast capture",
+      workspace: "Local workspace",
+      metrics: [{ label: "Inbox", value: "1" }],
+    };
+    render(AppShell, { props, events: { navigate } });
+    const sidebar = screen.getByRole("complementary", { name: "Workspace" });
+    expect(sidebar.classList.contains("collapsed")).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+    expect(sidebar.classList.contains("collapsed")).toBe(true);
+    expect(screen.getByRole("button", { name: "Expand sidebar" }).getAttribute("aria-expanded")).toBe("false");
+    await fireEvent.click(screen.getByRole("button", { name: "Jira" }));
+    expect(navigate.mock.calls[0][0].detail).toBe("jira");
+
+    cleanup();
+    render(AppShell, { props });
+    expect(screen.getByRole("complementary", { name: "Workspace" }).classList.contains("collapsed")).toBe(true);
+  });
+
+  it("toggles the sidebar with Ctrl+B", async () => {
+    render(AppShell, {
+      props: {
+        title: "Work Notes",
+        subtitle: "Fast capture",
+        workspace: "Local workspace",
+        metrics: [{ label: "Inbox", value: "1" }],
+      },
+    });
+    const sidebar = screen.getByRole("complementary", { name: "Workspace" });
+
+    await fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(sidebar.classList.contains("collapsed")).toBe(true);
+
+    await fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(sidebar.classList.contains("collapsed")).toBe(false);
   });
 });

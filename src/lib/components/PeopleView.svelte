@@ -296,7 +296,7 @@
     min-width: 0;
     min-height: 0;
     flex-direction: column;
-    border-right: 1px solid var(--color-border-default);
+    border-right: 1px solid var(--rule);
     background: var(--color-surface-1);
     overflow: hidden;
   }
@@ -305,7 +305,7 @@
     display: grid;
     gap: 10px;
     padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-surface-1) 92%, var(--color-app-bg));
   }
 
@@ -336,24 +336,22 @@
   h1 {
     color: var(--color-text-primary);
     font-size: 16px;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
     line-height: 1.2;
   }
 
   h2 {
     color: var(--color-text-primary);
     font-size: 17px;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
     line-height: 1.2;
   }
 
   h3 {
     color: var(--color-text-muted);
     font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.07em;
+    font-weight: var(--weight-strong);
     line-height: 1.2;
-    text-transform: uppercase;
   }
 
   .load-state,
@@ -373,7 +371,7 @@
   .section-head span,
   .due,
   .note-meta {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .search-row {
@@ -412,9 +410,9 @@
     border-radius: 4px;
     color: var(--color-text-muted);
     background: var(--color-surface-2);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: var(--weight-medium);
     line-height: 1;
   }
 
@@ -443,7 +441,7 @@
   }
 
   .person-row + .person-row {
-    border-top: 1px solid var(--color-border-default);
+    border-top: 1px solid var(--rule);
   }
 
   .person-row:hover,
@@ -471,9 +469,9 @@
     color: var(--color-text-primary);
     background: color-mix(in srgb, var(--color-accent-primary) 48%, var(--color-surface-2));
     filter: hue-rotate(var(--avatar-hue, 0deg));
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
   }
 
   .person-avatar.lg {
@@ -496,7 +494,7 @@
     overflow: hidden;
     color: var(--color-text-primary);
     font-size: 13px;
-    font-weight: 650;
+    font-weight: var(--weight-medium);
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -519,7 +517,7 @@
     color: var(--color-accent-primary);
     background: color-mix(in srgb, var(--color-accent-primary) 12%, var(--color-surface-2));
     font-size: 11px;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
   }
 
   .person-detail {
@@ -535,7 +533,7 @@
   .detail-head {
     min-height: 64px;
     padding: 12px 22px;
-    border-bottom: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-app-bg) 92%, var(--color-surface-1));
   }
 
@@ -707,7 +705,7 @@
     border-radius: 8px;
     color: var(--color-accent-primary);
     background: var(--color-surface-2);
-    font-weight: 900;
+    font-weight: var(--weight-strong);
   }
 
   @media (max-width: 920px) {
@@ -718,7 +716,7 @@
 
     .people-list {
       border-right: 0;
-      border-bottom: 1px solid var(--color-border-default);
+      border-bottom: 1px solid var(--rule);
     }
 
     .people-scroll {

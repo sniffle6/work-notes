@@ -5,6 +5,7 @@ import type {
   ActionItem,
   ActionReviewItem,
   AppSettings,
+  CustomTheme,
   FollowupItem,
   FollowupState,
   InboxFilters,
@@ -115,6 +116,16 @@ describe("matchesNoteFilters", () => {
 });
 
 describe("createWorkNotesStore", () => {
+  it("switches to the Jira view without reloading notes", async () => {
+    const api = testApi();
+    const store = createWorkNotesStore(api);
+
+    store.showJira();
+
+    expect(get(store.viewMode)).toBe("jira");
+    expect(api.listInbox).not.toHaveBeenCalled();
+  });
+
   it("reloads the inbox from the API when filters change", async () => {
     const api = testApi({
       listInbox: vi
@@ -626,6 +637,79 @@ describe("createWorkNotesStore", () => {
     expect(get(store.error)).toBe("disk full");
   });
 
+  it("keeps a built theme, switches to it, and gives it an id that is not taken", async () => {
+    const existing = customTheme({ id: "custom-amber-terminal", label: "Amber Terminal" });
+    const api = testApi({
+      getSettings: vi.fn().mockResolvedValue({ ...settings(), customThemes: [existing] }),
+      saveSettings: vi.fn((next: AppSettings) => Promise.resolve(next)),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    const id = await store.saveCustomTheme({
+      name: "Amber Terminal",
+      mode: "dark",
+      tokens: existing.tokens,
+      notes: "Warm phosphor.",
+      warnings: [],
+    });
+
+    expect(id).toBe("custom-amber-terminal-2");
+    expect(api.saveSettings).toHaveBeenCalledWith({
+      ...settings(),
+      selectedTheme: "custom-amber-terminal-2",
+      customThemes: [existing, { ...existing, id: "custom-amber-terminal-2" }],
+    });
+    expect(get(store.settings)?.selectedTheme).toBe("custom-amber-terminal-2");
+  });
+
+  it("reports a built theme that could not be saved and keeps the old settings", async () => {
+    const api = testApi({
+      getSettings: vi.fn().mockResolvedValue(settings()),
+      saveSettings: vi.fn().mockRejectedValue(new Error("disk full")),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    const id = await store.saveCustomTheme({
+      name: "Amber Terminal",
+      mode: "dark",
+      tokens: customTheme().tokens,
+      notes: "",
+      warnings: [],
+    });
+
+    expect(id).toBeUndefined();
+    expect(get(store.settings)).toEqual(settings());
+    expect(get(store.error)).toBe("disk full");
+  });
+
+  it("deletes a built theme and falls back to the default when it was in use", async () => {
+    const amber = customTheme({ id: "custom-amber", label: "Amber" });
+    const paper = customTheme({ id: "custom-paper", label: "Paper" });
+    const api = testApi({
+      getSettings: vi
+        .fn()
+        .mockResolvedValue({ ...settings(), selectedTheme: "custom-amber", customThemes: [amber, paper] }),
+      saveSettings: vi.fn((next: AppSettings) => Promise.resolve(next)),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadSettings();
+
+    await store.deleteCustomTheme("custom-amber");
+
+    expect(api.saveSettings).toHaveBeenLastCalledWith({
+      ...settings(),
+      selectedTheme: "dark-compact",
+      customThemes: [paper],
+    });
+
+    await store.deleteCustomTheme("custom-paper");
+
+    expect(get(store.settings)?.selectedTheme).toBe("dark-compact");
+    expect(get(store.settings)?.customThemes).toEqual([]);
+  });
+
   it("loads suggested actions into review queue state", async () => {
     const api = testApi({
       listSuggestedActions: vi.fn().mockResolvedValue([reviewItem({ id: "action-queued" })]),
@@ -777,6 +861,36 @@ describe("createWorkNotesStore", () => {
     expect(api.listSuggestedActions).toHaveBeenCalled();
   });
 
+  it("drops several follow-ups and reloads the list once", async () => {
+    const kept = followup({ id: "kept" });
+    const api = testApi({ listFollowups: vi.fn().mockResolvedValue([kept]) });
+    const store = createWorkNotesStore(api);
+
+    await store.dropFollowups(["stale-1", "stale-2"]);
+
+    expect(vi.mocked(api.dropFollowup).mock.calls).toEqual([["stale-1"], ["stale-2"]]);
+    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(get(store.followups)).toEqual([kept]);
+    expect(get(store.error)).toBeNull();
+  });
+
+  it("reports a failed drop and still reloads what is left", async () => {
+    const api = testApi({
+      dropFollowup: vi.fn(async (id: string) => {
+        if (id === "stale-2") {
+          throw new Error("database is locked");
+        }
+      }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.dropFollowups(["stale-1", "stale-2", "stale-3"]);
+
+    expect(api.dropFollowup).toHaveBeenCalledTimes(2);
+    expect(api.listFollowups).toHaveBeenCalled();
+    expect(get(store.error)).toBe("database is locked");
+  });
+
   it("completes and reopens actions through the workflow store", async () => {
     const api = testApi();
     const store = createWorkNotesStore(api);
@@ -900,6 +1014,7 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     dismissActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     completeActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     reopenActionItem: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
+    dropFollowup: vi.fn<(actionItemId: string) => Promise<void>>().mockResolvedValue(undefined),
     listFollowups: vi.fn<(limit?: number) => Promise<FollowupItem[]>>().mockResolvedValue([]),
     createManualFollowup: vi
       .fn<(noteId: string, text: string, lane?: string | null) => Promise<ActionItem>>()
@@ -946,6 +1061,30 @@ function followup(overrides: Partial<FollowupItem> = {}): FollowupItem {
     followupLane: null,
     tags: [{ id: "tag-maya", name: "Maya", kind: "person", source: "ai", confidence: 0.94 }],
     createdAt: "2026-05-20T13:42:00.000Z",
+    ...overrides,
+  };
+}
+
+function customTheme(overrides: Partial<CustomTheme> = {}): CustomTheme {
+  return {
+    id: "custom-amber-terminal",
+    label: "Amber Terminal",
+    mode: "dark",
+    tokens: {
+      appBg: "#1c1410",
+      surface1: "#241a14",
+      surface2: "#2e2219",
+      surfaceInput: "#17100c",
+      borderDefault: "#4a382b",
+      borderStrong: "#6b5240",
+      textPrimary: "#f3e6d4",
+      textMuted: "#b39b84",
+      accentPrimary: "#a8591c",
+      accentHot: "#ffb454",
+      statusSuccess: "#8fbf6a",
+      statusWarning: "#e6b450",
+      statusError: "#e06c5a",
+    },
     ...overrides,
   };
 }

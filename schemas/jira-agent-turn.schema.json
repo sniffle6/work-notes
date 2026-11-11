@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://work-notes.local/schemas/jira-agent-turn.schema.json",
+  "title": "Work Notes Jira Agent Turn",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reply",
+    "toolCalls"
+  ],
+  "properties": {
+    "reply": {
+      "type": "string"
+    },
+    "toolCalls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool",
+          "issueKey",
+          "jql",
+          "projectKey",
+          "issueType",
+          "summary",
+          "description",
+          "status",
+          "comment",
+          "assignee",
+          "title"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "enum": [
+              "search_issues",
+              "get_issue",
+              "create_issue",
+              "update_issue",
+              "transition_issue",
+              "add_comment",
+              "assign_issue",
+              "show_issues",
+              "open_issue"
+            ]
+          },
+          "issueKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jql": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "projectKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issueType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -2,9 +2,11 @@ pub mod app_state;
 pub mod commands;
 pub mod db;
 pub mod domain;
+pub mod jira;
 pub mod parser;
 pub mod repositories;
 pub mod services;
+pub mod theme;
 pub mod windowing;
 
 use std::io::{Error as IoError, ErrorKind};
@@ -81,6 +83,7 @@ pub fn run() {
             commands::dismiss_action_item,
             commands::complete_action_item,
             commands::reopen_action_item,
+            commands::drop_followup,
             commands::list_suggested_actions,
             commands::list_followups,
             commands::create_manual_followup,
@@ -88,7 +91,24 @@ pub fn run() {
             commands::update_followup_lane,
             commands::get_settings,
             commands::save_settings,
-            commands::hide_quick_capture
+            commands::hide_quick_capture,
+            commands::jira::get_jira_status,
+            commands::jira::test_jira_connection,
+            commands::jira::list_jira_issues,
+            commands::jira::get_jira_issue,
+            commands::jira::list_jira_issue_types,
+            commands::jira::create_jira_issue,
+            commands::jira::update_jira_issue,
+            commands::jira::transition_jira_issue,
+            commands::jira::add_jira_comment,
+            commands::jira::assign_jira_issue_to_me,
+            commands::jira::list_jira_chat_threads,
+            commands::jira::create_jira_chat_thread,
+            commands::jira::delete_jira_chat_thread,
+            commands::jira::list_jira_chat_messages,
+            commands::jira::send_jira_chat_message,
+            commands::jira::resolve_jira_chat_proposal,
+            commands::theme::generate_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

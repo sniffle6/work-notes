@@ -32,6 +32,22 @@ _Avoid_: Ticket states
 A source note whose work was finished and intentionally removed from the active inbox.
 _Avoid_: Archived note, deleted note
 
+**Ticket**:
+A Jira issue shown in the Jira view. Tickets live in Jira; the app stores only the keys of tickets created from notes.
+_Avoid_: Action item, task
+
+**Lookup**:
+A read-only Jira request the agent makes, such as a search or fetching one ticket. Lookups run without asking.
+_Avoid_: Tool call (for user-facing text)
+
+**View change**:
+Something the agent does to the app's own Jira view: putting a ticket search in the list or opening a ticket. View changes run without asking because Jira is not touched.
+_Avoid_: Proposed change (that term is for changes to Jira)
+
+**Proposed change**:
+A Jira change the agent asked for, stored in the conversation until the user approves or rejects it. Only an approved proposed change reaches Jira.
+_Avoid_: Pending action, suggested action
+
 **Archived note**:
 A source note intentionally set aside without claiming that its work was completed. It remains recoverable as a soft-deleted record.
 _Avoid_: Completed note, done note

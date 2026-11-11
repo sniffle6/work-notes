@@ -1,6 +1,8 @@
 <script lang="ts">
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import { createEventDispatcher } from "svelte";
   import type { ActionReviewItem } from "$lib/types";
+  import { readFlag, writeFlag } from "$lib/ui-prefs";
 
   import StatusBadge from "./StatusBadge.svelte";
 
@@ -10,7 +12,15 @@
     loading?: boolean;
   };
 
+  const COLLAPSED_KEY = "work-notes.review-queue-collapsed";
+
   let { actions, busyActionId = null, loading = false }: Props = $props();
+  let collapsed = $state(readFlag(COLLAPSED_KEY, false));
+
+  function toggleCollapsed() {
+    collapsed = !collapsed;
+    writeFlag(COLLAPSED_KEY, collapsed);
+  }
 
   const dispatch = createEventDispatcher<{
     select: string;
@@ -28,16 +38,24 @@
   }
 </script>
 
-<section class="review-queue" aria-label="Review queue">
+<section class="review-queue" class:collapsed aria-label="Review queue">
   <header class="queue-header">
-    <div>
-      <p class="eyebrow">Review</p>
+    <button
+      class="queue-toggle"
+      type="button"
+      aria-expanded={!collapsed}
+      aria-controls="review-queue-list"
+      title={collapsed ? "Show suggested actions" : "Hide suggested actions"}
+      onclick={toggleCollapsed}
+    >
+      <ChevronDown class="queue-chevron" size={14} strokeWidth={1.8} aria-hidden="true" />
       <h2>Suggested actions</h2>
-    </div>
+    </button>
     <StatusBadge label={`${actions.length} pending`} tone={actions.length > 0 ? "warning" : "neutral"} />
   </header>
 
-  <div class="queue-list">
+  {#if !collapsed}
+  <div class="queue-list" id="review-queue-list">
     {#if actions.length === 0}
       <p class="empty-state">No suggested actions</p>
     {/if}
@@ -81,6 +99,7 @@
       </article>
     {/each}
   </div>
+  {/if}
 </section>
 
 <style>
@@ -89,29 +108,38 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    border: 1px solid var(--color-border-default);
-    border-radius: 8px;
-    background: var(--color-surface-1);
+    border-bottom: 1px solid var(--rule);
     overflow: hidden;
   }
 
   .queue-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--color-border-default);
+    gap: 10px;
+    min-height: 40px;
+    padding: 0 12px 0 28px;
+  }
+
+  .queue-toggle {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    margin-left: -8px;
+    border: 0;
+    padding: 0 8px;
+    color: var(--color-text-primary);
+    background: transparent;
+    text-align: left;
+  }
+
+  .queue-toggle:hover {
     background: var(--color-surface-2);
   }
 
-  .eyebrow {
-    margin: 0 0 3px;
-    color: var(--color-accent-primary);
-    font-size: 11px;
-    font-weight: 800;
-    line-height: 1;
-    text-transform: uppercase;
+  .review-queue.collapsed :global(.queue-chevron) {
+    transform: rotate(-90deg);
   }
 
   h2,
@@ -121,27 +149,24 @@
 
   h2 {
     color: var(--color-text-primary);
-    font-size: 16px;
-    line-height: 1.15;
+    font-size: 13px;
+    font-weight: var(--weight-medium);
   }
 
   .queue-list {
-    display: grid;
     flex: 1;
-    gap: 8px;
     min-height: 0;
-    padding: 10px;
+    padding: 0 12px 6px 28px;
     overflow: auto;
   }
 
   .action-card {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 12px;
-    padding: 10px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 7px;
-    background: var(--color-surface-2);
+    padding: 8px 0;
+    border-top: 1px solid var(--rule);
   }
 
   .action-copy {
@@ -161,13 +186,11 @@
     width: fit-content;
     border: 0;
     padding: 0;
-    color: var(--color-accent-primary);
+    color: var(--color-text-muted);
     background: transparent;
     font: inherit;
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 11.5px;
     text-align: left;
-    text-transform: uppercase;
     cursor: pointer;
   }
 
@@ -196,21 +219,33 @@
   }
 
   button {
-    min-height: 28px;
-    border: 1px solid var(--color-border-default);
-    border-radius: 6px;
-    padding: 0 9px;
-    color: var(--color-text-primary);
-    background: var(--color-surface-input);
     font: inherit;
-    font-size: 12px;
-    font-weight: 750;
+    font-size: 12.5px;
+    border-radius: var(--radius-s);
     cursor: pointer;
   }
 
-  button:first-child {
-    border-color: var(--color-status-success);
+  .action-buttons button {
+    min-height: 26px;
+    border: 1px solid transparent;
+    padding: 0 9px;
+    color: var(--color-text-muted);
+    background: transparent;
+  }
+
+  .action-buttons button:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-surface-2);
+  }
+
+  .action-buttons button:first-child {
+    border-color: color-mix(in srgb, var(--color-status-success) 55%, transparent);
     color: var(--color-status-success);
+  }
+
+  button:focus-visible {
+    outline: 2px solid var(--color-accent-hot);
+    outline-offset: 1px;
   }
 
   button:disabled {

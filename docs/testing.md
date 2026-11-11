@@ -42,7 +42,11 @@ Important frontend tests:
 - `src/lib/components/QuickCapturePanel.test.ts`: quick-capture keyboard behavior.
 - `src/lib/components/NoteDetail.test.ts`: reparse feedback and delete events.
 - `src/lib/components/SettingsView.test.ts`: theme selection and settings save behavior.
-- `src/lib/markdown.test.ts`: Markdown rendering and HTML escaping for cleaned notes.
+- `src/lib/markdown.test.ts`: Markdown rendering, pipe tables, preserved line breaks, and HTML escaping.
+- `src/lib/stores/jira.test.ts`: Jira store sequencing with an injected fake API, including proposal approval and stale-response handling.
+- `src/lib/components/JiraView.test.ts`: Jira screen driven through the real store and a fake API.
+- `src/lib/components/JiraIssueDetail.test.ts`: transitions, comments, edits, and the flatten-formatting confirmation.
+- `src/lib/components/JiraChat.test.ts`: message entry keys, lookups, and Approve/Reject on proposals.
 - `src/lib/theme/theme.test.ts`: theme token to CSS variable mapping.
 - `src/lib/scaffold.test.ts`: scaffold sanity check.
 
@@ -77,6 +81,41 @@ Rust tests are inline in `src-tauri/src/**`. Current coverage includes:
 - settings validation
 - hotkey validation
 - quick-capture positioning helpers
+- Jira issue key validation, ADF conversion, transition matching, and HTTP error mapping
+- Jira client requests against a fake transport
+- Jira agent prompt, turn parsing, tool-call validation, and the approval-gated agent loop with fake agent and Jira
+- Jira chat and note-link repositories
+- structured Codex exec against a stand-in command script
+
+## Jira Checks
+
+For Jira work, run targeted Rust tests first, then the full Rust command:
+
+```powershell
+scripts\cargo-test.cmd jira
+scripts\cargo-test.cmd
+```
+
+Unit tests must not call Jira or `codex exec`. Use the fake transport, fake agent runner, and fake Jira in the test modules.
+
+Two ignored tests check real services and are run by hand. Set the Jira environment variables and `WORK_NOTES_JIRA_SITE_URL` first:
+
+```powershell
+scripts\cargo-test.cmd live_jira -- --ignored --nocapture
+scripts\cargo-test.cmd live_agent -- --ignored --nocapture
+scripts\cargo-test.cmd live_theme -- --ignored --nocapture
+```
+
+`live_jira` only reads from Jira. `live_agent` runs real Codex conversations with read-only lookups and never approves a proposal. `live_theme` asks real Codex for one theme and needs no Jira setup.
+
+Manual checks in the running app after Jira changes:
+
+- With setup missing, the Jira view lists the missing steps and loads nothing.
+- Filters load tickets; selecting a ticket shows description, comments, and transitions.
+- A transition, a comment, an edit, and Assign to me each update the open ticket and its list row.
+- Create ticket from a note prefills the form and shows the new key on the note afterwards.
+- An agent request to change a ticket appears as a proposal and changes nothing until approved.
+- Rejecting a proposal changes nothing in Jira.
 
 ## Parser Checks
 

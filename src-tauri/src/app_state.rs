@@ -1,8 +1,10 @@
 use crate::db::{Database, DatabaseError};
 use crate::repositories::{
-    ActionItemRepository, CardNoteRepository, NoteRepository, ParseJobRepository, TagRepository,
+    ActionItemRepository, CardNoteRepository, JiraChatRepository, NoteJiraLinkRepository,
+    NoteRepository, ParseJobRepository, TagRepository,
 };
 use crate::services::draft::DraftService;
+use crate::services::jira_agent::AgentBusyThreads;
 use crate::services::parse_queue::{ParseQueueConfig, ParserProviderConfig};
 use crate::services::settings::{AppSettings, SettingsService};
 
@@ -14,6 +16,7 @@ pub struct AppState {
     pub drafts: DraftService,
     pub parse_queue_config: ParseQueueConfig,
     pub parser_provider_config: ParserProviderConfig,
+    pub jira_agent_busy: AgentBusyThreads,
 }
 
 impl AppState {
@@ -34,6 +37,7 @@ impl AppState {
             drafts: DraftService::default(),
             parse_queue_config: ParseQueueConfig::from_settings(&app_settings),
             parser_provider_config: ParserProviderConfig::from_settings(&app_settings),
+            jira_agent_busy: AgentBusyThreads::default(),
             database,
         }
     }
@@ -51,6 +55,8 @@ pub struct AppRepositories {
     pub action_items: ActionItemRepository,
     pub card_notes: CardNoteRepository,
     pub parse_jobs: ParseJobRepository,
+    pub jira_chat: JiraChatRepository,
+    pub jira_links: NoteJiraLinkRepository,
 }
 
 impl AppRepositories {
@@ -61,6 +67,8 @@ impl AppRepositories {
             tags: TagRepository::new(database.clone()),
             action_items: ActionItemRepository::new(database.clone()),
             card_notes: CardNoteRepository::new(database.clone()),
+            jira_chat: JiraChatRepository::new(database.clone()),
+            jira_links: NoteJiraLinkRepository::new(database.clone()),
             parse_jobs: ParseJobRepository::new(database),
         }
     }

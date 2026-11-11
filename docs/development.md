@@ -50,7 +50,23 @@ On this Windows setup that resolves under:
 %APPDATA%\aweber\Work Notes\data\work-notes.sqlite3
 ```
 
-The database owns notes, tags, action items, parse jobs, parse runs, settings, and the FTS5 index.
+The database owns notes, tags, action items, parse jobs, parse runs, settings, Jira agent conversations, note-to-ticket links, and the FTS5 index.
+
+## Jira
+
+The Jira view needs these before it can load tickets:
+
+1. Set `JIRA_EMAIL` (or `BITBUCKET_EMAIL`) to the Atlassian account email.
+2. Set `JIRA_API_TOKEN` to a Jira-scoped API token with `read:jira-work` and `write:jira-work`.
+3. Restart Work Notes so it sees the variables.
+4. Enter the Jira site URL and project key in Settings > Jira.
+
+```powershell
+[Environment]::SetEnvironmentVariable("JIRA_EMAIL", "you@example.com", "User")
+[Environment]::SetEnvironmentVariable("JIRA_API_TOKEN", "<token>", "User")
+```
+
+The token is read from the environment only. See [jira.md](jira.md) for the gateway routing, the agent contract, and the approval rules.
 
 ## Codex Parser
 
@@ -86,7 +102,16 @@ Registered themes currently include:
 - `dark-compact`: default dense utility theme.
 - `memphis`: alternate compact theme exposed in settings as `Memphis '86`.
 
-To add another theme:
+### Theme Agent
+
+Settings > Appearance can build a theme from a description. The agent runs through local `codex exec` and must return JSON matching `schemas/theme-agent.schema.json`: a name, a one-line note, and one `#rrggbb` colour per token.
+
+- The app normalizes the colours, decides dark or light from the background's luminance, and checks WCAG contrast: 4.5:1 for primary and muted text, 3:1 for the hot accent and status colours.
+- Failed checks get one repair turn that starts from the first attempt. Problems that remain are returned as warnings and shown beside the preview.
+- A built theme is only a draft. It is painted over the whole app while the settings dialog is open and is dropped when the dialog closes unless the user keeps it.
+- Kept themes are stored in settings as `customThemes`. Their ids start with `custom-` so they cannot shadow a built-in theme, and their mode is always recomputed from the background.
+
+To add another built-in theme:
 
 1. Add a `ThemeDefinition` in `src/lib/theme/themes.ts`.
 2. Populate every token from `src/lib/theme/tokens.ts`.
@@ -119,7 +144,9 @@ Default theme: Dark Compact (`dark-compact`).
 - Rust services own workflow behavior.
 - Repositories own SQLite reads and writes.
 - `ParseQueue` owns parser job lifecycle.
-- `CodexParserProvider` is the only module that knows how to execute `codex`.
+- `parser/codex_provider.rs` is the only module that knows how to execute `codex`. The Jira agent runs its turns through `run_structured_exec` there.
+- `jira/transport.rs` is the only module that performs Jira network I/O.
+- `JiraAgentService` owns the agent loop and the rule that Jira changes wait for approval.
 - `ParserResultApplier` owns parser-output trust rules.
 - `windowing` owns tray, hotkey, and quick-capture positioning.
 

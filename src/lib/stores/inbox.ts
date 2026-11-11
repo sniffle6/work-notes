@@ -7,6 +7,7 @@ import {
   completeNote,
   createManualFollowup,
   dismissActionItem,
+  dropFollowup,
   getNote,
   getSettings,
   listFollowups,
@@ -26,10 +27,13 @@ import {
   updateFollowupLane as updateFollowupLaneApi,
   updateFollowupState as updateFollowupStateApi,
 } from "$lib/api";
+import { toCustomTheme } from "$lib/theme/custom";
+import { darkCompactTheme, themes } from "$lib/theme/themes";
 import type {
   ActionReviewItem,
   AppSettings,
   FollowupItem,
+  GeneratedTheme,
   FollowupState,
   InboxFilters,
   NoteDetail,
@@ -39,7 +43,16 @@ export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 
-export type InboxViewMode = "inbox" | "done" | "archive" | "actions" | "today" | "people" | "followups" | "tags";
+export type InboxViewMode =
+  | "inbox"
+  | "done"
+  | "archive"
+  | "actions"
+  | "today"
+  | "people"
+  | "followups"
+  | "tags"
+  | "jira";
 
 export type ParserNotification = {
   id: string;
@@ -70,6 +83,7 @@ type WorkNotesApi = {
   dismissActionItem: typeof dismissActionItem;
   completeActionItem: typeof completeActionItem;
   reopenActionItem: typeof reopenActionItem;
+  dropFollowup: typeof dropFollowup;
   listFollowups: typeof listFollowups;
   createManualFollowup: typeof createManualFollowup;
   updateFollowupState: typeof updateFollowupStateApi;
@@ -97,6 +111,7 @@ const defaultApi: WorkNotesApi = {
   dismissActionItem,
   completeActionItem,
   reopenActionItem,
+  dropFollowup,
   listFollowups,
   createManualFollowup,
   updateFollowupState: updateFollowupStateApi,
@@ -436,6 +451,11 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await loadInbox({ limit: 1000 });
   }
 
+  /** Shows the Jira view. Its data lives in the Jira store, so notes are not reloaded. */
+  function showJira(): void {
+    viewMode.set("jira");
+  }
+
   async function showFollowups(): Promise<void> {
     viewMode.set("followups");
     filters.update((current) => createInboxFilters({ ...current, includeArchived: false, includeCompleted: false }));
@@ -501,6 +521,38 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     await updateAction(actionItemId, api.reopenActionItem, false);
   }
 
+  /**
+   * Stops tracking open follow-ups that no longer matter, without marking
+   * them done. Stops at the first failure, reports it, and still reloads.
+   */
+  async function dropFollowups(actionItemIds: string[]): Promise<void> {
+    if (actionItemIds.length === 0) {
+      return;
+    }
+
+    loadingFollowups.set(true);
+    error.set(null);
+    let failure: unknown = null;
+
+    try {
+      for (const actionItemId of actionItemIds) {
+        await api.dropFollowup(actionItemId);
+      }
+    } catch (unknownError) {
+      failure = unknownError;
+    }
+
+    await loadFollowups();
+    const note = get(selectedNote);
+    if (note) {
+      selectedNote.set(await api.getNote(note.id).catch(() => note));
+    }
+    await refreshNavSummary();
+    if (failure) {
+      error.set(errorMessage(failure, "Could not drop the follow-up."));
+    }
+  }
+
   async function createFollowupFromSelectedNote(
     text: string,
     lane?: string | null,
@@ -559,6 +611,53 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       throw unknownError;
     } finally {
       savingSettings.set(false);
+    }
+  }
+
+  /**
+   * Keeps a theme the theme agent built and switches to it. Returns the
+   * saved theme's id, or `undefined` when it could not be saved.
+   */
+  async function saveCustomTheme(theme: GeneratedTheme): Promise<string | undefined> {
+    const previous = get(settings);
+    if (!previous) {
+      return undefined;
+    }
+
+    const existing = previous.customThemes ?? [];
+    const saved = toCustomTheme(theme, [...themes.map((builtIn) => builtIn.id), ...existing.map((item) => item.id)]);
+    error.set(null);
+
+    try {
+      settings.set(
+        await api.saveSettings({ ...previous, selectedTheme: saved.id, customThemes: [...existing, saved] }),
+      );
+      return saved.id;
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not save the theme."));
+      return undefined;
+    }
+  }
+
+  /** Deletes a built theme. The default theme takes over when it was in use. */
+  async function deleteCustomTheme(themeId: string): Promise<void> {
+    const previous = get(settings);
+    if (!previous) {
+      return;
+    }
+
+    error.set(null);
+
+    try {
+      settings.set(
+        await api.saveSettings({
+          ...previous,
+          selectedTheme: previous.selectedTheme === themeId ? darkCompactTheme.id : previous.selectedTheme,
+          customThemes: (previous.customThemes ?? []).filter((theme) => theme.id !== themeId),
+        }),
+      );
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not delete the theme."));
     }
   }
 
@@ -901,12 +1000,16 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     showPeople,
     showTags,
     showFollowups,
+    showJira,
     restoreSelectedNote,
     reopenSelectedNote,
     permanentlyDeleteSelectedNote,
     acceptSuggestedAction,
     dismissSuggestedAction,
     completeAction,
+    dropFollowups,
+    saveCustomTheme,
+    deleteCustomTheme,
     reopenAction,
     createFollowupFromSelectedNote,
     updateFollowupState,

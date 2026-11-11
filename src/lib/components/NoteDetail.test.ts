@@ -27,6 +27,28 @@ describe("NoteDetail", () => {
     expect(screen.getByText("TransactionEvent")).toBeTruthy();
   });
 
+  it("offers to create a Jira ticket and lists tickets created from the note", async () => {
+    const createJiraTicket = vi.fn();
+
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), jiraIssueKeys: ["AB-7", "AB-9"] } },
+      events: { createJiraTicket },
+    });
+
+    const linked = screen.getByRole("group", { name: "Jira tickets" });
+    expect(within(linked).getByText("AB-7")).toBeTruthy();
+    expect(within(linked).getByText("AB-9")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Create Jira ticket" }));
+
+    expect(createJiraTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the Jira ticket list when the note has no tickets", () => {
+    render(NoteDetail, { props: { note: noteDetail() } });
+
+    expect(screen.queryByRole("group", { name: "Jira tickets" })).toBeNull();
+  });
+
   it("opens a feedback dialog from the reparse action", async () => {
     render(NoteDetail, {
       props: { note: noteDetail() },

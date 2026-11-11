@@ -133,7 +133,7 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-    border-right: 1px solid var(--color-border-default);
+    border-right: 1px solid var(--rule);
     background: var(--color-surface-1);
     overflow: hidden;
   }
@@ -142,7 +142,7 @@
     display: grid;
     gap: 9px;
     padding: 12px;
-    border-bottom: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--rule);
     background: color-mix(in srgb, var(--color-surface-1) 92%, var(--color-app-bg));
   }
 
@@ -180,7 +180,7 @@
     background: var(--color-surface-input);
     font: inherit;
     font-size: 12px;
-    font-weight: 750;
+    font-weight: var(--weight-medium);
   }
 
   .mode-count {
@@ -230,9 +230,7 @@
   .group-head {
     gap: 6px;
     padding: 7px 8px 5px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: var(--weight-strong);
   }
 
   .group-head strong {
@@ -240,7 +238,7 @@
     border-radius: 999px;
     color: var(--color-text-muted);
     background: var(--color-surface-2);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     text-align: center;
   }
@@ -296,7 +294,7 @@
     color: var(--color-text-muted);
     background: var(--color-surface-input);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: var(--weight-strong);
   }
 
   .accept-button:hover {
@@ -322,7 +320,7 @@
   .action-text {
     color: var(--color-text-primary);
     font-size: 13px;
-    font-weight: 650;
+    font-weight: var(--weight-medium);
     line-height: 1.35;
   }
 
@@ -334,11 +332,11 @@
 
   .owner {
     color: var(--color-accent-primary);
-    font-weight: 750;
+    font-weight: var(--weight-medium);
   }
 
   .due {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .tone-error {
@@ -371,7 +369,7 @@
     border-radius: 8px;
     color: var(--color-accent-primary);
     background: var(--color-surface-2);
-    font-weight: 900;
+    font-weight: var(--weight-strong);
   }
 
   h2,

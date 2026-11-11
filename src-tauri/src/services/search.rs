@@ -12,6 +12,8 @@ pub struct NoteDetail {
     pub action_items: Vec<ActionItem>,
     pub card_notes: Vec<CardNote>,
     pub parse_error: Option<String>,
+    /// Keys of Jira tickets created from this note.
+    pub jira_issue_keys: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -52,6 +54,7 @@ impl SearchService {
         } else {
             None
         };
+        let jira_issue_keys = self.repositories.jira_links.list_for_note(id)?;
 
         Ok(NoteDetail {
             note,
@@ -59,6 +62,7 @@ impl SearchService {
             action_items,
             card_notes,
             parse_error,
+            jira_issue_keys,
         })
     }
 }

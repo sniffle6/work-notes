@@ -72,6 +72,9 @@ mod tests {
             "parse_jobs",
             "parse_runs",
             "settings",
+            "jira_chat_threads",
+            "jira_chat_messages",
+            "note_jira_links",
         ] {
             let exists: i64 = connection
                 .query_row(

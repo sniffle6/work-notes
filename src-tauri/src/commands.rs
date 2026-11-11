@@ -1,3 +1,6 @@
+pub mod jira;
+pub mod theme;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +10,7 @@ use crate::domain::{
     FollowupState, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus, Tag,
     TagAssignment, TagId, TagKind,
 };
+use crate::jira::JiraError;
 use crate::repositories::RepositoryError;
 use crate::services::actions::ActionItemService;
 use crate::services::archive::ArchiveService;
@@ -57,10 +61,23 @@ impl From<ServiceError> for CommandError {
             ServiceError::Database(_) | ServiceError::Sqlite(_) => Self::storage_error(),
             ServiceError::Json(_) => Self::new("settings_error", "settings data is invalid"),
             ServiceError::Parser(_) => Self::new("parser_error", "parser failed"),
+            ServiceError::Jira(error) => Self::from(error),
+            ServiceError::Agent(message) => Self::new("agent_error", message),
             ServiceError::StatePoisoned { name } => {
                 Self::new("state_error", format!("{name} state unavailable"))
             }
         }
+    }
+}
+
+impl From<JiraError> for CommandError {
+    fn from(error: JiraError) -> Self {
+        let code = match error {
+            JiraError::NotConfigured(_) => "jira_not_configured",
+            JiraError::InvalidInput(_) => "invalid_input",
+            _ => "jira_error",
+        };
+        Self::new(code, error.to_string())
     }
 }
 
@@ -142,6 +159,7 @@ pub struct NoteDetailDto {
     pub action_items: Vec<ActionItemDto>,
     pub card_notes: Vec<CardNoteDto>,
     pub parse_error: Option<String>,
+    pub jira_issue_keys: Vec<String>,
 }
 
 impl From<NoteDetail> for NoteDetailDto {
@@ -166,6 +184,7 @@ impl From<NoteDetail> for NoteDetailDto {
             action_items: detail.action_items.into_iter().map(Into::into).collect(),
             card_notes: detail.card_notes.into_iter().map(Into::into).collect(),
             parse_error: detail.parse_error,
+            jira_issue_keys: detail.jira_issue_keys,
         }
     }
 }
@@ -191,6 +210,7 @@ impl From<Note> for NoteDetailDto {
             action_items: Vec::new(),
             card_notes: Vec::new(),
             parse_error: None,
+            jira_issue_keys: Vec::new(),
         }
     }
 }
@@ -607,6 +627,17 @@ pub async fn complete_action_item(
 ) -> Result<(), CommandError> {
     let action_id = parse_action_item_id(&action_id)?;
     ActionItemService::new(state.repositories.clone()).complete(action_id)?;
+    Ok(())
+}
+
+/// Stops tracking an open follow-up without marking it done.
+#[tauri::command]
+pub async fn drop_followup(
+    state: tauri::State<'_, AppState>,
+    action_id: String,
+) -> Result<(), CommandError> {
+    let action_id = parse_action_item_id(&action_id)?;
+    ActionItemService::new(state.repositories.clone()).drop_followup(action_id)?;
     Ok(())
 }
 
