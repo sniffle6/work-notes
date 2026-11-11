@@ -14,7 +14,7 @@ import {
   listJiraChatThreads,
   listJiraIssues,
   listJiraIssueTypes,
-  readJiraAttachmentImage,
+  readJiraAttachmentMedia,
   resolveJiraChatProposal,
   revealJiraAttachment,
   sendJiraChatMessage,
@@ -49,7 +49,7 @@ export type JiraApi = {
   assignJiraIssueToMe: typeof assignJiraIssueToMe;
   downloadJiraAttachments: typeof downloadJiraAttachments;
   getJiraAttachmentThumbnail: typeof getJiraAttachmentThumbnail;
-  readJiraAttachmentImage: typeof readJiraAttachmentImage;
+  readJiraAttachmentMedia: typeof readJiraAttachmentMedia;
   revealJiraAttachment: typeof revealJiraAttachment;
   listJiraChatThreads: typeof listJiraChatThreads;
   createJiraChatThread: typeof createJiraChatThread;
@@ -71,7 +71,7 @@ const defaultApi: JiraApi = {
   assignJiraIssueToMe,
   downloadJiraAttachments,
   getJiraAttachmentThumbnail,
-  readJiraAttachmentImage,
+  readJiraAttachmentMedia,
   revealJiraAttachment,
   listJiraChatThreads,
   createJiraChatThread,
@@ -110,10 +110,10 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const attachmentThumbnails = writable<Record<string, string>>({});
   // Each thumbnail is asked for once, whether or not it loads.
   const requestedThumbnails = new Set<string>();
-  /** The image open in the in-app viewer, if any. */
+  /** The image or video open in the in-app viewer, if any. */
   const attachmentViewer = writable<JiraAttachmentView | null>(null);
   const openingAttachmentId = writable<string | null>(null);
-  // The ticket the viewer's image belongs to.
+  // The ticket the viewer's file belongs to.
   let viewerIssueKey: string | null = null;
   selectedIssue.subscribe((issue) => {
     if (issue?.key !== viewerIssueKey) {
@@ -134,7 +134,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   /**
-   * Opens one of the open ticket's image attachments in the viewer. The file
+   * Opens one of the open ticket's image or video attachments in the viewer. The file
    * is downloaded to the ticket folder first when it is not saved yet.
    */
   async function openAttachment(attachmentId: string): Promise<void> {
@@ -150,14 +150,14 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       if (!file) {
         return;
       }
-      const url = await api.readJiraAttachmentImage(issue.key, attachmentId, attachment.mimeType);
+      const { url, kind } = await api.readJiraAttachmentMedia(issue.key, attachmentId);
       if (get(selectedIssue)?.key !== issue.key) {
         URL.revokeObjectURL(url);
         return;
       }
       closeAttachmentViewer();
       viewerIssueKey = issue.key;
-      attachmentViewer.set({ attachmentId, filename: attachment.filename, url, path: file.path });
+      attachmentViewer.set({ attachmentId, filename: attachment.filename, url, kind, path: file.path });
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not open the attachment."));
     } finally {

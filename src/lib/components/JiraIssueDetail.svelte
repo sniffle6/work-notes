@@ -4,11 +4,13 @@
   import Download from "@lucide/svelte/icons/download";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import X from "@lucide/svelte/icons/x";
+  import Play from "@lucide/svelte/icons/play";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { formatFileSize } from "$lib/file-size";
   import { zoomIn, zoomLabel, zoomOut } from "$lib/image-zoom";
+  import { isVideoAttachment } from "$lib/media-type";
   import { buildTicketPrompt } from "$lib/jira-prompt";
   import { isTypingTarget } from "$lib/ui-prefs";
   import type {
@@ -241,6 +243,10 @@
       dispatch("closeAttachmentViewer");
       return;
     }
+    // Only an image zooms; a video keeps its keys for its own controls.
+    if (attachmentViewer.kind !== "image") {
+      return;
+    }
     if (event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) {
       return;
     }
@@ -467,6 +473,17 @@
                     >
                       <img src={thumbnail} alt="" />
                     </button>
+                  {:else if isVideoAttachment(attachment)}
+                    <button
+                      class="ghost-button"
+                      type="button"
+                      disabled={openingAttachmentId !== null || (!savedPath && downloadingAttachments)}
+                      aria-label={`Open ${attachment.filename}`}
+                      title={savedPath ? "Play in the app" : "Download and play in the app"}
+                      onclick={() => dispatch("openAttachment", attachment.id)}
+                    >
+                      <Play size={14} aria-hidden="true" />
+                    </button>
                   {/if}
                   <span class="attachment-name" title={attachment.filename}>{attachment.filename}</span>
                 </span>
@@ -547,6 +564,7 @@
       >
         <header class="viewer-head">
           <span class="viewer-name" title={viewed.path}>{viewed.filename}</span>
+          {#if viewed.kind === "image"}
           <button
             class="ghost-button"
             type="button"
@@ -574,6 +592,7 @@
           >
             <ZoomIn size={14} aria-hidden="true" />
           </button>
+          {/if}
           <button
             class="ghost-button"
             type="button"
@@ -593,6 +612,21 @@
             <X size={14} aria-hidden="true" />
           </button>
         </header>
+        {#if viewed.kind === "video"}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div
+          class="viewer-stage"
+          onclick={(event) => {
+            if (event.target === event.currentTarget) {
+              dispatch("closeAttachmentViewer");
+            }
+          }}
+        >
+          <!-- An attached recording has no captions to offer. -->
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video class="viewer-video" src={viewed.url} controls autoplay></video>
+        </div>
+        {:else}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div
           class="viewer-stage"
@@ -624,6 +658,7 @@
             ondblclick={() => (zoom = zoom === null ? ACTUAL_SIZE : null)}
           />
         </div>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -900,6 +935,12 @@
     margin: auto;
     object-fit: contain;
     cursor: zoom-in;
+  }
+
+  .viewer-video {
+    max-width: 100%;
+    max-height: 100%;
+    margin: auto;
   }
 
   .viewer-image.zoomed {

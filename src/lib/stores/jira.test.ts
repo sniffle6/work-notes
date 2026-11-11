@@ -118,7 +118,10 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     })),
     revealJiraAttachment: vi.fn(async () => undefined),
     getJiraAttachmentThumbnail: vi.fn(async (attachmentId: string) => `blob:thumbnail-${attachmentId}`),
-    readJiraAttachmentImage: vi.fn(async (_key: string, attachmentId: string) => `blob:image-${attachmentId}`),
+    readJiraAttachmentMedia: vi.fn(async (_key: string, attachmentId: string) => ({
+      url: `blob:image-${attachmentId}`,
+      kind: "image" as const,
+    })),
     listJiraChatThreads: vi.fn(async () => [thread()]),
     createJiraChatThread: vi.fn(async () => thread({ id: "thread-new" })),
     deleteJiraChatThread: vi.fn(async () => undefined),
@@ -195,20 +198,31 @@ describe("createJiraStore", () => {
       await store.openAttachment("10002");
 
       expect(api.downloadJiraAttachments).toHaveBeenCalledWith("AB-7", ["10002"]);
-      expect(api.readJiraAttachmentImage).toHaveBeenCalledWith("AB-7", "10002", null);
+      expect(api.readJiraAttachmentMedia).toHaveBeenCalledWith("AB-7", "10002");
       expect(get(store.attachmentViewer)).toEqual({
         attachmentId: "10002",
         filename: "photo.png",
         url: "blob:image-10002",
+        kind: "image",
         path: "C:\\Downloads\\Work Notes\\AB-7\\photo.png",
       });
       expect(get(store.attachmentDownload)?.files.map((file) => file.id)).toEqual(["10002"]);
       expect(get(store.openingAttachmentId)).toBeNull();
     });
 
+    it("opens a video in the viewer as a video", async () => {
+      const { store } = await openWithAttachments({
+        readJiraAttachmentMedia: vi.fn(async () => ({ url: "blob:video-10002", kind: "video" as const })),
+      });
+
+      await store.openAttachment("10002");
+
+      expect(get(store.attachmentViewer)).toMatchObject({ url: "blob:video-10002", kind: "video" });
+    });
+
     it("reports an attachment the viewer cannot show and opens nothing", async () => {
       const { store } = await openWithAttachments({
-        readJiraAttachmentImage: vi.fn(async () => {
+        readJiraAttachmentMedia: vi.fn(async () => {
           throw new Error("photo.png is too large to show in the app");
         }),
       });
@@ -229,7 +243,7 @@ describe("createJiraStore", () => {
 
       await store.openAttachment("10002");
 
-      expect(api.readJiraAttachmentImage).not.toHaveBeenCalled();
+      expect(api.readJiraAttachmentMedia).not.toHaveBeenCalled();
       expect(get(store.attachmentViewer)).toBeNull();
       expect(get(store.error)).toBe("could not reach Jira: timed out");
     });

@@ -19,7 +19,7 @@ use crate::jira::{
 use crate::services::jira::{connect, jira_status, JiraEnvironment, JiraStatus};
 use crate::services::jira_agent::{AgentProgress, JiraAgentService, NEW_THREAD_TITLE};
 use crate::services::jira_attachments::{
-    download_attachments, load_thumbnail, read_attachment_image, user_downloads_dir,
+    download_attachments, load_thumbnail, read_attachment_media, user_downloads_dir,
     AttachmentDownload, AttachmentThumbnail,
 };
 use crate::services::search::SearchService;
@@ -276,11 +276,11 @@ pub async fn get_jira_attachment_thumbnail(
     run_blocking(move || Ok(load_thumbnail(&connect(&settings)?, &attachment_id)?)).await
 }
 
-/// Returns the raw bytes of an image attachment for the in-app viewer,
-/// downloading it to the ticket folder first when needed. Fails when the
-/// file is not an image the app can show.
+/// Returns the raw bytes of an image or video attachment for the in-app
+/// viewer, downloading it to the ticket folder first when needed. Fails when
+/// the file is not an image or video the app can show.
 #[tauri::command]
-pub async fn read_jira_attachment_image(
+pub async fn read_jira_attachment_media(
     state: tauri::State<'_, AppState>,
     key: String,
     attachment_id: String,
@@ -290,7 +290,7 @@ pub async fn read_jira_attachment_image(
     run_blocking(move || {
         let downloads_dir = user_downloads_dir()?;
         let client = connect(&settings)?;
-        let bytes = read_attachment_image(&client, &key, &attachment_id, &downloads_dir)?;
+        let bytes = read_attachment_media(&client, &key, &attachment_id, &downloads_dir)?;
         Ok(tauri::ipc::Response::new(bytes))
     })
     .await

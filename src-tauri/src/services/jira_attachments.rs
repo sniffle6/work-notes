@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -19,6 +19,11 @@ const PARTIAL_SUFFIX: &str = ".part";
 const MAX_THUMBNAIL_BYTES: usize = 2 * 1024 * 1024;
 /// Larger images are opened from their folder instead of in the app.
 const MAX_VIEWED_IMAGE_BYTES: u64 = 30 * 1024 * 1024;
+/// The whole video is handed to the viewer in memory, so larger ones are
+/// opened from their folder instead.
+const MAX_VIEWED_VIDEO_BYTES: u64 = 200 * 1024 * 1024;
+/// Enough leading bytes to identify every image and video type the app shows.
+const MEDIA_SIGNATURE_BYTES: u64 = 16;
 const WINDOWS_FORBIDDEN_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 const WINDOWS_DEVICE_NAMES: [&str; 22] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -168,33 +173,42 @@ pub fn load_thumbnail(
     })
 }
 
-/// Returns the content of an image attachment for showing in the app,
-/// downloading it to the ticket folder first when it is not saved yet.
+/// Largest file of each kind the app shows, in bytes.
+struct ViewLimits {
+    image: u64,
+    video: u64,
+}
+
+/// Returns the content of an image or video attachment for showing in the
+/// app, downloading it to the ticket folder first when it is not saved yet.
 ///
 /// Fails with `InvalidInput` when the file is larger than the app shows or
-/// is not a PNG, JPEG, GIF, or WebP image. The downloaded file stays either
-/// way.
-pub fn read_attachment_image(
+/// is not a PNG, JPEG, GIF, or WebP image or an MP4, QuickTime, or WebM
+/// video. The downloaded file stays either way.
+pub fn read_attachment_media(
     client: &impl JiraOps,
     key: &IssueKey,
     attachment_id: &str,
     downloads_dir: &Path,
 ) -> Result<Vec<u8>, JiraError> {
-    read_image_within(
+    read_media_within(
         client,
         key,
         attachment_id,
         downloads_dir,
-        MAX_VIEWED_IMAGE_BYTES,
+        ViewLimits {
+            image: MAX_VIEWED_IMAGE_BYTES,
+            video: MAX_VIEWED_VIDEO_BYTES,
+        },
     )
 }
 
-fn read_image_within(
+fn read_media_within(
     client: &impl JiraOps,
     key: &IssueKey,
     attachment_id: &str,
     downloads_dir: &Path,
-    limit: u64,
+    limits: ViewLimits,
 ) -> Result<Vec<u8>, JiraError> {
     let wanted = [attachment_id.to_string()];
     let download = download_attachments(client, key, Some(&wanted), downloads_dir)?;
@@ -202,21 +216,42 @@ fn read_image_within(
         JiraError::InvalidResponse("the attachment was not downloaded".to_string())
     })?;
 
-    let size = fs::metadata(&file.path).map_err(io_error)?.len();
-    if size > limit {
+    let mut signature = Vec::new();
+    File::open(&file.path)
+        .map_err(io_error)?
+        .take(MEDIA_SIGNATURE_BYTES)
+        .read_to_end(&mut signature)
+        .map_err(io_error)?;
+    let limit = if image_mime_type(&signature).is_some() {
+        limits.image
+    } else if is_video(&signature) {
+        limits.video
+    } else {
+        return Err(JiraError::InvalidInput(format!(
+            "{} is not an image or video the app can show; open it from its folder",
+            file.filename
+        )));
+    };
+    if fs::metadata(&file.path).map_err(io_error)?.len() > limit {
         return Err(JiraError::InvalidInput(format!(
             "{} is too large to show in the app; open it from its folder",
             file.filename
         )));
     }
-    let bytes = fs::read(&file.path).map_err(io_error)?;
-    if image_mime_type(&bytes).is_none() {
-        return Err(JiraError::InvalidInput(format!(
-            "{} is not an image the app can show; open it from its folder",
-            file.filename
-        )));
-    }
-    Ok(bytes)
+    fs::read(&file.path).map_err(io_error)
+}
+
+/// Recognises MP4 and QuickTime files by their `ftyp` box and WebM or
+/// Matroska files by their EBML header.
+fn is_video(content: &[u8]) -> bool {
+    const FTYP_BOX: &[u8] = b"ftyp";
+    const FTYP_OFFSET: usize = 4;
+    const EBML_SIGNATURE: &[u8] = b"\x1a\x45\xdf\xa3";
+
+    content.starts_with(EBML_SIGNATURE)
+        || content
+            .get(FTYP_OFFSET..)
+            .is_some_and(|rest| rest.starts_with(FTYP_BOX))
 }
 
 /// Collects written bytes and fails once they pass `limit`.
@@ -333,8 +368,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        download_attachments, issue_download_dir, load_thumbnail, read_attachment_image,
-        read_image_within, MAX_THUMBNAIL_BYTES,
+        download_attachments, issue_download_dir, load_thumbnail, read_attachment_media,
+        read_media_within, ViewLimits, MAX_THUMBNAIL_BYTES,
     };
     use crate::jira::transport::testing::FakeTransport;
     use crate::jira::{IssueKey, JiraClient, JiraError};
@@ -613,7 +648,7 @@ mod tests {
         .with_downloads(vec![Ok(PNG.to_vec())]);
         let client = JiraClient::new(&transport, SITE);
 
-        let bytes = read_attachment_image(&client, &key(), "10002", downloads.path()).unwrap();
+        let bytes = read_attachment_media(&client, &key(), "10002", downloads.path()).unwrap();
 
         assert_eq!(bytes, PNG);
         let folder = issue_download_dir(downloads.path(), &key());
@@ -634,7 +669,7 @@ mod tests {
         )])]);
         let client = JiraClient::new(&transport, SITE);
 
-        let bytes = read_attachment_image(&client, &key(), "10002", downloads.path()).unwrap();
+        let bytes = read_attachment_media(&client, &key(), "10002", downloads.path()).unwrap();
 
         assert_eq!(bytes, PNG);
         assert_eq!(transport.requests().len(), 1);
@@ -648,7 +683,7 @@ mod tests {
                 .with_downloads(vec![Ok(b"jam".to_vec())]);
         let client = JiraClient::new(&transport, SITE);
 
-        let error = read_attachment_image(&client, &key(), "10001", downloads.path()).unwrap_err();
+        let error = read_attachment_media(&client, &key(), "10001", downloads.path()).unwrap_err();
 
         let JiraError::InvalidInput(message) = error else {
             panic!("expected invalid input");
@@ -667,12 +702,15 @@ mod tests {
         .with_downloads(vec![Ok(PNG.to_vec())]);
         let client = JiraClient::new(&transport, SITE);
 
-        let error = read_image_within(
+        let error = read_media_within(
             &client,
             &key(),
             "10002",
             downloads.path(),
-            PNG.len() as u64 - 1,
+            ViewLimits {
+                image: PNG.len() as u64 - 1,
+                video: u64::MAX,
+            },
         )
         .unwrap_err();
 
@@ -684,6 +722,58 @@ mod tests {
         assert!(issue_download_dir(downloads.path(), &key())
             .join("photo.png")
             .exists());
+    }
+
+    const MP4: &[u8] = b"\x00\x00\x00\x18ftypmp42frames";
+    const WEBM: &[u8] = b"\x1a\x45\xdf\xa3frames";
+
+    fn video_client_transport(content: &[u8]) -> FakeTransport {
+        FakeTransport::with_responses(vec![issue_with(vec![attachment(
+            "10003",
+            "repro.mp4",
+            content.len(),
+        )])])
+        .with_downloads(vec![Ok(content.to_vec())])
+    }
+
+    #[test]
+    fn reading_a_video_returns_its_content() {
+        for content in [MP4, WEBM] {
+            let downloads = tempfile::tempdir().unwrap();
+            let transport = video_client_transport(content);
+            let client = JiraClient::new(&transport, SITE);
+
+            let bytes = read_attachment_media(&client, &key(), "10003", downloads.path()).unwrap();
+
+            assert_eq!(bytes, content);
+        }
+    }
+
+    #[test]
+    fn a_video_has_its_own_viewing_limit() {
+        let downloads = tempfile::tempdir().unwrap();
+        // The attachment list is read once for each of the two reads below.
+        let listing = || issue_with(vec![attachment("10003", "repro.mp4", MP4.len())]);
+        let transport = FakeTransport::with_responses(vec![listing(), listing()])
+            .with_downloads(vec![Ok(MP4.to_vec())]);
+        let client = JiraClient::new(&transport, SITE);
+        let read = |video: u64| {
+            read_media_within(
+                &client,
+                &key(),
+                "10003",
+                downloads.path(),
+                ViewLimits { image: 1, video },
+            )
+        };
+
+        // Larger than an image may be, but within the video limit.
+        assert_eq!(read(MP4.len() as u64).unwrap(), MP4);
+
+        let JiraError::InvalidInput(message) = read(MP4.len() as u64 - 1).unwrap_err() else {
+            panic!("expected invalid input");
+        };
+        assert!(message.contains("too large"), "{message}");
     }
 
     #[test]

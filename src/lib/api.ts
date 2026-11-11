@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { jiraFallbackCommand } from "$lib/jira-fallback";
+import { sniffMediaType, type MediaType } from "$lib/media-type";
 import { withRetry } from "$lib/retry";
 import type {
   ActionItem,
@@ -533,18 +534,25 @@ export async function getJiraAttachmentThumbnail(attachmentId: string): Promise<
   return URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: getString(record, "mimeType") ?? "" }));
 }
 
+// Enough leading bytes to identify every image and video type the viewer shows.
+const MEDIA_SIGNATURE_BYTES = 16;
+
 /**
- * Reads an image attachment for the in-app viewer and returns an object URL
- * for it. The file is downloaded to the ticket folder first when needed.
- * Rejects when the file is not an image the app can show.
+ * Reads an image or video attachment for the in-app viewer and returns an
+ * object URL for it with which of the two it is. The file is downloaded to
+ * the ticket folder first when needed. Rejects when the file is not an image
+ * or video the app can show.
  */
-export async function readJiraAttachmentImage(
+export async function readJiraAttachmentMedia(
   key: string,
   attachmentId: string,
-  mimeType: string | null,
-): Promise<string> {
-  const bytes = await invokeCommand<ArrayBuffer>("read_jira_attachment_image", { key, attachmentId });
-  return URL.createObjectURL(new Blob([bytes], { type: mimeType ?? "" }));
+): Promise<{ url: string; kind: MediaType["kind"] }> {
+  const bytes = await invokeCommand<ArrayBuffer>("read_jira_attachment_media", { key, attachmentId });
+  const media = sniffMediaType(new Uint8Array(bytes, 0, Math.min(bytes.byteLength, MEDIA_SIGNATURE_BYTES)));
+  if (!media) {
+    throw new Error("The attachment is not an image or video the app can show.");
+  }
+  return { url: URL.createObjectURL(new Blob([bytes], { type: media.mimeType })), kind: media.kind };
 }
 
 /** Shows a downloaded attachment in File Explorer. */
@@ -638,7 +646,7 @@ export const api = {
   assignJiraIssueToMe,
   downloadJiraAttachments,
   getJiraAttachmentThumbnail,
-  readJiraAttachmentImage,
+  readJiraAttachmentMedia,
   revealJiraAttachment,
   listJiraChatThreads,
   createJiraChatThread,

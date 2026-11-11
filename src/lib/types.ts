@@ -257,12 +257,13 @@ export type JiraAttachmentFile = {
   path: string;
 };
 
-/** An image attachment open in the in-app viewer. */
+/** An image or video attachment open in the in-app viewer. */
 export type JiraAttachmentView = {
   attachmentId: string;
   filename: string;
-  /** Object URL of the full image. */
+  /** Object URL of the full file. */
   url: string;
+  kind: "image" | "video";
   /** Where the file is saved on disk. */
   path: string;
 };

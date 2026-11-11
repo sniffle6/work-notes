@@ -104,7 +104,7 @@ pub fn run() {
             commands::jira::assign_jira_issue_to_me,
             commands::jira::download_jira_attachments,
             commands::jira::get_jira_attachment_thumbnail,
-            commands::jira::read_jira_attachment_image,
+            commands::jira::read_jira_attachment_media,
             commands::jira::list_jira_chat_threads,
             commands::jira::create_jira_chat_thread,
             commands::jira::delete_jira_chat_thread,

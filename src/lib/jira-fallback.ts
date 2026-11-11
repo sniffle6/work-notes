@@ -146,7 +146,7 @@ export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): 
     }
     case "download_jira_attachments":
       throw new Error("Attachments can only be downloaded in the desktop app.");
-    case "read_jira_attachment_image":
+    case "read_jira_attachment_media":
     case "get_jira_attachment_thumbnail":
       throw new Error("Attachment previews are only loaded in the desktop app.");
     case "list_jira_chat_threads":

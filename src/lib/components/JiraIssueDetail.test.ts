@@ -128,6 +128,43 @@ describe("JiraIssueDetail", () => {
       expect(downloadAttachments).not.toHaveBeenCalled();
     });
 
+    it("offers to play a video that has no thumbnail", async () => {
+      const openAttachment = vi.fn();
+      const video = { ...ATTACHMENTS[0], id: "10003", filename: "repro.mp4", mimeType: "video/mp4" };
+      render(JiraIssueDetail, {
+        props: { issue: issue({ attachments: [...ATTACHMENTS, video] }) },
+        events: { openAttachment },
+      });
+
+      expect(screen.queryByRole("button", { name: "Open bench.log" })).toBeNull();
+      await fireEvent.click(screen.getByRole("button", { name: "Open repro.mp4" }));
+
+      expect(openAttachment.mock.calls.map((call) => call[0].detail)).toEqual(["10003"]);
+    });
+
+    it("plays a video in the viewer, without the image zoom controls", () => {
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ attachments: ATTACHMENTS }),
+          attachmentViewer: {
+            attachmentId: "10003",
+            filename: "repro.mp4",
+            url: "blob:video-10003",
+            kind: "video",
+            path: "C:\\Downloads\\Work Notes\\AB-7\\repro.mp4",
+          },
+        },
+      });
+      const dialog = screen.getByRole("dialog", { name: "repro.mp4" });
+
+      const player = dialog.querySelector("video");
+      expect(player?.getAttribute("src")).toBe("blob:video-10003");
+      expect(player?.controls).toBe(true);
+      expect(within(dialog).queryByRole("img")).toBeNull();
+      expect(within(dialog).queryByRole("button", { name: "Zoom in" })).toBeNull();
+      expect(within(dialog).getByRole("button", { name: "Show in folder" })).toBeTruthy();
+    });
+
     it("disables the thumbnail being opened", () => {
       render(JiraIssueDetail, {
         props: {
@@ -151,6 +188,7 @@ describe("JiraIssueDetail", () => {
               attachmentId: "10002",
               filename: "photo.png",
               url: "blob:image-10002",
+              kind: "image",
               path: photoPath,
             },
           },

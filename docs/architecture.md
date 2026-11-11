@@ -122,7 +122,7 @@ add_jira_comment
 assign_jira_issue_to_me
 download_jira_attachments
 get_jira_attachment_thumbnail
-read_jira_attachment_image
+read_jira_attachment_media
 list_jira_chat_threads
 create_jira_chat_thread
 delete_jira_chat_thread

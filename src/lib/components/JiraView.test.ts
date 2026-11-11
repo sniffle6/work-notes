@@ -77,7 +77,10 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     })),
     revealJiraAttachment: vi.fn(async () => undefined),
     getJiraAttachmentThumbnail: vi.fn(async (attachmentId: string) => `blob:thumbnail-${attachmentId}`),
-    readJiraAttachmentImage: vi.fn(async (_key: string, attachmentId: string) => `blob:image-${attachmentId}`),
+    readJiraAttachmentMedia: vi.fn(async (_key: string, attachmentId: string) => ({
+      url: `blob:image-${attachmentId}`,
+      kind: "image" as const,
+    })),
     listJiraChatThreads: vi.fn(async () => []),
     createJiraChatThread: vi.fn(async () => ({ id: "thread-1", title: "New chat", createdAt: "", updatedAt: "" })),
     deleteJiraChatThread: vi.fn(async () => undefined),
