@@ -49,6 +49,8 @@ function detail(overrides: Partial<JiraIssueDetail> = {}): JiraIssueDetail {
     descriptionEditableLosslessly: true,
     reporter: null,
     parentKey: null,
+    subtasks: [],
+    linkedIssues: [],
     comments: [],
     transitions: [{ id: "11", name: "Start work", toStatus: "In Progress" }],
     ...overrides,

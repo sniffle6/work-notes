@@ -1,13 +1,10 @@
+import { isoDate, workInstructions } from "./agent-prompt";
 import type { JiraComment, JiraIssueDetail } from "./types";
-
-const INSTRUCTIONS =
-  "Read the ticket below and investigate the relevant code before changing anything. " +
-  "Then do the work the ticket asks for and verify it. Ask me if the ticket leaves something unclear.";
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
 
 /**
  * Builds a prompt that hands a ticket to a coding agent. It carries the
- * ticket's facts, description, and comments so the agent needs no Jira access.
+ * ticket's facts, description, subtasks, linked issues, and comments so the
+ * agent needs no Jira access.
  */
 export function buildTicketPrompt(issue: JiraIssueDetail): string {
   const facts = [
@@ -23,11 +20,25 @@ export function buildTicketPrompt(issue: JiraIssueDetail): string {
 
   const sections = [
     `Work on Jira ticket ${issue.key}: ${issue.summary}`,
-    INSTRUCTIONS,
+    workInstructions("ticket"),
     facts.join("\n"),
     "## Description",
     issue.description.trim() || "The ticket has no description.",
   ];
+  if (issue.subtasks.length > 0) {
+    sections.push(
+      "## Subtasks",
+      issue.subtasks.map((subtask) => `- ${subtask.key} (${subtask.status}): ${subtask.summary}`).join("\n"),
+    );
+  }
+  if (issue.linkedIssues.length > 0) {
+    sections.push(
+      "## Linked issues",
+      issue.linkedIssues
+        .map((linked) => `- ${linked.relationship} ${linked.key} (${linked.status}): ${linked.summary}`)
+        .join("\n"),
+    );
+  }
   if (issue.comments.length > 0) {
     sections.push("## Comments", ...issue.comments.map(commentBlock));
   }
@@ -36,7 +47,7 @@ export function buildTicketPrompt(issue: JiraIssueDetail): string {
 }
 
 function commentBlock(comment: JiraComment): string {
-  const date = ISO_DATE.exec(comment.created)?.[0];
+  const date = isoDate(comment.created);
   const heading = date ? `${comment.author} (${date}):` : `${comment.author}:`;
   return `${heading}\n${comment.body.trim()}`;
 }

@@ -27,6 +27,8 @@ function issue(overrides: Partial<JiraIssue> = {}): JiraIssue {
     descriptionEditableLosslessly: true,
     reporter: "Rina Q",
     parentKey: null,
+    subtasks: [],
+    linkedIssues: [],
     comments: [{ id: "c1", author: "Maya Lopez", created: "2026-11-02T09:00:00.000Z", body: "Reproduced on bench 1." }],
     transitions: [
       { id: "11", name: "Start work", toStatus: "In Progress" },

@@ -224,12 +224,26 @@ export type JiraTransition = {
   toStatus: string;
 };
 
+/** The short form of an issue named by another issue. */
+export type JiraRelatedIssue = {
+  key: string;
+  summary: string;
+  status: string;
+};
+
+export type JiraLinkedIssue = JiraRelatedIssue & {
+  /** How the open issue relates to this one, such as "blocks". */
+  relationship: string;
+};
+
 export type JiraIssueDetail = JiraIssueSummary & {
   description: string;
   /** False when saving a plain-text edit would flatten Jira formatting. */
   descriptionEditableLosslessly: boolean;
   reporter: string | null;
   parentKey: string | null;
+  subtasks: JiraRelatedIssue[];
+  linkedIssues: JiraLinkedIssue[];
   comments: JiraComment[];
   transitions: JiraTransition[];
 };

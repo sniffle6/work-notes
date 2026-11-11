@@ -34,6 +34,7 @@ The API token is never written to SQLite, never sent to the chat agent, and only
 - `src/lib/stores/jira.ts`: frontend workflow store for the Jira view.
 - `src/lib/jira-list.ts`: ticket list search, status grouping, and priority emphasis.
 - `src/lib/jira-prompt.ts`: the prompt that "Copy agent prompt" puts on the clipboard.
+- `src/lib/agent-prompt.ts`: the opening instructions shared with the note prompt in `src/lib/note-prompt.ts`.
 
 ## Jira Access
 
@@ -49,7 +50,7 @@ The list groups tickets by status in workflow order: to do, in progress, done. T
 
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 
-"Copy agent prompt" copies a self-contained prompt for the open ticket: key, summary, facts, description, and comments. It is meant for a coding agent in another tool, which needs no Jira access to start. It is separate from the Jira chat agent and changes nothing in Jira.
+"Copy agent prompt" copies a self-contained prompt for the open ticket: key, summary, facts, description, subtasks, linked issues, and comments. Subtasks and linked issues are listed by key, status, and summary; their own descriptions are not fetched. It is meant for a coding agent in another tool, which needs no Jira access to start. The prompt tells that agent to restate the ticket, question the user on anything unclear, and implement only once both agree on the work. It is separate from the Jira chat agent and changes nothing in Jira.
 
 ## Descriptions And Comments
 

@@ -5,7 +5,8 @@ use super::transitions::match_transition;
 use super::transport::{JiraTransport, Method};
 use super::types::{
     normalize_project_key, Assignee, IssueKey, IssueUpdate, JiraComment, JiraIssueDetail,
-    JiraIssueSummary, JiraTransition, JiraUser, NewIssue, TransitionOutcome,
+    JiraIssueSummary, JiraLinkedIssue, JiraRelatedIssue, JiraTransition, JiraUser, NewIssue,
+    TransitionOutcome,
 };
 use super::JiraError;
 
@@ -23,7 +24,7 @@ const SEARCH_FIELDS: [&str; 7] = [
     "labels",
 ];
 const DETAIL_FIELDS: &str =
-    "summary,description,status,issuetype,priority,assignee,reporter,updated,labels,parent";
+    "summary,description,status,issuetype,priority,assignee,reporter,updated,labels,parent,subtasks,issuelinks";
 
 /// Jira operations the app and the chat agent rely on.
 ///
@@ -151,6 +152,30 @@ fn user_name(user: &Value) -> Option<String> {
     string_at(user, "displayName").or_else(|| string_at(user, "emailAddress"))
 }
 
+fn related_issue(issue: &Value) -> Option<JiraRelatedIssue> {
+    let fields = &issue["fields"];
+    Some(JiraRelatedIssue {
+        key: string_at(issue, "key")?,
+        summary: string_at(fields, "summary").unwrap_or_default(),
+        status: string_at(&fields["status"], "name").unwrap_or_else(|| "Unknown".to_string()),
+    })
+}
+
+/// Jira puts the other issue under `outwardIssue` or `inwardIssue` and names
+/// the relationship for that direction on the link type.
+fn linked_issue(link: &Value) -> Option<JiraLinkedIssue> {
+    let (issue, direction) = [("outwardIssue", "outward"), ("inwardIssue", "inward")]
+        .into_iter()
+        .find_map(|(side, direction)| Some((related_issue(&link[side])?, direction)))?;
+    let link_type = &link["type"];
+    Some(JiraLinkedIssue {
+        relationship: string_at(link_type, direction)
+            .or_else(|| string_at(link_type, "name"))
+            .unwrap_or_else(|| "relates to".to_string()),
+        issue,
+    })
+}
+
 fn required_text(value: &str, message: &str) -> Result<String, JiraError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -215,6 +240,18 @@ impl<T: JiraTransport> JiraOps for JiraClient<T> {
             description_editable_losslessly: adf_round_trips_as_text(description),
             reporter: user_name(&fields["reporter"]),
             parent_key: string_at(&fields["parent"], "key"),
+            subtasks: fields["subtasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(related_issue)
+                .collect(),
+            linked_issues: fields["issuelinks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(linked_issue)
+                .collect(),
             comments: self.comments(key)?,
             transitions: self.transitions(key)?,
         })
@@ -363,7 +400,9 @@ mod tests {
     use crate::jira::adf::text_to_adf;
     use crate::jira::transport::testing::FakeTransport;
     use crate::jira::transport::Method;
-    use crate::jira::types::{Assignee, IssueKey, IssueUpdate, NewIssue};
+    use crate::jira::types::{
+        Assignee, IssueKey, IssueUpdate, JiraLinkedIssue, JiraRelatedIssue, NewIssue,
+    };
     use crate::jira::JiraError;
 
     const SITE: &str = "https://example.atlassian.net";
@@ -491,6 +530,24 @@ mod tests {
         issue["fields"]["description"] = text_to_adf("Jams after reboot.");
         issue["fields"]["reporter"] = json!({ "displayName": "Rina Q" });
         issue["fields"]["parent"] = json!({ "key": "AB-1" });
+        issue["fields"]["subtasks"] = json!([{
+            "key": "AB-8",
+            "fields": { "summary": "Replace the sensor", "status": { "name": "To Do" } },
+        }]);
+        issue["fields"]["issuelinks"] = json!([
+            {
+                "type": { "name": "Blocks", "inward": "is blocked by", "outward": "blocks" },
+                "outwardIssue": {
+                    "key": "AB-9",
+                    "fields": { "summary": "Ship firmware", "status": { "name": "In Progress" } },
+                },
+            },
+            {
+                "type": { "name": "Blocks", "inward": "is blocked by", "outward": "blocks" },
+                "inwardIssue": { "key": "AB-3", "fields": { "summary": "Order parts" } },
+            },
+            { "type": { "name": "Relates" } },
+        ]);
         let transport = FakeTransport::with_responses(vec![
             Ok(issue),
             Ok(json!({
@@ -520,6 +577,38 @@ mod tests {
         assert!(detail.description_editable_losslessly);
         assert_eq!(detail.reporter.as_deref(), Some("Rina Q"));
         assert_eq!(detail.parent_key.as_deref(), Some("AB-1"));
+        assert!(requests[0].path.contains("subtasks"));
+        assert!(requests[0].path.contains("issuelinks"));
+        assert_eq!(
+            detail.subtasks,
+            vec![JiraRelatedIssue {
+                key: "AB-8".to_string(),
+                summary: "Replace the sensor".to_string(),
+                status: "To Do".to_string(),
+            }]
+        );
+        // A link without an issue on either side is skipped.
+        assert_eq!(
+            detail.linked_issues,
+            vec![
+                JiraLinkedIssue {
+                    relationship: "blocks".to_string(),
+                    issue: JiraRelatedIssue {
+                        key: "AB-9".to_string(),
+                        summary: "Ship firmware".to_string(),
+                        status: "In Progress".to_string(),
+                    },
+                },
+                JiraLinkedIssue {
+                    relationship: "is blocked by".to_string(),
+                    issue: JiraRelatedIssue {
+                        key: "AB-3".to_string(),
+                        summary: "Order parts".to_string(),
+                        status: "Unknown".to_string(),
+                    },
+                },
+            ]
+        );
         assert_eq!(detail.comments.len(), 1);
         assert_eq!(detail.comments[0].author, "Maya Lopez");
         assert_eq!(detail.comments[0].body, "Reproduced on bench 1.");

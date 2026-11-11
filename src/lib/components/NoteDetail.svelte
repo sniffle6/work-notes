@@ -1,6 +1,8 @@
 <script lang="ts">
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
+  import Check from "@lucide/svelte/icons/check";
+  import Copy from "@lucide/svelte/icons/copy";
   import Flag from "@lucide/svelte/icons/flag";
   import MessageSquareText from "@lucide/svelte/icons/message-square-text";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -8,13 +10,22 @@
   import StickyNote from "@lucide/svelte/icons/sticky-note";
   import TicketPlus from "@lucide/svelte/icons/ticket-plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
-  import { createEventDispatcher, tick } from "svelte";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { buildNotePrompt } from "$lib/note-prompt";
   import type { ActionItem, NoteDetail, ParseStatus, ReviewStatus } from "$lib/types";
 
   import CleanedEditor from "./CleanedEditor.svelte";
   import MarkdownView from "./MarkdownView.svelte";
 
   type ToolbarIcon = typeof RefreshCw;
+  type CopyState = "idle" | "copied" | "failed";
+
+  const COPY_FEEDBACK_MS = 2000;
+  const COPY_LABELS: Record<CopyState, string> = {
+    idle: "Copy agent prompt",
+    copied: "Copied",
+    failed: "Copy failed",
+  };
 
   type Props = {
     note: NoteDetail | null;
@@ -38,6 +49,8 @@
   let cardNoteText = $state("");
   let currentNoteId = $state<string | null>(null);
   let reparseFeedbackInput = $state<HTMLTextAreaElement | null>(null);
+  let copyState = $state<CopyState>("idle");
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
 
   const suggestedActions = $derived(note?.actionItems.filter((action) => action.status === "suggested") ?? []);
   const acceptedActions = $derived(note?.actionItems.filter((action) => action.status === "accepted") ?? []);
@@ -79,8 +92,31 @@
       followupLane = "";
       cardNoteOpen = false;
       cardNoteText = "";
+      showCopyState("idle");
     }
   });
+
+  onDestroy(() => clearTimeout(copyResetTimer));
+
+  function showCopyState(next: CopyState) {
+    clearTimeout(copyResetTimer);
+    copyState = next;
+    if (next !== "idle") {
+      copyResetTimer = setTimeout(() => (copyState = "idle"), COPY_FEEDBACK_MS);
+    }
+  }
+
+  async function copyPrompt() {
+    if (!note) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(buildNotePrompt(note));
+      showCopyState("copied");
+    } catch {
+      showCopyState("failed");
+    }
+  }
 
   function parseLabel(status: ParseStatus): string {
     switch (status) {
@@ -336,6 +372,7 @@
         {/if}
         {@render toolbarButton("Reparse with feedback", MessageSquareText, openReparseDialog)}
         <span class="toolbar-rule" aria-hidden="true"></span>
+        {@render toolbarButton(COPY_LABELS[copyState], copyState === "copied" ? Check : Copy, () => void copyPrompt())}
         {@render toolbarButton("Add note", StickyNote, () => (cardNoteOpen = true))}
         {@render toolbarButton("Create Jira ticket", TicketPlus, () => dispatch("createJiraTicket"))}
         {#if note.isArchived}

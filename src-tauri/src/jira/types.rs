@@ -115,6 +115,25 @@ pub struct JiraTransition {
     pub to_status: String,
 }
 
+/// The short form of an issue named by another issue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraRelatedIssue {
+    pub key: String,
+    pub summary: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraLinkedIssue {
+    /// How the open issue relates to this one, such as `blocks` or
+    /// `is blocked by`.
+    pub relationship: String,
+    #[serde(flatten)]
+    pub issue: JiraRelatedIssue,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraIssueDetail {
@@ -126,6 +145,8 @@ pub struct JiraIssueDetail {
     pub description_editable_losslessly: bool,
     pub reporter: Option<String>,
     pub parent_key: Option<String>,
+    pub subtasks: Vec<JiraRelatedIssue>,
+    pub linked_issues: Vec<JiraLinkedIssue>,
     pub comments: Vec<JiraComment>,
     pub transitions: Vec<JiraTransition>,
 }

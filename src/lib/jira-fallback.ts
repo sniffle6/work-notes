@@ -21,6 +21,8 @@ function sampleIssue(key: string, summary: string, status: string, statusCategor
     descriptionEditableLosslessly: true,
     reporter: "Preview User",
     parentKey: null as string | null,
+    subtasks: [] as { key: string; summary: string; status: string }[],
+    linkedIssues: [] as { relationship: string; key: string; summary: string; status: string }[],
     comments: [] as { id: string; author: string; created: string; body: string }[],
     transitions: [
       { id: "11", name: "Start work", toStatus: "In Progress" },

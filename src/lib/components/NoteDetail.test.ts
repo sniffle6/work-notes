@@ -7,7 +7,10 @@ import { tick } from "svelte";
 import type { NoteDetail as NoteDetailType } from "$lib/types";
 import NoteDetail from "./NoteDetail.svelte";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("NoteDetail", () => {
   it("renders cleaned markdown instead of plain markdown text", () => {
@@ -47,6 +50,35 @@ describe("NoteDetail", () => {
     render(NoteDetail, { props: { note: noteDetail() } });
 
     expect(screen.queryByRole("group", { name: "Jira tickets" })).toBeNull();
+  });
+
+  it("copies an agent prompt for the note and confirms it", async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(NoteDetail, { props: { note: noteDetail() } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
+
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy());
+    const prompt = (writeText.mock.calls[0] as unknown as [string])[0];
+    expect(prompt).toContain("Work on this note: Robert local AI");
+    expect(prompt).toContain("Robert said check local AI feasibility.");
+  });
+
+  it("says so when the note prompt cannot be copied", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        writeText: vi.fn(async () => {
+          throw new Error("denied");
+        }),
+      },
+    });
+    render(NoteDetail, { props: { note: noteDetail() } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy agent prompt" }));
+
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Copy failed" })).toBeTruthy());
   });
 
   it("opens a feedback dialog from the reparse action", async () => {

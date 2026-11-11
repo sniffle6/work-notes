@@ -20,6 +20,7 @@ import type {
   JiraIssueDraft,
   JiraIssueEdit,
   JiraIssueSummary,
+  JiraRelatedIssue,
   JiraStatus,
   NoteDetail,
   NoteListItem,
@@ -617,6 +618,16 @@ function normalizeJiraIssueSummary(value: unknown): JiraIssueSummary {
   };
 }
 
+function normalizeJiraRelatedIssue(value: unknown): JiraRelatedIssue {
+  const record = asRecord(value);
+
+  return {
+    key: getString(record, "key") ?? "",
+    summary: getString(record, "summary") ?? "",
+    status: getString(record, "status") ?? "Unknown",
+  };
+}
+
 function normalizeJiraIssueDetail(value: unknown): JiraIssueDetail {
   const record = asRecord(value);
 
@@ -626,6 +637,11 @@ function normalizeJiraIssueDetail(value: unknown): JiraIssueDetail {
     descriptionEditableLosslessly: getBoolean(record, "descriptionEditableLosslessly") ?? true,
     reporter: getNullableString(record, "reporter"),
     parentKey: getNullableString(record, "parentKey"),
+    subtasks: getArray(record, "subtasks").map(normalizeJiraRelatedIssue),
+    linkedIssues: getArray(record, "linkedIssues").map((linked) => ({
+      ...normalizeJiraRelatedIssue(linked),
+      relationship: getString(asRecord(linked), "relationship") ?? "",
+    })),
     comments: getArray(record, "comments").map((comment) => {
       const commentRecord = asRecord(comment);
       return {

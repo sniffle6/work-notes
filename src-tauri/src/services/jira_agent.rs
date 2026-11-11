@@ -630,6 +630,8 @@ mod tests {
                 description_editable_losslessly: true,
                 reporter: Some("Rina Q".to_string()),
                 parent_key: Some("AB-1".to_string()),
+                subtasks: Vec::new(),
+                linked_issues: Vec::new(),
                 comments: (1..=12)
                     .map(|index| JiraComment {
                         id: index.to_string(),
