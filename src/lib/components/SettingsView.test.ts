@@ -29,6 +29,7 @@ describe("SettingsView", () => {
       "Memphis '86",
       "Everforest Dark",
       "Everforest Light",
+      "Dusk",
     ]);
     expect(screen.getByRole("button", { name: "Everforest Light" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Dark Compact" }).getAttribute("aria-pressed")).toBe("false");

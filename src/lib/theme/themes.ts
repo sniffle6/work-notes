@@ -94,11 +94,38 @@ export const everforestLightTheme: ThemeDefinition = {
   },
 };
 
+// The built-in example of a background gradient: indigo at the top-left
+// fading through plum to a dark ember. `app.bg` is the middle stop.
+export const duskTheme: ThemeDefinition = {
+  id: "dusk",
+  label: "Dusk",
+  family: "dusk",
+  mode: "dark",
+  compact: true,
+  tokens: {
+    "app.bg": "#241a36",
+    "surface.1": "#2a2040",
+    "surface.2": "#36294f",
+    "surface.input": "#1b1429",
+    "border.default": "#4a3b63",
+    "border.strong": "#6b5a88",
+    "text.primary": "#f1eaf5",
+    "text.muted": "#b3a6c4",
+    "accent.primary": "#7a4a8f",
+    "accent.hot": "#ffb37a",
+    "status.success": "#7cc48d",
+    "status.warning": "#e8b458",
+    "status.error": "#f0706a",
+  },
+  backgroundGradient: { angle: 155, stops: ["#141a33", "#241a36", "#3a1f2a"] },
+};
+
 export const themes = [
   darkCompactTheme,
   memphisTheme,
   everforestDarkTheme,
   everforestLightTheme,
+  duskTheme,
 ] as const;
 
 export function getThemeById(id: string | null | undefined): ThemeDefinition {

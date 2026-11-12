@@ -208,7 +208,7 @@
     min-height: 0;
     overflow: hidden;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     font-family: var(--font-ui);
     font-size: 13px;
     letter-spacing: 0;
@@ -568,7 +568,7 @@
     height: 100vh;
     min-width: 0;
     min-height: 0;
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 

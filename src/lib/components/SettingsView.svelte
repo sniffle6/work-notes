@@ -13,6 +13,7 @@
   import { createEventDispatcher } from "svelte";
   import { selectLinkedWorkspaceDirectory } from "$lib/api";
   import type { AppSettings, GeneratedTheme, JiraFilter } from "$lib/types";
+  import { appBackgroundCss } from "$lib/theme/applyTheme";
   import { allThemes, draftThemeDefinition } from "$lib/theme/custom";
   import type { ThemeDefinition } from "$lib/theme/tokens";
 
@@ -161,7 +162,7 @@
     const tokens = theme.tokens;
 
     return [
-      `--specimen-bg: ${tokens["app.bg"]}`,
+      `--specimen-bg: ${appBackgroundCss(theme)}`,
       `--specimen-surface: ${tokens["surface.2"]}`,
       `--specimen-border: ${tokens["border.default"]}`,
       `--specimen-text: ${tokens["text.primary"]}`,

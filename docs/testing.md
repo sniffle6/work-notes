@@ -47,7 +47,8 @@ Important frontend tests:
 - `src/lib/components/JiraView.test.ts`: Jira screen driven through the real store and a fake API.
 - `src/lib/components/JiraIssueDetail.test.ts`: transitions, attachments, comments, edits, and the flatten-formatting confirmation.
 - `src/lib/components/JiraChat.test.ts`: message entry keys, lookups, and Approve/Reject on proposals.
-- `src/lib/theme/theme.test.ts`: theme token to CSS variable mapping.
+- `src/lib/theme/theme.test.ts`: theme token to CSS variable mapping, including the app background paint.
+- `src/lib/theme/custom.test.ts`: saved and draft themes as theme definitions, and reading a background gradient.
 - `src/lib/scaffold.test.ts`: scaffold sanity check.
 
 Testing conventions:
@@ -107,7 +108,7 @@ scripts\cargo-test.cmd live_agent -- --ignored --nocapture
 scripts\cargo-test.cmd live_theme -- --ignored --nocapture
 ```
 
-`live_jira` only reads from Jira. `live_agent` runs real Codex conversations with read-only lookups and never approves a proposal. `live_theme` asks real Codex for one theme and needs no Jira setup.
+`live_jira` only reads from Jira. `live_agent` runs real Codex conversations with read-only lookups and never approves a proposal. `live_theme` asks real Codex for two themes, one flat and one with a background gradient, and needs no Jira setup.
 
 Manual checks in the running app after Jira changes:
 

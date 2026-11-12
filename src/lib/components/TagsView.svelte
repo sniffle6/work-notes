@@ -185,7 +185,7 @@
     min-width: 0;
     min-height: 0;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 
@@ -429,7 +429,7 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 

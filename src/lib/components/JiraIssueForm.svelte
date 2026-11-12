@@ -90,7 +90,7 @@
     height: 100%;
     padding: 16px;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: auto;
   }
 

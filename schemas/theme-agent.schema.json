@@ -7,9 +7,32 @@
   "required": [
     "name",
     "notes",
-    "tokens"
+    "tokens",
+    "backgroundGradient"
   ],
   "properties": {
+    "backgroundGradient": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "angle",
+        "stops"
+      ],
+      "properties": {
+        "angle": {
+          "type": "integer"
+        },
+        "stops": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "name": {
       "type": "string"
     },

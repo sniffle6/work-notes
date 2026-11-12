@@ -3,10 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { jiraFallbackCommand } from "$lib/jira-fallback";
 import { sniffMediaType, type MediaType } from "$lib/media-type";
 import { withRetry } from "$lib/retry";
+import { parseBackgroundGradient } from "$lib/theme/custom";
 import type {
   ActionItem,
   ActionReviewItem,
   AppSettings,
+  BackgroundGradient,
   CardNote,
   CustomTheme,
   FollowupItem,
@@ -1002,6 +1004,12 @@ function normalizeThemeTokens(value: unknown): ThemeTokenValues | null {
   return tokens;
 }
 
+// A flat theme carries no gradient key at all, so it is saved back unchanged.
+function backgroundGradientField(record: UnknownRecord): { backgroundGradient?: BackgroundGradient } {
+  const backgroundGradient = parseBackgroundGradient(record.backgroundGradient);
+  return backgroundGradient ? { backgroundGradient } : {};
+}
+
 function normalizeThemeMode(value: string | undefined): "dark" | "light" {
   return value === "light" ? "light" : "dark";
 }
@@ -1015,7 +1023,13 @@ function normalizeCustomThemes(values: unknown[] | undefined): CustomTheme[] {
     const label = getString(record, "label");
     const tokens = normalizeThemeTokens(record.tokens);
     if (id && label && tokens) {
-      themes.push({ id, label, mode: normalizeThemeMode(getString(record, "mode")), tokens });
+      themes.push({
+        id,
+        label,
+        mode: normalizeThemeMode(getString(record, "mode")),
+        tokens,
+        ...backgroundGradientField(record),
+      });
     }
   }
   return themes;
@@ -1031,6 +1045,7 @@ function normalizeGeneratedTheme(value: unknown): GeneratedTheme {
     name: getString(record, "name") ?? "Custom theme",
     mode: normalizeThemeMode(getString(record, "mode")),
     tokens,
+    ...backgroundGradientField(record),
     notes: getString(record, "notes") ?? "",
     warnings: normalizeStringArray(getArray(record, "warnings")),
   };
@@ -1056,6 +1071,7 @@ function fallbackGeneratedTheme(request: string): GeneratedTheme {
       statusWarning: "#e6b450",
       statusError: "#e06c5a",
     },
+    backgroundGradient: { angle: 160, stops: ["#2a1a12", "#1c1410", "#120e0c"] },
     notes: `Sample theme for the browser preview. You asked for: ${request}`,
     warnings: [],
   };

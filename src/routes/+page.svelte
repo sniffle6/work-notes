@@ -690,7 +690,7 @@
     height: 100%;
     min-height: 100%;
     margin: 0;
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 
@@ -749,7 +749,7 @@
   .quick-window {
     min-height: 100vh;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
   }
 
   :global(.quick-window .quick-capture) {

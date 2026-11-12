@@ -345,7 +345,7 @@
     min-height: 0;
     flex-direction: column;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 
@@ -615,7 +615,7 @@
     gap: 8px;
     padding: 12px 14px 6px;
     color: var(--color-text-muted);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     font-size: 11.5px;
     font-weight: var(--weight-medium);
   }

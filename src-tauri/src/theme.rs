@@ -1,9 +1,10 @@
 //! Colour themes the user builds with the theme agent.
 //!
 //! The agent runs through local `codex exec` and returns JSON matching
-//! `schemas/theme-agent.schema.json`: a name, a note, and one colour per
-//! token. The app normalizes the colours, works out whether the theme is
-//! dark or light, and checks that text stays readable.
+//! `schemas/theme-agent.schema.json`: a name, a note, one colour per token,
+//! and an optional background gradient. The app normalizes the colours,
+//! works out whether the theme is dark or light, and checks that text stays
+//! readable.
 
 use std::time::Duration;
 
@@ -19,6 +20,12 @@ const MIN_TEXT_CONTRAST: f64 = 4.5;
 const MIN_MARK_CONTRAST: f64 = 3.0;
 /// Backgrounds darker than this are treated as a dark theme.
 const DARK_MODE_MAX_LUMINANCE: f64 = 0.4;
+const MIN_GRADIENT_STOPS: usize = 2;
+const MAX_GRADIENT_STOPS: usize = 3;
+const MAX_GRADIENT_ANGLE: u16 = 360;
+/// How finely each stretch between two stops is checked for contrast. The
+/// weakest point can fall between stops, so the stops alone are not enough.
+const GRADIENT_SAMPLES_PER_SEGMENT: u32 = 8;
 const MAX_REQUEST_CHARS: usize = 2_000;
 pub const MAX_THEME_NAME_CHARS: usize = 40;
 
@@ -89,6 +96,66 @@ impl ThemeTokens {
     }
 }
 
+/// A linear gradient painted behind the main panes in place of the flat
+/// `appBg`. `appBg` stays the colour that panels and tints are mixed from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackgroundGradient {
+    /// Direction in degrees, read as CSS `linear-gradient` reads it: 0 runs
+    /// bottom to top and 90 runs left to right.
+    pub angle: u16,
+    /// Evenly spaced colours, each as `#rrggbb`.
+    pub stops: Vec<String>,
+}
+
+impl BackgroundGradient {
+    /// Rewrites every stop as lowercase `#rrggbb`. Fails with a message
+    /// naming what is wrong when the stop count, a stop, or the angle is
+    /// out of range.
+    pub fn normalized(self) -> Result<Self, String> {
+        if !(MIN_GRADIENT_STOPS..=MAX_GRADIENT_STOPS).contains(&self.stops.len()) {
+            return Err(format!(
+                "backgroundGradient needs {MIN_GRADIENT_STOPS} or {MAX_GRADIENT_STOPS} stops"
+            ));
+        }
+        if self.angle > MAX_GRADIENT_ANGLE {
+            return Err(format!(
+                "backgroundGradient angle must be from 0 to {MAX_GRADIENT_ANGLE}"
+            ));
+        }
+        let stops = self
+            .stops
+            .iter()
+            .map(|stop| normalize_hex(stop))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                "backgroundGradient stops must be hex colours like #1a2b3c".to_string()
+            })?;
+        Ok(Self {
+            angle: self.angle,
+            stops,
+        })
+    }
+
+    /// Colours along a normalized gradient, including every stop. The
+    /// channels are blended the way CSS blends them by default.
+    fn samples(&self) -> Vec<String> {
+        let mut samples = Vec::new();
+        for pair in self.stops.windows(2) {
+            let (from, to) = (hex_channels(&pair[0]), hex_channels(&pair[1]));
+            for step in 0..=GRADIENT_SAMPLES_PER_SEGMENT {
+                let position = f64::from(step) / f64::from(GRADIENT_SAMPLES_PER_SEGMENT);
+                let [red, green, blue] = [0, 1, 2].map(|channel| {
+                    let (from, to) = (f64::from(from[channel]), f64::from(to[channel]));
+                    (from + (to - from) * position).round() as u8
+                });
+                samples.push(format!("#{red:02x}{green:02x}{blue:02x}"));
+            }
+        }
+        samples
+    }
+}
+
 /// A theme the agent produced, ready to preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +163,9 @@ pub struct GeneratedTheme {
     pub name: String,
     pub mode: ThemeMode,
     pub tokens: ThemeTokens,
+    /// Absent when the background is the flat `appBg`.
+    #[serde(default)]
+    pub background_gradient: Option<BackgroundGradient>,
     /// The agent's one-line account of the choices it made.
     pub notes: String,
     /// Readability problems that remain after the agent's repair attempt.
@@ -156,18 +226,25 @@ pub fn normalize_hex(value: &str) -> Option<String> {
 /// WCAG relative luminance of a normalized `#rrggbb` colour. Anything else
 /// counts as black.
 pub fn relative_luminance(hex: &str) -> f64 {
-    let channel = |offset: usize| -> f64 {
-        let value = hex
-            .get(offset..offset + 2)
-            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-            .map_or(0.0, |byte| f64::from(byte) / 255.0);
+    let [red, green, blue] = hex_channels(hex).map(|byte| {
+        let value = f64::from(byte) / 255.0;
         if value <= 0.039_28 {
             value / 12.92
         } else {
             ((value + 0.055) / 1.055).powf(2.4)
         }
-    };
-    0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+    });
+    0.2126 * red + 0.7152 * green + 0.0722 * blue
+}
+
+/// Red, green, and blue of a normalized `#rrggbb` colour. A channel that
+/// cannot be read counts as 0.
+fn hex_channels(hex: &str) -> [u8; 3] {
+    [1, 3, 5].map(|offset| {
+        hex.get(offset..offset + 2)
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            .unwrap_or(0)
+    })
 }
 
 /// WCAG contrast ratio between two normalized colours, from 1 to 21.
@@ -182,8 +259,12 @@ pub fn contrast_ratio(first: &str, second: &str) -> f64 {
 }
 
 /// Lists the places where a theme would be hard to read. Empty means the
-/// theme passes.
-pub fn contrast_problems(tokens: &ThemeTokens) -> Vec<String> {
+/// theme passes. A normalized `gradient` is held to the same minimums as
+/// `appBg` at its weakest point.
+pub fn contrast_problems(
+    tokens: &ThemeTokens,
+    gradient: Option<&BackgroundGradient>,
+) -> Vec<String> {
     let checks: [(&str, &str, &str, &str, f64); 11] = [
         (
             "textPrimary",
@@ -264,13 +345,47 @@ pub fn contrast_problems(tokens: &ThemeTokens) -> Vec<String> {
         ),
     ];
 
-    checks
+    let mut problems: Vec<String> = checks
         .into_iter()
         .filter_map(|(text_name, text, surface_name, surface, minimum)| {
             let ratio = contrast_ratio(text, surface);
             (ratio < minimum).then(|| {
                 format!(
                     "{text_name} on {surface_name} has contrast {ratio:.1}; it needs at least {minimum:.1}"
+                )
+            })
+        })
+        .collect();
+
+    if let Some(gradient) = gradient {
+        problems.extend(gradient_contrast_problems(tokens, gradient));
+    }
+    problems
+}
+
+/// Everything drawn straight on the window background, with the contrast
+/// it needs there.
+fn gradient_contrast_problems(tokens: &ThemeTokens, gradient: &BackgroundGradient) -> Vec<String> {
+    let samples = gradient.samples();
+    let checks: [(&str, &str, f64); 6] = [
+        ("textPrimary", &tokens.text_primary, MIN_TEXT_CONTRAST),
+        ("textMuted", &tokens.text_muted, MIN_TEXT_CONTRAST),
+        ("accentHot", &tokens.accent_hot, MIN_MARK_CONTRAST),
+        ("statusSuccess", &tokens.status_success, MIN_MARK_CONTRAST),
+        ("statusWarning", &tokens.status_warning, MIN_MARK_CONTRAST),
+        ("statusError", &tokens.status_error, MIN_MARK_CONTRAST),
+    ];
+
+    checks
+        .into_iter()
+        .filter_map(|(name, colour, minimum)| {
+            let weakest = samples
+                .iter()
+                .map(|sample| contrast_ratio(colour, sample))
+                .fold(f64::INFINITY, f64::min);
+            (weakest < minimum).then(|| {
+                format!(
+                    "{name} on backgroundGradient has contrast {weakest:.1} at its weakest point; it needs at least {minimum:.1}"
                 )
             })
         })
@@ -283,6 +398,7 @@ struct RawTheme {
     name: String,
     notes: String,
     tokens: ThemeTokens,
+    background_gradient: Option<BackgroundGradient>,
 }
 
 fn parse_theme(raw: &str) -> Result<RawTheme, ThemeAgentError> {
@@ -307,6 +423,11 @@ fn parse_theme(raw: &str) -> Result<RawTheme, ThemeAgentError> {
         .tokens
         .normalized()
         .map_err(ThemeAgentError::InvalidOutput)?;
+    theme.background_gradient = theme
+        .background_gradient
+        .map(BackgroundGradient::normalized)
+        .transpose()
+        .map_err(ThemeAgentError::InvalidOutput)?;
     Ok(theme)
 }
 
@@ -318,9 +439,12 @@ Output:
 - `name`: a short name for the theme, at most three words, no quotes.
 - `notes`: one sentence on the look you went for.
 - `tokens`: one colour per token, each as #rrggbb.
+- `backgroundGradient`: null for a flat background, or a gradient painted across the whole window behind the main panes.
+  - `angle`: direction in degrees from 0 to 360, as CSS linear-gradient reads it. 180 runs top to bottom, 90 runs left to right, 135 runs from the top-left corner.
+  - `stops`: two or three #rrggbb colours, evenly spaced.
 
 What each token paints:
-- appBg: the window background behind everything.
+- appBg: the window background behind everything. With a gradient, appBg still tints panels and small controls, so pick a colour from the middle of the gradient.
 - surface1: side panels and dialogs. Close to appBg.
 - surface2: hovered and selected rows. A clear step away from appBg.
 - surfaceInput: text fields and code blocks.
@@ -337,6 +461,8 @@ Rules:
 - textPrimary must contrast at least 4.5:1 with appBg, surface1, surface2, and surfaceInput.
 - textMuted must contrast at least 4.5:1 with appBg and surface1.
 - accentHot and the three status colours must contrast at least 3:1 with appBg. accentHot must also reach 3:1 on surface2.
+- Use a gradient when the user asks for one or describes something a flat colour cannot carry, such as a sky, a glow, or a fade between two colours. Otherwise return null.
+- A gradient may change hue freely, but text is read straight on top of it. Every rule above that names appBg also holds at every point along the gradient, including the blend between stops, so keep its lightness on one side.
 - Keep the three status colours recognisable as green, amber, and red families unless the user asks otherwise.
 - Take the palette from what the user describes. Do not fall back to a blue-black background with a teal or violet accent unless asked.
 "###;
@@ -358,7 +484,10 @@ pub fn build_theme_prompt(
         prompt.push_str(
             &serde_json::to_string_pretty(&base.tokens).unwrap_or_else(|_| "{}".to_string()),
         );
-        prompt.push('\n');
+        prompt.push_str(&format!(
+            "\nbackgroundGradient: {}\n",
+            serde_json::to_string(&base.background_gradient).unwrap_or_else(|_| "null".to_string())
+        ));
     }
 
     if !problems.is_empty() {
@@ -379,7 +508,8 @@ pub fn build_theme_prompt(
 ///
 /// Fails with `EmptyRequest` or `RequestTooLong` before the agent runs, `Run`
 /// when the agent cannot run, and `InvalidOutput` when its answer does not
-/// match the schema or holds a value that is not a hex colour.
+/// match the schema, holds a value that is not a hex colour, or describes a
+/// gradient with the wrong number of stops or an angle past 360.
 pub fn generate_theme(
     runner: &dyn ThemeRunner,
     request: &str,
@@ -398,11 +528,12 @@ pub fn generate_theme(
             .run_turn(&build_theme_prompt(request, base, problems))
             .map_err(ThemeAgentError::Run)?;
         let theme = parse_theme(&raw)?;
-        let warnings = contrast_problems(&theme.tokens);
+        let warnings = contrast_problems(&theme.tokens, theme.background_gradient.as_ref());
         Ok::<_, ThemeAgentError>(GeneratedTheme {
             name: theme_name(&theme.name),
             mode: theme.tokens.mode(),
             tokens: theme.tokens,
+            background_gradient: theme.background_gradient,
             notes: theme.notes.trim().to_string(),
             warnings,
         })
@@ -434,8 +565,20 @@ pub(crate) mod tests {
 
     use super::{
         build_theme_prompt, contrast_problems, contrast_ratio, generate_theme, normalize_hex,
-        GeneratedTheme, ThemeAgentError, ThemeMode, ThemeRunner, ThemeTokens,
+        BackgroundGradient, GeneratedTheme, ThemeAgentError, ThemeMode, ThemeRunner, ThemeTokens,
     };
+
+    pub(crate) fn gradient(angle: u16, stops: &[&str]) -> BackgroundGradient {
+        BackgroundGradient {
+            angle,
+            stops: stops.iter().map(|stop| stop.to_string()).collect(),
+        }
+    }
+
+    /// Stays close enough to `dark_tokens().app_bg` that every check passes.
+    fn gentle_gradient() -> BackgroundGradient {
+        gradient(135, &["#11151c", "#161c26"])
+    }
 
     pub(crate) fn dark_tokens() -> ThemeTokens {
         ThemeTokens {
@@ -456,7 +599,21 @@ pub(crate) mod tests {
     }
 
     fn output(name: &str, tokens: &ThemeTokens) -> Result<String, String> {
-        Ok(json!({ "name": name, "notes": " Calm and dark. ", "tokens": tokens }).to_string())
+        output_with_gradient(name, tokens, None)
+    }
+
+    fn output_with_gradient(
+        name: &str,
+        tokens: &ThemeTokens,
+        gradient: Option<&BackgroundGradient>,
+    ) -> Result<String, String> {
+        Ok(json!({
+            "name": name,
+            "notes": " Calm and dark. ",
+            "tokens": tokens,
+            "backgroundGradient": gradient,
+        })
+        .to_string())
     }
 
     struct FakeRunner {
@@ -505,6 +662,33 @@ pub(crate) mod tests {
         assert_eq!(theme.mode, ThemeMode::Dark);
     }
 
+    /// Manual check with real Codex: asked for a gradient, the agent
+    /// returns one that the app accepts. Run with:
+    /// `cargo test live_theme -- --ignored --nocapture`
+    #[test]
+    #[ignore = "runs codex exec"]
+    fn live_theme_agent_builds_a_gradient() {
+        use crate::parser::DEFAULT_CODEX_PROGRAM;
+
+        let runner = super::CodexThemeRunner {
+            program: DEFAULT_CODEX_PROGRAM.to_string(),
+            timeout: std::time::Duration::from_secs(120),
+        };
+
+        let theme = generate_theme(
+            &runner,
+            "deep ocean at night, fading from teal near the surface down to black",
+            None,
+        )
+        .expect("theme agent run");
+
+        println!("{} ({:?}): {}", theme.name, theme.mode, theme.notes);
+        println!("appBg: {}", theme.tokens.app_bg);
+        println!("gradient: {:?}", theme.background_gradient);
+        println!("warnings: {:?}", theme.warnings);
+        assert!(theme.background_gradient.is_some());
+    }
+
     #[test]
     fn hex_colours_are_normalized_and_other_values_rejected() {
         assert_eq!(normalize_hex(" #ABCDEF "), Some("#abcdef".to_string()));
@@ -534,7 +718,125 @@ pub(crate) mod tests {
 
     #[test]
     fn a_readable_theme_has_no_contrast_problems() {
-        assert_eq!(contrast_problems(&dark_tokens()), Vec::<String>::new());
+        assert_eq!(
+            contrast_problems(&dark_tokens(), None),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            contrast_problems(&dark_tokens(), Some(&gentle_gradient())),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_gradient_is_normalized_and_an_unusable_one_is_rejected() {
+        assert_eq!(
+            gradient(360, &[" #ABC ", "#112233", "#FfEeDd"]).normalized(),
+            Ok(gradient(360, &["#aabbcc", "#112233", "#ffeedd"]))
+        );
+        assert_eq!(
+            gradient(90, &["#112233"]).normalized(),
+            Err("backgroundGradient needs 2 or 3 stops".to_string())
+        );
+        assert_eq!(
+            gradient(90, &["#111111", "#222222", "#333333", "#444444"]).normalized(),
+            Err("backgroundGradient needs 2 or 3 stops".to_string())
+        );
+        assert_eq!(
+            gradient(90, &["#112233", "navy"]).normalized(),
+            Err("backgroundGradient stops must be hex colours like #1a2b3c".to_string())
+        );
+        assert_eq!(
+            gradient(361, &["#112233", "#223344"]).normalized(),
+            Err("backgroundGradient angle must be from 0 to 360".to_string())
+        );
+    }
+
+    #[test]
+    fn text_is_checked_at_the_weakest_point_along_the_gradient() {
+        // Black text reaches 6.7:1 on both stops, but the blend between a
+        // magenta and a green is much darker than either.
+        let tokens = ThemeTokens {
+            text_primary: "#000000".to_string(),
+            ..dark_tokens()
+        };
+        let stops = gradient(90, &["#ff00ff", "#00aa00"]);
+        assert!(contrast_ratio("#000000", "#ff00ff") > 6.0);
+        assert!(contrast_ratio("#000000", "#00aa00") > 6.0);
+
+        let problems = contrast_problems(&tokens, Some(&stops));
+
+        assert!(
+            problems.contains(
+                &"textPrimary on backgroundGradient has contrast 3.5 at its weakest point; it needs at least 4.5"
+                    .to_string()
+            ),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn marks_are_checked_along_the_gradient_too() {
+        // The red end of the gradient swallows the error colour.
+        let stops = gradient(180, &["#11151c", "#c04848"]);
+
+        let problems = contrast_problems(&dark_tokens(), Some(&stops));
+
+        assert!(
+            problems.iter().any(|problem| problem
+                .starts_with("statusError on backgroundGradient has contrast 1.")
+                && problem.ends_with("it needs at least 3.0")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_gradient_from_the_agent_is_normalized_and_returned() {
+        let runner = FakeRunner::new(vec![output_with_gradient(
+            "Dusk",
+            &dark_tokens(),
+            Some(&gradient(135, &["#11151C", "#161c26"])),
+        )]);
+
+        let theme = generate_theme(&runner, "dusk sky", None).unwrap();
+
+        assert_eq!(theme.background_gradient, Some(gentle_gradient()));
+        assert!(theme.warnings.is_empty());
+        assert_eq!(runner.prompts.borrow().len(), 1);
+    }
+
+    #[test]
+    fn an_unreadable_gradient_gets_a_repair_turn_that_shows_it() {
+        let harsh = gradient(180, &["#11151c", "#c04848"]);
+        let runner = FakeRunner::new(vec![
+            output_with_gradient("Dusk", &dark_tokens(), Some(&harsh)),
+            output_with_gradient("Dusk", &dark_tokens(), Some(&gentle_gradient())),
+        ]);
+
+        let theme = generate_theme(&runner, "dusk sky", None).unwrap();
+
+        assert_eq!(theme.background_gradient, Some(gentle_gradient()));
+        let prompts = runner.prompts.borrow();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains("on backgroundGradient has contrast"));
+        assert!(prompts[1]
+            .contains("backgroundGradient: {\"angle\":180,\"stops\":[\"#11151c\",\"#c04848\"]}"));
+    }
+
+    #[test]
+    fn an_unusable_gradient_from_the_agent_is_reported() {
+        let runner = FakeRunner::new(vec![output_with_gradient(
+            "Odd",
+            &dark_tokens(),
+            Some(&gradient(90, &["#112233"])),
+        )]);
+
+        assert_eq!(
+            generate_theme(&runner, "anything", None),
+            Err(ThemeAgentError::InvalidOutput(
+                "backgroundGradient needs 2 or 3 stops".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -545,7 +847,7 @@ pub(crate) mod tests {
             ..dark_tokens()
         };
 
-        let problems = contrast_problems(&tokens);
+        let problems = contrast_problems(&tokens, None);
 
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems[0].starts_with("textMuted on appBg has contrast 1."));
@@ -567,6 +869,7 @@ pub(crate) mod tests {
                 name: "Night Desk".to_string(),
                 mode: ThemeMode::Dark,
                 tokens: dark_tokens(),
+                background_gradient: None,
                 notes: "Calm and dark.".to_string(),
                 warnings: Vec::new(),
             }
@@ -634,6 +937,7 @@ pub(crate) mod tests {
             name: "Night Desk".to_string(),
             mode: ThemeMode::Dark,
             tokens: dark_tokens(),
+            background_gradient: None,
             notes: String::new(),
             warnings: Vec::new(),
         };
@@ -643,6 +947,17 @@ pub(crate) mod tests {
         assert!(prompt.contains("The user is refining this theme."));
         assert!(prompt.contains("name: Night Desk"));
         assert!(prompt.contains("\"accentHot\": \"#6fc7bd\""));
+        assert!(prompt.contains("backgroundGradient: null\n"));
+
+        let with_gradient = GeneratedTheme {
+            background_gradient: Some(gentle_gradient()),
+            ..base
+        };
+        assert!(
+            build_theme_prompt("warmer accent", Some(&with_gradient), &[]).contains(
+                "backgroundGradient: {\"angle\":135,\"stops\":[\"#11151c\",\"#161c26\"]}\n"
+            )
+        );
         assert!(prompt.ends_with("What the user asked for:\nwarmer accent\n"));
     }
 

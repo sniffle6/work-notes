@@ -358,7 +358,7 @@
     min-height: 0;
     padding: 24px 28px 36px;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: auto;
   }
 

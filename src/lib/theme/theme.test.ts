@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   darkCompactTheme,
+  duskTheme,
   everforestDarkTheme,
   everforestLightTheme,
   getThemeById,
@@ -33,6 +34,38 @@ describe("toCssVariables", () => {
       "--color-accent-primary": "#ec4899",
       "--color-accent-hot": "#49c5e3",
     });
+  });
+});
+
+describe("app background paint", () => {
+  it("paints the flat background colour when a theme has no gradient", () => {
+    expect(toCssVariables(darkCompactTheme)["--color-app-bg-paint"]).toBe("#11151c");
+  });
+
+  it("paints a gradient pinned to the window so every pane shows one continuous sweep", () => {
+    const variables = toCssVariables({
+      ...darkCompactTheme,
+      backgroundGradient: { angle: 135, stops: ["#11151c", "#1d2a3a", "#2a1d3a"] },
+    });
+
+    expect(variables["--color-app-bg-paint"]).toBe("linear-gradient(135deg, #11151c, #1d2a3a, #2a1d3a) fixed");
+    expect(variables["--color-app-bg"]).toBe("#11151c");
+  });
+});
+
+describe("dusk theme", () => {
+  it("is a built-in dark theme that paints a three-stop gradient", () => {
+    expect(themes).toContain(duskTheme);
+    expect(getThemeById("dusk")).toBe(duskTheme);
+    expect(duskTheme.mode).toBe("dark");
+    expect(Object.keys(duskTheme.tokens).sort()).toEqual(Object.keys(darkCompactTheme.tokens).sort());
+    expect(toCssVariables(duskTheme)["--color-app-bg-paint"]).toBe(
+      "linear-gradient(155deg, #141a33, #241a36, #3a1f2a) fixed",
+    );
+  });
+
+  it("takes its flat background colour from the middle of the gradient", () => {
+    expect(duskTheme.tokens["app.bg"]).toBe(duskTheme.backgroundGradient?.stops[1]);
   });
 });
 

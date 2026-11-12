@@ -675,7 +675,7 @@
     height: 100%;
     flex-direction: column;
     color: var(--color-text-primary);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
     overflow: hidden;
   }
 
@@ -902,7 +902,7 @@
     min-height: 44px;
     padding: 6px 12px 6px 24px;
     border-bottom: 1px solid var(--rule);
-    background: var(--color-app-bg);
+    background: var(--color-app-bg-paint, var(--color-app-bg));
   }
 
   .viewer-name {

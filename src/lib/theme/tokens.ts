@@ -1,3 +1,5 @@
+import type { BackgroundGradient } from "$lib/types";
+
 export type ThemeToken =
   | "app.bg"
   | "surface.1"
@@ -22,6 +24,8 @@ export type ThemeDefinition = {
   mode: ThemeMode;
   compact: boolean;
   tokens: Record<ThemeToken, string>;
+  /** Painted behind the main panes in place of the flat `app.bg`. */
+  backgroundGradient?: BackgroundGradient;
 };
 
 export const tokenCssVariables: Record<ThemeToken, `--color-${string}`> = {

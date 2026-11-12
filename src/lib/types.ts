@@ -134,12 +134,24 @@ export type ThemeTokenValues = {
   statusError: string;
 };
 
+/**
+ * A linear gradient painted behind the main panes in place of the flat
+ * `appBg`. `angle` is in degrees as CSS `linear-gradient` reads it, and
+ * `stops` holds two or three evenly spaced `#rrggbb` colours.
+ */
+export type BackgroundGradient = {
+  angle: number;
+  stops: string[];
+};
+
 /** A theme the user built and kept. Its id starts with `custom-`. */
 export type CustomTheme = {
   id: string;
   label: string;
   mode: "dark" | "light";
   tokens: ThemeTokenValues;
+  /** Absent when the background is the flat `appBg`. */
+  backgroundGradient?: BackgroundGradient;
 };
 
 /** A theme the theme agent produced, not yet kept. */
@@ -147,6 +159,8 @@ export type GeneratedTheme = {
   name: string;
   mode: "dark" | "light";
   tokens: ThemeTokenValues;
+  /** Absent when the background is the flat `appBg`. */
+  backgroundGradient?: BackgroundGradient;
   /** The agent's one-line account of the look. */
   notes: string;
   /** Readability problems the agent could not fix. */

@@ -101,12 +101,16 @@ Registered themes currently include:
 
 - `dark-compact`: default dense utility theme.
 - `memphis`: alternate compact theme exposed in settings as `Memphis '86`.
+- `everforest-dark` and `everforest-light`: the two modes of the Everforest family.
+- `dusk`: dark theme with a background gradient. Use it to check how a pane looks over a gradient.
 
 ### Theme Agent
 
-Settings > Appearance can build a theme from a description. The agent runs through local `codex exec` and must return JSON matching `schemas/theme-agent.schema.json`: a name, a one-line note, and one `#rrggbb` colour per token.
+Settings > Appearance can build a theme from a description. The agent runs through local `codex exec` and must return JSON matching `schemas/theme-agent.schema.json`: a name, a one-line note, one `#rrggbb` colour per token, and `backgroundGradient`, which is `null` or an angle with two or three colour stops.
 
 - The app normalizes the colours, decides dark or light from the background's luminance, and checks WCAG contrast: 4.5:1 for primary and muted text, 3:1 for the hot accent and status colours.
+- A background gradient is held to the same minimums as `appBg`. The check samples the blend between stops, because the weakest point can fall between them.
+- The gradient is exposed as `--color-app-bg-paint`, which holds the flat `appBg` colour for themes without one. Panes that show the app background use `background: var(--color-app-bg-paint, var(--color-app-bg))`. The gradient is pinned to the window, so each pane's own paint lines up as one sweep. Keep using `--color-app-bg` inside `color-mix()` and for small controls: a gradient is not a colour.
 - Failed checks get one repair turn that starts from the first attempt. Problems that remain are returned as warnings and shown beside the preview.
 - A built theme is only a draft. It is painted over the whole app while the settings dialog is open and is dropped when the dialog closes unless the user keeps it.
 - Kept themes are stored in settings as `customThemes`. Their ids start with `custom-` so they cannot shadow a built-in theme, and their mode is always recomputed from the background.

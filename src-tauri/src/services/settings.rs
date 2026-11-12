@@ -7,7 +7,7 @@ use crate::db::Database;
 use crate::jira::transport::{normalize_site_url, validate_cloud_id};
 use crate::jira::types::normalize_project_key;
 use crate::parser::DEFAULT_CODEX_PROGRAM;
-use crate::theme::{ThemeMode, ThemeTokens, MAX_THEME_NAME_CHARS};
+use crate::theme::{BackgroundGradient, ThemeMode, ThemeTokens, MAX_THEME_NAME_CHARS};
 
 use super::{ServiceError, ServiceResult};
 
@@ -62,6 +62,9 @@ pub struct CustomTheme {
     pub label: String,
     pub mode: ThemeMode,
     pub tokens: ThemeTokens,
+    /// Absent when the background is the flat `appBg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_gradient: Option<BackgroundGradient>,
 }
 
 impl Default for AppSettings {
@@ -87,7 +90,7 @@ impl Default for AppSettings {
 #[cfg(test)]
 mod tests {
     use crate::db::Database;
-    use crate::theme::tests::dark_tokens;
+    use crate::theme::tests::{dark_tokens, gradient};
     use crate::theme::ThemeMode;
 
     use super::{AppSettings, JiraFilter, SettingsService};
@@ -126,7 +129,52 @@ mod tests {
             label: label.to_string(),
             mode: ThemeMode::Light,
             tokens: dark_tokens(),
+            background_gradient: None,
         }
+    }
+
+    #[test]
+    fn save_normalizes_a_custom_theme_gradient() {
+        let service = SettingsService::new(Database::in_memory().unwrap());
+        let mut theme = custom_theme("custom-dusk", "Dusk");
+        theme.background_gradient = Some(gradient(135, &["#11151C", "#abc"]));
+        let mut settings = AppSettings::default();
+        settings.custom_themes = vec![theme];
+
+        let saved = service.save(settings).unwrap();
+
+        assert_eq!(
+            saved.custom_themes[0].background_gradient,
+            Some(gradient(135, &["#11151c", "#aabbcc"]))
+        );
+        assert_eq!(service.get().unwrap().custom_themes, saved.custom_themes);
+    }
+
+    #[test]
+    fn save_rejects_an_unusable_custom_theme_gradient() {
+        let service = SettingsService::new(Database::in_memory().unwrap());
+        let mut theme = custom_theme("custom-dusk", "Dusk");
+        theme.background_gradient = Some(gradient(135, &["#11151c"]));
+        let mut settings = AppSettings::default();
+        settings.custom_themes = vec![theme];
+
+        assert!(matches!(
+            service.save(settings),
+            Err(super::ServiceError::InvalidInput(
+                "a custom theme gradient needs 2 or 3 hex colours and an angle from 0 to 360"
+            ))
+        ));
+    }
+
+    #[test]
+    fn custom_themes_saved_before_gradients_still_load() {
+        let stored = serde_json::to_value(custom_theme("custom-a", "One")).unwrap();
+        let mut stored = stored.as_object().unwrap().clone();
+        stored.remove("backgroundGradient");
+
+        let loaded: super::CustomTheme = serde_json::from_value(stored.into()).unwrap();
+
+        assert_eq!(loaded.background_gradient, None);
     }
 
     #[test]
@@ -421,11 +469,21 @@ fn normalize_custom_themes(themes: Vec<CustomTheme>) -> ServiceResult<Vec<Custom
         let tokens = theme.tokens.normalized().map_err(|_| {
             ServiceError::InvalidInput("a custom theme colour must be a hex colour like #1a2b3c")
         })?;
+        let background_gradient = theme
+            .background_gradient
+            .map(BackgroundGradient::normalized)
+            .transpose()
+            .map_err(|_| {
+                ServiceError::InvalidInput(
+                    "a custom theme gradient needs 2 or 3 hex colours and an angle from 0 to 360",
+                )
+            })?;
         normalized.push(CustomTheme {
             id: theme.id,
             label: label.to_string(),
             mode: tokens.mode(),
             tokens,
+            background_gradient,
         });
     }
 

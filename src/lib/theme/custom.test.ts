@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { CustomTheme, GeneratedTheme, ThemeTokenValues } from "$lib/types";
-import { allThemes, customThemeId, draftThemeDefinition, DRAFT_THEME_ID, resolveTheme, toCustomTheme } from "./custom";
+import {
+  allThemes,
+  customThemeId,
+  draftThemeDefinition,
+  DRAFT_THEME_ID,
+  parseBackgroundGradient,
+  resolveTheme,
+  toCustomTheme,
+} from "./custom";
 import { darkCompactTheme, everforestLightTheme, themes } from "./themes";
 
 function tokens(overrides: Partial<ThemeTokenValues> = {}): ThemeTokenValues {
@@ -98,6 +106,53 @@ describe("theme definitions", () => {
     expect(draft.label).toBe("Amber Terminal");
     expect(draft.mode).toBe("light");
     expect(draft.tokens["accent.hot"]).toBe("#ffb454");
+  });
+});
+
+describe("background gradients", () => {
+  const backgroundGradient = { angle: 160, stops: ["#1c1410", "#2a1a12"] };
+
+  it("carries a gradient from a generated theme into the draft and the saved theme", () => {
+    const theme = generated({ backgroundGradient });
+
+    expect(draftThemeDefinition(theme).backgroundGradient).toEqual(backgroundGradient);
+    expect(toCustomTheme(theme, []).backgroundGradient).toEqual(backgroundGradient);
+  });
+
+  it("carries a saved theme's gradient into its definition", () => {
+    const saved = custom({ backgroundGradient });
+
+    expect(allThemes([saved]).at(-1)?.backgroundGradient).toEqual(backgroundGradient);
+    expect(resolveTheme(saved.id, [saved]).backgroundGradient).toEqual(backgroundGradient);
+  });
+
+  it("leaves flat themes without a gradient", () => {
+    expect(draftThemeDefinition(generated()).backgroundGradient).toBeUndefined();
+    expect(toCustomTheme(generated(), [])).not.toHaveProperty("backgroundGradient");
+  });
+
+  it("reads a gradient with two or three stops and an angle", () => {
+    expect(parseBackgroundGradient({ angle: 160, stops: ["#1c1410", "#2a1a12"] })).toEqual(backgroundGradient);
+    expect(parseBackgroundGradient({ angle: 0, stops: ["#111111", "#222222", "#333333"] })).toEqual({
+      angle: 0,
+      stops: ["#111111", "#222222", "#333333"],
+    });
+  });
+
+  it("treats a missing or unusable gradient as a flat background", () => {
+    for (const value of [
+      null,
+      undefined,
+      "linear-gradient(red, blue)",
+      { angle: 160, stops: ["#1c1410"] },
+      { angle: 160, stops: ["#111111", "#222222", "#333333", "#444444"] },
+      { angle: "160", stops: ["#1c1410", "#2a1a12"] },
+      { angle: 160, stops: ["#1c1410", 7] },
+      { angle: 160, stops: ["#1c1410", "red; background: url(x)"] },
+      { stops: ["#1c1410", "#2a1a12"] },
+    ]) {
+      expect(parseBackgroundGradient(value), JSON.stringify(value)).toBeUndefined();
+    }
   });
 });
 
