@@ -293,11 +293,70 @@ describe("JiraView", () => {
     await fireEvent.input(box, { target: { value: "summarize this" } });
     await fireEvent.keyDown(box, { key: "Enter" });
     await vi.waitFor(() =>
-      expect(api.sendJiraChatMessage).toHaveBeenCalledWith("thread-1", "summarize this", "AB-7"),
+      expect(api.sendJiraChatMessage).toHaveBeenCalledWith("thread-1", "summarize this", "AB-7", null),
     );
 
     await fireEvent.click(screen.getByRole("button", { name: "Agent" }));
     expect(screen.queryByRole("textbox", { name: "Message the Jira agent" })).toBeNull();
+  });
+
+  it("opens the agent beside a ticket drafted from a note and shows its rewrite in the form", async () => {
+    const api = fakeApi();
+    const jira = await renderOpened(api);
+
+    await jira.draftFromNote({ id: "note-1", title: "printer thing", text: "it jams" });
+
+    const summary = await screen.findByRole<HTMLInputElement>("textbox", { name: "Summary" });
+    expect(summary.value).toBe("printer thing");
+    expect(screen.getByRole("textbox", { name: "Message the Jira agent" })).toBeTruthy();
+
+    await jira.applyViewAction({
+      kind: "setDraft",
+      issueType: "Task",
+      summary: "Printer jams after reboot",
+      description: null,
+    });
+
+    await vi.waitFor(() => expect(summary.value).toBe("Printer jams after reboot"));
+    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Issue type" }).value).toBe("Task");
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Description" }).value).toBe("it jams");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    expect(screen.queryByRole("textbox", { name: "Message the Jira agent" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Summary" })).toBeTruthy();
+  });
+
+  it("reports a created ticket with the note it was drafted from", async () => {
+    const ticketCreated = vi.fn();
+    const jira = await renderOpened(fakeApi(), { ticketCreated });
+    await jira.draftFromNote({ id: "note-1", title: "printer thing", text: "it jams" });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create ticket" }));
+
+    await vi.waitFor(() => expect(ticketCreated).toHaveBeenCalledTimes(1));
+    expect(ticketCreated.mock.calls[0][0].detail).toEqual({ issueKey: "AB-9", noteId: "note-1" });
+  });
+
+  it("tells the agent what the form holds after the user edits it", async () => {
+    const api = fakeApi();
+    const jira = await renderOpened(api);
+    await jira.draftFromNote({ id: "note-1", title: "printer thing", text: "it jams" });
+    const summary = await screen.findByRole("textbox", { name: "Summary" });
+
+    await fireEvent.input(summary, { target: { value: "Printer jams" } });
+    const box = screen.getByRole("textbox", { name: "Message the Jira agent" });
+    await fireEvent.input(box, { target: { value: "add repro steps" } });
+    await fireEvent.keyDown(box, { key: "Enter" });
+
+    await vi.waitFor(() =>
+      expect(api.sendJiraChatMessage).toHaveBeenLastCalledWith("thread-1", "add repro steps", null, {
+        issueType: "Bug",
+        summary: "Printer jams",
+        description: "it jams",
+        issueTypes: ["Bug", "Task"],
+        noteId: "note-1",
+      }),
+    );
   });
 
   it("shows Jira errors", async () => {

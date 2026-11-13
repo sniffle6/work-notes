@@ -7,9 +7,11 @@
     issueTypes: string[];
     projectKey?: string;
     saving?: boolean;
+    /** The agent is working and may rewrite the fields. */
+    agentBusy?: boolean;
   };
 
-  let { draft, issueTypes, projectKey = "", saving = false }: Props = $props();
+  let { draft, issueTypes, projectKey = "", saving = false, agentBusy = false }: Props = $props();
   let issueType = $state("");
   let summary = $state("");
   let description = $state("");
@@ -18,6 +20,8 @@
 
   const dispatch = createEventDispatcher<{
     submit: JiraIssueDraft;
+    /** The user changed a field. */
+    edit: Pick<JiraIssueDraft, "issueType" | "summary" | "description">;
     cancel: void;
   }>();
 
@@ -29,6 +33,11 @@
       description = draft.description;
     }
   });
+
+  // Text fields report on input; the issue type select updates on change.
+  function reportEdit() {
+    dispatch("edit", { issueType, summary, description });
+  }
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -44,12 +53,23 @@
   }
 </script>
 
-<form class="jira-form" aria-label="New ticket" onsubmit={submit}>
+<form
+  class="jira-form"
+  aria-label="New ticket"
+  onsubmit={submit}
+  oninput={reportEdit}
+  onchange={reportEdit}
+>
   <header>
     <h1>New ticket{projectKey ? ` in ${projectKey}` : ""}</h1>
     {#if draft.noteId}
       <p>The ticket key will be linked to the note it was created from.</p>
     {/if}
+    <p role="status">
+      {agentBusy
+        ? "The agent is working on this draft."
+        : "Nothing is in Jira until you create the ticket. Ask the agent to rework the draft."}
+    </p>
   </header>
 
   <label>

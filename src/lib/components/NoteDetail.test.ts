@@ -46,6 +46,36 @@ describe("NoteDetail", () => {
     expect(createJiraTicket).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a linked Jira ticket when its key is clicked", async () => {
+    const openJiraTicket = vi.fn();
+    render(NoteDetail, {
+      props: { note: { ...noteDetail(), jiraIssueKeys: ["AB-7", "AB-9"] } },
+      events: { openJiraTicket },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open AB-9 in Jira" }));
+
+    expect(openJiraTicket).toHaveBeenCalledTimes(1);
+    expect(openJiraTicket.mock.calls[0][0].detail).toBe("AB-9");
+  });
+
+  it("offers to cancel a parse that is queued or running, and not otherwise", async () => {
+    const cancelParse = vi.fn();
+    const { rerender } = render(NoteDetail, {
+      props: { note: { ...noteDetail(), parseStatus: "parsing" } },
+      events: { cancelParse },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel parsing" }));
+    expect(cancelParse).toHaveBeenCalledTimes(1);
+
+    await rerender({ note: { ...noteDetail(), parseStatus: "queued" } });
+    expect(screen.getByRole("button", { name: "Cancel parsing" })).toBeTruthy();
+
+    await rerender({ note: { ...noteDetail(), parseStatus: "parsed" } });
+    expect(screen.queryByRole("button", { name: "Cancel parsing" })).toBeNull();
+  });
+
   it("hides the Jira ticket list when the note has no tickets", () => {
     render(NoteDetail, { props: { note: noteDetail() } });
 

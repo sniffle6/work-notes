@@ -184,6 +184,33 @@ describe("createWorkNotesStore", () => {
     expect(api.getNote).toHaveBeenLastCalledWith("note-1");
   });
 
+  it("cancels the selected note's parse and reloads it", async () => {
+    const api = testApi();
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    vi.mocked(api.getNote).mockClear();
+    await store.cancelSelectedParse();
+
+    expect(api.cancelParse).toHaveBeenCalledWith("note-1");
+    expect(api.getNote).toHaveBeenCalledWith("note-1");
+    expect(get(store.error)).toBeNull();
+  });
+
+  it("reports a parse that could not be cancelled", async () => {
+    const api = testApi({
+      cancelParse: vi.fn(async () => {
+        throw new Error("database is locked");
+      }),
+    });
+    const store = createWorkNotesStore(api);
+
+    await store.selectNote("note-1");
+    await store.cancelSelectedParse();
+
+    expect(get(store.error)).toBe("database is locked");
+  });
+
   it("refreshes active parser notes without waiting for user navigation", async () => {
     let parseStatus: NoteListItem["parseStatus"] = "parsing";
     const api = testApi({
@@ -997,6 +1024,7 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
     listInbox: vi.fn<(filters: InboxFilters) => Promise<NoteListItem[]>>().mockResolvedValue([]),
     getNote: vi.fn<(noteId: string) => Promise<NoteDetail>>().mockResolvedValue(detail),
     retryParse: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
+    cancelParse: vi.fn<(noteId: string) => Promise<void>>().mockResolvedValue(undefined),
     retryParseWithFeedback: vi
       .fn<(noteId: string, feedback: string) => Promise<void>>()
       .mockResolvedValue(undefined),

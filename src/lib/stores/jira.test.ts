@@ -476,6 +476,20 @@ describe("createJiraStore", () => {
     expect(get(store.issues).map((item) => item.key)).toEqual(["AB-9"]);
   });
 
+  it("keeps showing the new ticket when the active filter does not list it", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    await store.startDraft({ summary: "From note" });
+    vi.mocked(api.getJiraIssue).mockClear();
+
+    await store.submitDraft({ issueType: "Bug", summary: "From note", description: "" });
+
+    expect(get(store.selectedIssue)?.key).toBe("AB-9");
+    expect(get(store.issues).map((item) => item.key)).toEqual(["AB-7", "AB-8"]);
+    expect(api.getJiraIssue).not.toHaveBeenCalled();
+  });
+
   it("keeps the draft open when ticket creation fails", async () => {
     const api = fakeApi({
       createJiraIssue: vi.fn(async () => {
@@ -566,7 +580,7 @@ describe("createJiraStore", () => {
     await store.sendChat("  hi  ");
 
     expect(api.createJiraChatThread).toHaveBeenCalledTimes(1);
-    expect(api.sendJiraChatMessage).toHaveBeenCalledWith("thread-new", "hi", "AB-7");
+    expect(api.sendJiraChatMessage).toHaveBeenCalledWith("thread-new", "hi", "AB-7", null);
     expect(get(store.activeThreadId)).toBe("thread-new");
     expect(get(store.messages).map((item) => item.role)).toEqual(["user", "assistant"]);
     expect(get(store.threads)[0].title).toBe("hi");
@@ -687,6 +701,159 @@ describe("createJiraStore", () => {
     expect(get(store.activeThreadId)).toBeNull();
     expect(get(store.messages)).toEqual([]);
     expect(api.createJiraChatThread).not.toHaveBeenCalled();
+  });
+
+  describe("ticket drafts and the agent", () => {
+    const NOTE = { id: "note-1", title: "printer thing", text: "it jams after reboot" };
+    const NOTE_DRAFT = {
+      issueType: "Bug",
+      summary: "printer thing",
+      description: "it jams after reboot",
+      noteId: "note-1",
+    };
+
+    it("prefills a draft from a note and asks the agent to write the ticket in a new conversation", async () => {
+      const api = fakeApi();
+      const store = createJiraStore(api);
+      await store.open();
+      await store.openThread("thread-1");
+
+      await store.draftFromNote(NOTE);
+
+      expect(get(store.draft)).toEqual(NOTE_DRAFT);
+      expect(get(store.draftAgentOpen)).toBe(true);
+      expect(get(store.activeThreadId)).toBe("thread-new");
+      expect(api.sendJiraChatMessage).toHaveBeenCalledTimes(1);
+      const [threadId, text, focusIssueKey, draft] = vi.mocked(api.sendJiraChatMessage).mock.calls[0];
+      expect(threadId).toBe("thread-new");
+      expect(text.split("\n")[0]).toBe("Draft a ticket from my note: printer thing");
+      expect(focusIssueKey).toBeNull();
+      expect(draft).toEqual({ ...NOTE_DRAFT, issueTypes: ["Bug", "Task"] });
+    });
+
+    it("keeps the prefilled draft when the agent cannot write the ticket", async () => {
+      const api = fakeApi({
+        sendJiraChatMessage: vi.fn(async () => {
+          throw new Error("codex command was not found: codex.cmd");
+        }),
+      });
+      const store = createJiraStore(api);
+      await store.open();
+
+      await store.draftFromNote(NOTE);
+
+      expect(get(store.draft)).toEqual(NOTE_DRAFT);
+      expect(get(store.chatError)).toBe("codex command was not found: codex.cmd");
+    });
+
+    it("leaves a running conversation alone and only prefills the draft", async () => {
+      const pending = deferred<JiraChatMessage[]>();
+      const api = fakeApi({ sendJiraChatMessage: vi.fn(() => pending.promise) });
+      const store = createJiraStore(api);
+      await store.open();
+      await store.openThread("thread-1");
+      const sending = store.sendChat("what is open?");
+      await vi.waitFor(() => expect(get(store.agentBusy)).toBe(true));
+
+      await store.draftFromNote(NOTE);
+
+      expect(get(store.draft)).toEqual(NOTE_DRAFT);
+      expect(get(store.activeThreadId)).toBe("thread-1");
+      expect(api.sendJiraChatMessage).toHaveBeenCalledTimes(1);
+      pending.resolve([message()]);
+      await sending;
+    });
+
+    it("does not call the agent when Jira is not set up", async () => {
+      const api = fakeApi({ getJiraStatus: vi.fn(async () => status({ configured: false, filters: [] })) });
+      const store = createJiraStore(api);
+      await store.open();
+
+      await store.draftFromNote(NOTE);
+
+      expect(get(store.draftAgentOpen)).toBe(false);
+      expect(api.sendJiraChatMessage).not.toHaveBeenCalled();
+    });
+
+    it("opens a blank draft without asking for the agent, and lets the agent panel be dismissed", async () => {
+      const store = createJiraStore(fakeApi());
+      await store.open();
+      await store.draftFromNote(NOTE);
+
+      store.closeDraftAgent();
+      expect(get(store.draftAgentOpen)).toBe(false);
+
+      await store.draftFromNote(NOTE);
+      await store.startDraft();
+      expect(get(store.draftAgentOpen)).toBe(false);
+    });
+
+    it("sends the form as it stands, with the user's edits, instead of the ticket behind it", async () => {
+      const api = fakeApi();
+      const store = createJiraStore(api);
+      await store.open();
+      await store.startDraft({ summary: "From note", noteId: "note-1" });
+
+      store.editDraft({ issueType: "Task", summary: "Edited", description: "Body" });
+      await store.sendChat("tighten it");
+
+      expect(get(store.draft)).toEqual({ issueType: "Task", summary: "Edited", description: "Body", noteId: "note-1" });
+      expect(api.sendJiraChatMessage).toHaveBeenCalledWith("thread-new", "tighten it", null, {
+        issueType: "Task",
+        summary: "Edited",
+        description: "Body",
+        issueTypes: ["Bug", "Task"],
+        noteId: "note-1",
+      });
+    });
+
+    it("ignores form edits when no draft is open", async () => {
+      const store = createJiraStore(fakeApi());
+      await store.open();
+
+      store.editDraft({ issueType: "Task", summary: "Edited", description: "" });
+
+      expect(get(store.draft)).toBeNull();
+    });
+
+    it("applies the agent's rewrite to the fields it names", async () => {
+      const store = createJiraStore(fakeApi());
+      await store.open();
+      await store.startDraft({ summary: "printer thing", description: "it jams", noteId: "note-1" });
+
+      await store.applyViewAction({
+        kind: "setDraft",
+        issueType: "Task",
+        summary: "Printer jams after reboot",
+        description: null,
+      });
+
+      expect(get(store.draft)).toEqual({
+        issueType: "Task",
+        summary: "Printer jams after reboot",
+        description: "it jams",
+        noteId: "note-1",
+      });
+    });
+
+    it("keeps the issue type when the agent names one the form does not offer", async () => {
+      const store = createJiraStore(fakeApi());
+      await store.open();
+      await store.startDraft();
+
+      await store.applyViewAction({ kind: "setDraft", issueType: "Epic", summary: null, description: "Body" });
+
+      expect(get(store.draft)).toMatchObject({ issueType: "Bug", description: "Body" });
+    });
+
+    it("ignores the agent's rewrite when the draft was closed meanwhile", async () => {
+      const store = createJiraStore(fakeApi());
+      await store.open();
+
+      await store.applyViewAction({ kind: "setDraft", issueType: null, summary: "Late", description: null });
+
+      expect(get(store.draft)).toBeNull();
+    });
   });
 
   describe("agent view actions", () => {

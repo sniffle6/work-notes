@@ -295,11 +295,25 @@
 
     workNotes.showJira();
     await jira.open();
-    await jira.startDraft({
-      summary: note.title,
-      description: note.cleanedText?.trim() || note.rawText,
-      noteId: note.id,
+    await jira.draftFromNote({
+      id: note.id,
+      title: note.title,
+      text: note.cleanedText?.trim() || note.rawText,
     });
+  }
+
+  // The note still selected in the inbox was loaded before its ticket existed.
+  async function showTicketOnItsNote(noteId: string | null) {
+    if (noteId && get(selectedNote)?.id === noteId) {
+      await workNotes.selectNote(noteId);
+    }
+  }
+
+  async function openJiraTicket(issueKey: string) {
+    workNotes.showJira();
+    await jira.open();
+    jira.cancelDraft();
+    await jira.selectIssue(issueKey);
   }
 
   function selectTheme(event: CustomEvent<string>) {
@@ -582,7 +596,11 @@
         on:openNote={(event) => void openNoteFromTags(event.detail)}
       />
     {:else if $viewMode === "jira"}
-      <JiraView {jira} on:openSettings={() => (settingsOpen = true)} />
+      <JiraView
+        {jira}
+        on:openSettings={() => (settingsOpen = true)}
+        on:ticketCreated={(event) => void showTicketOnItsNote(event.detail.noteId)}
+      />
     {:else}
       <div class="workspace-grid">
         {#if $viewMode === "actions"}
@@ -625,6 +643,7 @@
             loading={$loadingNote}
             busyActionId={$busyActionId}
             on:retryParse={() => void workNotes.retrySelectedParse()}
+            on:cancelParse={() => void workNotes.cancelSelectedParse()}
             on:reparseWithFeedback={(event) => void workNotes.retrySelectedParseWithFeedback(event.detail)}
             on:deleteNote={() => void deleteSelectedNote()}
             on:reopenNote={() => void workNotes.reopenSelectedNote()}
@@ -639,6 +658,7 @@
             on:saveCleaned={(event) => void saveCleanedFromNote(event)}
             on:saveRaw={(event) => void saveRawFromNote(event)}
             on:createJiraTicket={() => void createJiraTicketFromNote()}
+            on:openJiraTicket={(event) => void openJiraTicket(event.detail)}
           />
         </div>
       </div>

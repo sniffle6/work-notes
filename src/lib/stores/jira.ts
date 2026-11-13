@@ -28,6 +28,7 @@ import type {
   JiraAttachmentView,
   JiraChatMessage,
   JiraChatThread,
+  JiraDraftContext,
   JiraFilter,
   JiraIssueDetail,
   JiraIssueDraft,
@@ -84,6 +85,16 @@ const defaultApi: JiraApi = {
 // Offered when Jira cannot list a project's issue types.
 const FALLBACK_ISSUE_TYPES = ["Task", "Bug", "Story"];
 
+/** The note a ticket draft is started from. */
+export type JiraDraftSourceNote = {
+  id: string;
+  title: string;
+  text: string;
+};
+
+/** The fields of the new-ticket form the user can edit. */
+export type JiraDraftFields = Pick<JiraIssueDraft, "issueType" | "summary" | "description">;
+
 /** Workflow store for the Jira view: ticket list, ticket detail, and agent chat. */
 export function createJiraStore(api: JiraApi = defaultApi) {
   const status = writable<JiraStatus | null>(null);
@@ -94,6 +105,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const selectedIssue = writable<JiraIssueDetail | null>(null);
   const issueTypes = writable<string[]>(FALLBACK_ISSUE_TYPES);
   const draft = writable<JiraIssueDraft | null>(null);
+  /** The agent panel was opened for the draft, whatever the user's saved panel choice. */
+  const draftAgentOpen = writable(false);
   const loadingIssues = writable(false);
   const loadingIssue = writable(false);
   const savingIssue = writable(false);
@@ -226,7 +239,15 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   /** Reloads the active filter and keeps the selection when it is still listed. */
-  async function refreshIssues(): Promise<void> {
+  function refreshIssues(): Promise<void> {
+    return reloadIssues(null);
+  }
+
+  /**
+   * Reloads the active filter. The open ticket stays open when it is listed or
+   * is `pinnedKey`; otherwise the first listed ticket opens.
+   */
+  async function reloadIssues(pinnedKey: string | null): Promise<void> {
     const filter = get(activeFilter);
     if (!filter) {
       issues.set([]);
@@ -241,7 +262,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       issues.set(items);
 
       const selectedKey = get(selectedIssue)?.key;
-      if (selectedKey && items.some((item) => item.key === selectedKey)) {
+      if (selectedKey && (selectedKey === pinnedKey || items.some((item) => item.key === selectedKey))) {
         return;
       }
       if (items.length === 0) {
@@ -291,6 +312,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
     issueTypes.set(types);
 
+    draftAgentOpen.set(false);
     draft.set({
       issueType: prefill.issueType && types.includes(prefill.issueType) ? prefill.issueType : types[0],
       summary: prefill.summary ?? "",
@@ -303,6 +325,47 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     draft.set(null);
   }
 
+  /** Records what the user typed into the new-ticket form. */
+  function editDraft(fields: JiraDraftFields): void {
+    draft.update((current) => (current ? { ...current, ...fields } : current));
+  }
+
+  /**
+   * Opens a draft holding the note's own text, then asks the agent in a new
+   * conversation to write the ticket from it. The note text stays in the form
+   * when the agent is busy, fails, or Jira is not set up.
+   */
+  async function draftFromNote(note: JiraDraftSourceNote): Promise<void> {
+    await startDraft({ summary: note.title, description: note.text, noteId: note.id });
+    if (!get(status)?.configured || get(agentBusy)) {
+      return;
+    }
+
+    draftAgentOpen.set(true);
+    newThread();
+    await sendChat(draftRequest(note.title));
+  }
+
+  /** Stops showing the agent panel just because a draft is open. */
+  function closeDraftAgent(): void {
+    draftAgentOpen.set(false);
+  }
+
+  // The agent is shown the form in place of the ticket behind it.
+  function draftContext(): JiraDraftContext | null {
+    const current = get(draft);
+    if (!current) {
+      return null;
+    }
+    return {
+      issueType: current.issueType,
+      summary: current.summary,
+      description: current.description,
+      issueTypes: get(issueTypes),
+      noteId: current.noteId ?? null,
+    };
+  }
+
   /** Creates the ticket and selects it. Returns its key, or undefined on failure. */
   async function submitDraft(nextDraft: JiraIssueDraft): Promise<string | undefined> {
     savingIssue.set(true);
@@ -313,7 +376,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       draft.set(null);
       issueRequestSequence += 1;
       selectedIssue.set(created);
-      await refreshIssues();
+      // The new ticket stays open even when the filter does not match it or
+      // Jira's search has not caught up with it yet.
+      await reloadIssues(created.key);
       return created.key;
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not create the ticket."));
@@ -477,7 +542,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       }
 
       messages.update((current) => [...current, optimisticUserMessage(threadId as string, trimmed)]);
-      const updated = await api.sendJiraChatMessage(threadId, trimmed, get(selectedIssue)?.key ?? null);
+      const openDraft = draftContext();
+      const focusIssueKey = openDraft ? null : (get(selectedIssue)?.key ?? null);
+      const updated = await api.sendJiraChatMessage(threadId, trimmed, focusIssueKey, openDraft);
       if (get(activeThreadId) === threadId) {
         messages.set(updated);
       }
@@ -526,10 +593,30 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       await selectIssue(action.issueKey);
       return;
     }
+    if (action.kind === "setDraft") {
+      rewriteDraft(action);
+      return;
+    }
 
     const filter: JiraFilter = { name: action.title, jql: action.jql };
     agentFilter.set(filter);
     await selectFilter(filter);
+  }
+
+  // A draft closed while the agent worked stays closed.
+  function rewriteDraft(rewrite: Extract<JiraViewAction, { kind: "setDraft" }>): void {
+    const offered = get(issueTypes);
+    draft.update((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        issueType: rewrite.issueType && offered.includes(rewrite.issueType) ? rewrite.issueType : current.issueType,
+        summary: rewrite.summary ?? current.summary,
+        description: rewrite.description ?? current.description,
+      };
+    });
   }
 
   /** Drops the agent's ticket search and returns to the first saved filter. */
@@ -566,6 +653,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     selectedIssue,
     issueTypes,
     draft,
+    draftAgentOpen,
     loadingIssues,
     loadingIssue,
     savingIssue,
@@ -587,6 +675,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     selectIssue,
     startDraft,
     cancelDraft,
+    editDraft,
+    draftFromNote,
+    closeDraftAgent,
     submitDraft,
     transitionSelected,
     commentOnSelected,
@@ -624,6 +715,14 @@ function toSummary(issue: JiraIssueDetail): JiraIssueSummary {
     labels: issue.labels,
     url: issue.url,
   };
+}
+
+function draftRequest(noteTitle: string): string {
+  const title = noteTitle.trim();
+  return [
+    title ? `Draft a ticket from my note: ${title}` : "Draft a ticket from my note",
+    "Write the summary and description from the source note, and pick the issue type that fits.",
+  ].join("\n");
 }
 
 function optimisticUserMessage(threadId: string, content: string): JiraChatMessage {

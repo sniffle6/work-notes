@@ -53,6 +53,17 @@ The ticket list and the agent panel each collapse. `[` toggles the list and `]` 
 
 "Copy agent prompt" copies a self-contained prompt for the open ticket: key, summary, facts, description, subtasks, linked issues, attachments, and comments. It downloads the ticket's attachments first and lists each one by local path. If the download fails, the error is shown and the prompt names the attachments as not downloaded. Subtasks and linked issues are listed by key, status, and summary; their own descriptions are not fetched. It is meant for a coding agent in another tool, which needs no Jira access to start. The prompt tells that agent to restate the ticket, question the user on anything unclear, and implement only once both agree on the work. It is separate from the Jira chat agent and changes nothing in Jira.
 
+## Ticket Drafts
+
+"New ticket" opens an empty form. "Create Jira ticket" on a note opens the form holding the note's title and text, shows the agent panel, and asks the agent in a new conversation to write the ticket.
+
+- A draft is the app's own form. Nothing reaches Jira until the user presses "Create ticket".
+- Each message sent while a draft is open carries the form as it stands, including the user's edits, the issue types the form offers, and the source note's ID. The open ticket is not sent as context then.
+- The backend reads the source note's title and raw text and shows them to the agent on every turn, so a later request can reach back to the note.
+- The agent rewrites the form with `set_draft`. The rewrite replaces what the form holds, including edits typed while the agent was working.
+- The note's own text stays in the form when the agent is busy with another conversation, fails, or names nothing to change.
+- A draft that was closed while the agent worked stays closed; the rewrite is dropped.
+
 ## Attachments
 
 The ticket detail lists a ticket's attachments. The user downloads one or all of them; no full file is downloaded when a ticket opens. The Jira chat agent has no attachment tool.
@@ -112,6 +123,7 @@ Tools:
 | --- | --- | --- |
 | `show_issues` | view | `jql`; optional `title` (default "Agent search") |
 | `open_issue` | view | `issueKey` |
+| `set_draft` | view | at least one of `summary`, `description`, `issueType`; an open ticket draft |
 | `search_issues` | lookup | `jql` |
 | `get_issue` | lookup | `issueKey` |
 | `create_issue` | change | `summary`; optional `issueType` (default Task), `description`, `projectKey` |
@@ -124,11 +136,12 @@ View calls change what the app shows and never change Jira:
 
 - `show_issues` runs the search first. A query Jira rejects is reported back to the agent and the ticket list is left alone. On success the backend emits `jira-view:action`, the Jira store shows the search as a temporary filter beside the saved ones, and the agent is called again with the tickets (the first 50 are listed).
 - `open_issue` emits `jira-view:action` and the store opens that ticket. The agent is not called again for it.
+- `set_draft` rewrites the new-ticket form. A `null` field is left as it is. The backend rejects it, and reports that to the agent, when no draft is open or `issueType` is not one the form offers. On success it emits `jira-view:action`, the store updates the form, and the agent is not called again for it.
 
 ## Trust Rules
 
 - Lookups run immediately. Their results are stored in the conversation and the agent is called again.
-- View calls run immediately because they only change the app's own view.
+- View calls run immediately because they only change the app's own view. A ticket draft is part of that view: rewriting it creates nothing in Jira.
 - Changes never run when the agent asks for them. Each one is stored as a pending proposal.
 - A proposal reaches Jira only when the user approves it in the chat. Rejecting sends nothing.
 - A proposal is claimed in one SQL statement before Jira is called, so it can run at most once.
@@ -152,7 +165,7 @@ View calls change what the app shows and never change Jira:
 
 ## Manual Checks
 
-Two ignored Rust tests exercise real services. Both need the email and token variables and a site URL:
+Ignored Rust tests exercise real services. All but the draft test need the email and token variables and a site URL:
 
 ```powershell
 $env:WORK_NOTES_JIRA_SITE_URL = "https://<team>.atlassian.net"
@@ -160,4 +173,4 @@ scripts\cargo-test.cmd live_jira -- --ignored --nocapture
 scripts\cargo-test.cmd live_agent -- --ignored --nocapture
 ```
 
-`live_jira` only reads from Jira. `live_agent` matches two tests that each run one real Codex conversation: one answers from lookups, one checks that a request to see tickets puts them in the ticket list. Both are read-only and never approve a proposal. Set `WORK_NOTES_JIRA_PROJECT_KEY` to give the agent a default project.
+`live_jira` only reads from Jira. `live_agent` matches three tests that each run one real Codex conversation: one answers from lookups, one checks that a request to see tickets puts them in the ticket list, and one checks that the agent writes a ticket draft from a note. All are read-only and never approve a proposal. The draft test uses a fake Jira and needs no Jira setup. Set `WORK_NOTES_JIRA_PROJECT_KEY` to give the agent a default project.

@@ -71,6 +71,7 @@ pub fn run() {
             commands::get_note,
             commands::retry_parse,
             commands::retry_parse_with_feedback,
+            commands::cancel_parse,
             commands::update_note_cleaned,
             commands::update_note_raw,
             commands::delete_note,

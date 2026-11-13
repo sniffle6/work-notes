@@ -68,6 +68,13 @@ pub enum JiraToolCall {
     OpenIssue {
         issue_key: IssueKey,
     },
+    /// Rewrites the new-ticket form open in the app. `None` leaves a field
+    /// as it is.
+    SetDraft {
+        issue_type: Option<String>,
+        summary: Option<String>,
+        description: Option<String>,
+    },
 }
 
 /// A change to what the app shows. It never changes Jira, so it needs no
@@ -79,8 +86,80 @@ pub enum JiraToolCall {
     rename_all_fields = "camelCase"
 )]
 pub enum ViewAction {
-    ShowIssues { title: String, jql: String },
-    OpenIssue { issue_key: IssueKey },
+    ShowIssues {
+        title: String,
+        jql: String,
+    },
+    OpenIssue {
+        issue_key: IssueKey,
+    },
+    /// New values for the new-ticket form. `None` leaves a field as it is.
+    SetDraft {
+        issue_type: Option<String>,
+        summary: Option<String>,
+        description: Option<String>,
+    },
+}
+
+/// The new-ticket form open in the app. Nothing in it is in Jira yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TicketDraft {
+    pub issue_type: String,
+    pub summary: String,
+    pub description: String,
+    /// Issue types the form offers. Empty when the app could not list them.
+    pub issue_types: Vec<String>,
+    /// Text of the note the draft was started from.
+    pub source_note: Option<String>,
+}
+
+impl TicketDraft {
+    /// Applies the agent's rewrite and returns the matching change to the
+    /// form. `None` leaves a field as it is.
+    ///
+    /// Fails, changing nothing, when `issue_type` is not one the form
+    /// offers. The match ignores case and the form's spelling is kept.
+    pub fn rewrite(
+        &mut self,
+        issue_type: Option<&str>,
+        summary: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<ViewAction, String> {
+        let issue_type = issue_type
+            .map(|requested| self.offered_issue_type(requested))
+            .transpose()?;
+
+        if let Some(issue_type) = &issue_type {
+            self.issue_type.clone_from(issue_type);
+        }
+        if let Some(summary) = summary {
+            self.summary = summary.to_string();
+        }
+        if let Some(description) = description {
+            self.description = description.to_string();
+        }
+        Ok(ViewAction::SetDraft {
+            issue_type,
+            summary: summary.map(str::to_string),
+            description: description.map(str::to_string),
+        })
+    }
+
+    fn offered_issue_type(&self, requested: &str) -> Result<String, String> {
+        if self.issue_types.is_empty() {
+            return Ok(requested.to_string());
+        }
+        self.issue_types
+            .iter()
+            .find(|offered| offered.eq_ignore_ascii_case(requested))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "the draft offers these issue types: {}",
+                    self.issue_types.join(", ")
+                )
+            })
+    }
 }
 
 impl JiraToolCall {
@@ -99,6 +178,15 @@ impl JiraToolCall {
             }),
             Self::OpenIssue { issue_key } => Some(ViewAction::OpenIssue {
                 issue_key: issue_key.clone(),
+            }),
+            Self::SetDraft {
+                issue_type,
+                summary,
+                description,
+            } => Some(ViewAction::SetDraft {
+                issue_type: issue_type.clone(),
+                summary: summary.clone(),
+                description: description.clone(),
             }),
             _ => None,
         }
@@ -158,6 +246,23 @@ impl JiraToolCall {
             } => format!("Unassign {issue_key}"),
             Self::ShowIssues { title, jql } => format!("Show in ticket list: {title}\n{jql}"),
             Self::OpenIssue { issue_key } => format!("Open {issue_key}"),
+            Self::SetDraft {
+                issue_type,
+                summary,
+                description,
+            } => {
+                let mut text = String::from("Rewrite the ticket draft");
+                if let Some(issue_type) = issue_type {
+                    text.push_str(&format!("\nIssue type: {issue_type}"));
+                }
+                if let Some(summary) = summary {
+                    text.push_str(&format!("\nSummary: {summary}"));
+                }
+                if let Some(description) = description {
+                    text.push_str(&format!("\nDescription:\n{description}"));
+                }
+                text
+            }
         }
     }
 }
@@ -264,6 +369,19 @@ impl RawToolCall {
             "open_issue" => Ok(JiraToolCall::OpenIssue {
                 issue_key: self.issue_key()?,
             }),
+            "set_draft" => {
+                let issue_type = non_blank(&self.issue_type);
+                let summary = non_blank(&self.summary);
+                let description = non_blank(&self.description);
+                if issue_type.is_none() && summary.is_none() && description.is_none() {
+                    return Err("set_draft requires summary, description, or issueType".to_string());
+                }
+                Ok(JiraToolCall::SetDraft {
+                    issue_type,
+                    summary,
+                    description,
+                })
+            }
             other => Err(format!("unknown tool {other}")),
         }
     }
@@ -322,6 +440,8 @@ pub struct AgentContext {
     pub today: String,
     /// Issue open in the app when the user sent the message.
     pub focus_issue_key: Option<String>,
+    /// New-ticket form open in the app when the user sent the message.
+    pub draft: Option<TicketDraft>,
 }
 
 /// Builds the full prompt for one agent turn from the stored conversation.
@@ -337,6 +457,9 @@ pub fn build_agent_prompt(context: &AgentContext, transcript: &[ChatMessage]) ->
     prompt.push_str(&format!("- Today: {}\n", context.today));
     if let Some(focus_issue_key) = &context.focus_issue_key {
         prompt.push_str(&format!("- Issue open in the app: {focus_issue_key}\n"));
+    }
+    if let Some(draft) = &context.draft {
+        prompt.push_str(&render_draft(draft));
     }
 
     prompt.push_str("\nConversation so far:\n");
@@ -356,18 +479,21 @@ How this works:
 - `reply` is shown to the user as plain text. Keep it short and concrete, and name ticket keys.
 - `toolCalls` asks the app to act on Jira for you. Set every field a tool does not use to null.
 - Lookups (search_issues, get_issue) run immediately. Their results are added to the conversation and you are called again. Use lookups when you need facts. Never guess ticket keys, statuses, or ticket contents.
-- View calls (show_issues, open_issue) change what the app shows and run immediately. They never change Jira. The user sees a ticket list beside this chat and one open ticket.
+- View calls (show_issues, open_issue, set_draft) change what the app shows and run immediately. They never change Jira. The user sees a ticket list beside this chat and one open ticket.
 - When the user asks to see, show, find, list, filter, or pull up tickets, use show_issues so the tickets land in the list they can click through. Do not paste a long ticket list into `reply`. After show_issues you are called again with the tickets; then say in one or two sentences what is in the list and which ticket you would start with.
 - If show_issues matches nothing, try one broader search before giving up, and say what you loosened.
 - Use search_issues only when you need facts to answer and the user did not ask to see the tickets.
 - Changes (create_issue, update_issue, transition_issue, add_comment, assign_issue) are shown to the user as proposals. Nothing changes in Jira until the user approves each proposal. Propose a change only when the user asked for it, and say in `reply` what you are proposing.
 - Do not say a change happened unless the conversation shows it was approved and applied.
+- When the context shows a ticket draft, the user is writing a new ticket in a form beside this chat, and nothing in it is in Jira yet. Use set_draft to write or rewrite it. The user creates the ticket with the form's own button, so never use create_issue for the draft and never say the ticket was created. After set_draft, say in one or two sentences what you wrote or changed, and ask about anything important that is missing.
+- Write a draft only from what the source note and the user state. Give it a specific summary and a description that covers what is wrong or wanted, why it matters, and how to tell it is done. Leave a part out rather than fill it with guesses.
 - Do not invent owners, dates, or commitments the user did not state.
 - When you have what you need, answer with an empty `toolCalls` list.
 
 Tools:
 - show_issues: `jql` (required), `title` (a short name for the list, for example "Important today"). Puts up to 200 matching tickets in the app's ticket list.
 - open_issue: `issueKey`. Opens that ticket in the app's ticket pane.
+- set_draft: any of `summary`, `description`, `issueType`. A value replaces that whole field; null leaves the field as it is. `issueType` must be one the draft offers. Works only while a ticket draft is open.
 - search_issues: `jql` (required). Returns up to 50 matching tickets to you only.
 - get_issue: `issueKey`. Returns fields, description, recent comments, and the transitions available now.
 - create_issue: `summary` (required), `issueType` (for example Bug, Task, Story; default Task), `description`, `projectKey` (null uses the default project).
@@ -386,6 +512,40 @@ Reading the user's words as JQL:
 - "important", "urgent": `priority in (Highest, High)`. "today", "due": `duedate <= endOfDay()`. Combine them with OR when the user asks what needs attention, and order by `priority DESC, duedate ASC`.
 - "this week", "last week", "recent": `updated >= -7d` or `created >= -7d`, whichever the user means.
 "###;
+
+fn render_draft(draft: &TicketDraft) -> String {
+    let mut rendered = format!(
+        "\nTicket draft open in the app (not in Jira yet):\n- Issue type: {}\n",
+        or_empty(&draft.issue_type)
+    );
+    if !draft.issue_types.is_empty() {
+        rendered.push_str(&format!(
+            "- Issue types offered: {}\n",
+            draft.issue_types.join(", ")
+        ));
+    }
+    rendered.push_str(&format!("- Summary: {}\n", or_empty(&draft.summary)));
+    rendered.push_str(&format!(
+        "Draft description:\n<<<\n{}\n>>>\n",
+        or_empty(&draft.description)
+    ));
+    if let Some(source_note) = &draft.source_note {
+        rendered.push_str(&format!(
+            "Source note the draft was started from:\n<<<\n{}\n>>>\n",
+            source_note.trim()
+        ));
+    }
+    rendered
+}
+
+fn or_empty(value: &str) -> &str {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "(empty)"
+    } else {
+        trimmed
+    }
+}
 
 fn or_not_set(value: &str) -> &str {
     if value.trim().is_empty() {
@@ -452,7 +612,7 @@ mod tests {
 
     use super::{
         build_agent_prompt, parse_agent_turn, AgentContext, AgentTurnError, JiraToolCall,
-        MAX_TRANSCRIPT_MESSAGES,
+        TicketDraft, ViewAction, MAX_TRANSCRIPT_MESSAGES,
     };
     use crate::jira::chat::{ChatMessage, ChatMessageStatus, ChatRole};
     use crate::jira::types::{Assignee, IssueKey};
@@ -509,6 +669,153 @@ mod tests {
                 Err("open_issue requires issueKey".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn parses_a_draft_rewrite_and_requires_a_field() {
+        let raw = turn(vec![
+            raw_call(json!({
+                "tool": "set_draft", "issueType": " Bug ", "summary": " Printer jams ",
+                "description": "Jams after reboot.",
+            })),
+            raw_call(
+                json!({ "tool": "set_draft", "summary": "Only the title", "description": " " }),
+            ),
+            raw_call(json!({ "tool": "set_draft" })),
+        ]);
+
+        let parsed = parse_agent_turn(&raw).unwrap();
+
+        assert_eq!(
+            parsed.tool_calls,
+            vec![
+                Ok(JiraToolCall::SetDraft {
+                    issue_type: Some("Bug".to_string()),
+                    summary: Some("Printer jams".to_string()),
+                    description: Some("Jams after reboot.".to_string()),
+                }),
+                Ok(JiraToolCall::SetDraft {
+                    issue_type: None,
+                    summary: Some("Only the title".to_string()),
+                    description: None,
+                }),
+                Err("set_draft requires summary, description, or issueType".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_draft_rewrite_is_a_view_call_that_needs_no_approval() {
+        let call = JiraToolCall::SetDraft {
+            issue_type: None,
+            summary: Some("Printer jams".to_string()),
+            description: Some("Jams after reboot.".to_string()),
+        };
+
+        assert!(!call.is_write());
+        assert_eq!(
+            serde_json::to_value(call.view_action()).unwrap(),
+            json!({
+                "kind": "setDraft", "issueType": null, "summary": "Printer jams",
+                "description": "Jams after reboot.",
+            })
+        );
+        assert_eq!(
+            call.describe(),
+            "Rewrite the ticket draft\nSummary: Printer jams\nDescription:\nJams after reboot."
+        );
+    }
+
+    fn draft() -> TicketDraft {
+        TicketDraft {
+            issue_type: "Task".to_string(),
+            summary: "printer thing".to_string(),
+            description: "it jams".to_string(),
+            issue_types: vec!["Task".to_string(), "Bug".to_string()],
+            source_note: Some("printer jams after every reboot, maya saw it too".to_string()),
+        }
+    }
+
+    #[test]
+    fn rewriting_a_draft_changes_only_the_given_fields() {
+        let mut draft = draft();
+
+        let action = draft.rewrite(Some("bug"), Some("Printer jams after reboot"), None);
+
+        assert_eq!(
+            action,
+            Ok(ViewAction::SetDraft {
+                issue_type: Some("Bug".to_string()),
+                summary: Some("Printer jams after reboot".to_string()),
+                description: None,
+            })
+        );
+        assert_eq!(draft.issue_type, "Bug");
+        assert_eq!(draft.summary, "Printer jams after reboot");
+        assert_eq!(draft.description, "it jams");
+    }
+
+    #[test]
+    fn rewriting_a_draft_rejects_an_issue_type_the_form_does_not_offer() {
+        let mut draft = draft();
+
+        let action = draft.rewrite(Some("Epic"), Some("New title"), None);
+
+        assert_eq!(
+            action,
+            Err("the draft offers these issue types: Task, Bug".to_string())
+        );
+        assert_eq!(draft.summary, "printer thing", "nothing is applied");
+
+        draft.issue_types.clear();
+        assert!(draft.rewrite(Some("Epic"), None, None).is_ok());
+        assert_eq!(draft.issue_type, "Epic");
+    }
+
+    #[test]
+    fn prompt_shows_the_open_draft_and_its_source_note() {
+        let context = AgentContext {
+            draft: Some(draft()),
+            ..AgentContext::default()
+        };
+
+        let prompt = build_agent_prompt(&context, &[message(ChatRole::User, "tighten it")]);
+
+        assert!(prompt.contains("set_draft"), "{prompt}");
+        assert!(
+            prompt.contains(
+                "Ticket draft open in the app (not in Jira yet):\n\
+                 - Issue type: Task\n\
+                 - Issue types offered: Task, Bug\n\
+                 - Summary: printer thing\n\
+                 Draft description:\n<<<\nit jams\n>>>\n\
+                 Source note the draft was started from:\n<<<\n\
+                 printer jams after every reboot, maya saw it too\n>>>\n"
+            ),
+            "{prompt}"
+        );
+        assert!(prompt.ends_with("[user]\ntighten it\n"), "{prompt}");
+    }
+
+    #[test]
+    fn prompt_marks_empty_draft_fields_and_omits_a_missing_note() {
+        let context = AgentContext {
+            draft: Some(TicketDraft {
+                issue_type: "Task".to_string(),
+                ..TicketDraft::default()
+            }),
+            ..AgentContext::default()
+        };
+
+        let prompt = build_agent_prompt(&context, &[]);
+
+        assert!(prompt.contains("- Summary: (empty)\n"), "{prompt}");
+        assert!(
+            prompt.contains("Draft description:\n<<<\n(empty)\n>>>\n"),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("Issue types offered"), "{prompt}");
+        assert!(!prompt.contains("Source note the draft"), "{prompt}");
     }
 
     #[test]
@@ -829,6 +1136,7 @@ mod tests {
             project_key: "AB".to_string(),
             today: "2026-11-10".to_string(),
             focus_issue_key: Some("AB-7".to_string()),
+            draft: None,
         };
 
         let prompt = build_agent_prompt(&context, &[message(ChatRole::User, "what is open?")]);
@@ -861,6 +1169,7 @@ mod tests {
             "{prompt}"
         );
         assert!(!prompt.contains("Issue open in the app"), "{prompt}");
+        assert!(!prompt.contains("Ticket draft open in the app"), "{prompt}");
     }
 
     #[test]

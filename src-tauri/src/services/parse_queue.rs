@@ -9,11 +9,13 @@ use crate::parser::{
 };
 use crate::services::settings::{AppSettings, SettingsService, DEFAULT_PARSER_TIMEOUT_SECONDS};
 use chrono::Utc;
-use rusqlite::{params, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
 
 use super::ServiceResult;
 
 const INTERRUPTED_PARSE_ERROR: &str = "parser was interrupted before completion; retrying";
+/// Shown on a note whose first parse the user cancelled.
+const CANCELLED_PARSE_ERROR: &str = "Parsing was cancelled.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseQueueConfig {
@@ -145,6 +147,19 @@ impl ParseQueue {
             .map_err(Into::into)
     }
 
+    /// Cancels the note's queued or running parse. Nothing the parser was
+    /// producing is applied, and a running Codex command is stopped.
+    ///
+    /// A note parsed before keeps that parse and returns to `parsed`. A note
+    /// never parsed becomes `failed` so it can be retried. Returns `false`
+    /// when the note has no parse in progress.
+    pub fn cancel_note(&self, note_id: NoteId) -> ServiceResult<bool> {
+        self.repositories
+            .parse_jobs
+            .cancel_active_for_note(note_id, CANCELLED_PARSE_ERROR)
+            .map_err(Into::into)
+    }
+
     pub fn claim_next(&self) -> ServiceResult<Option<ParseJob>> {
         self.repositories
             .parse_jobs
@@ -204,7 +219,14 @@ impl ParseQueue {
             }
         })?;
 
-        match provider.parse_output_with_feedback(&note.raw_text, job.feedback.as_deref()) {
+        // Cancelling ends the job in the database; the running command
+        // watches for that so the worker is free for the next job.
+        let parse_jobs = self.repositories.parse_jobs.clone();
+        let job_id = job.id;
+        let cancelled = move || !parse_jobs.is_parsing(job_id).unwrap_or(true);
+
+        match provider.parse_output_cancellable(&note.raw_text, job.feedback.as_deref(), &cancelled)
+        {
             Ok(output) => self.apply_successful_parse(&job, &output),
             Err(error) => self.handle_parse_failure(&job, &error.to_string()),
         }?;
@@ -251,7 +273,10 @@ impl ParseQueue {
 
     fn apply_successful_parse(&self, job: &ParseJob, output: &ParserOutput) -> ServiceResult<()> {
         if let Err(error) = self.apply_successful_parse_transaction(job, output) {
-            let _ = self.mark_failed(job.id, &error.to_string());
+            let _ = self
+                .repositories
+                .parse_jobs
+                .fail_parsing(job.id, &error.to_string());
             return Err(error);
         }
         Ok(())
@@ -267,6 +292,11 @@ impl ParseQueue {
         let now = Utc::now().to_rfc3339();
         let mut connection = self.repositories.database.connection()?;
         let transaction = connection.transaction()?;
+
+        // The job was cancelled while the parser ran; its result is dropped.
+        if !job_is_parsing(&transaction, job.id)? {
+            return Ok(());
+        }
 
         record_parse_run(
             &transaction,
@@ -291,16 +321,15 @@ impl ParseQueue {
 
     fn handle_parse_failure(&self, job: &ParseJob, error: &str) -> ServiceResult<()> {
         let config = self.current_queue_config();
-        if is_non_retryable_parse_error(error) {
-            self.mark_failed(job.id, error)
-        } else if job.attempt_count < config.max_attempts {
-            self.repositories
-                .parse_jobs
-                .mark_queued(job.id, error)
-                .map_err(Into::into)
+        let parse_jobs = &self.repositories.parse_jobs;
+        let retry = !is_non_retryable_parse_error(error) && job.attempt_count < config.max_attempts;
+        // Neither applies to a job the user cancelled while the parser ran.
+        if retry {
+            parse_jobs.requeue_parsing(job.id, error)?;
         } else {
-            self.mark_failed(job.id, error)
+            parse_jobs.fail_parsing(job.id, error)?;
         }
+        Ok(())
     }
 
     fn current_queue_config(&self) -> ParseQueueConfig {
@@ -531,6 +560,18 @@ fn upsert_tag(
         |row| row.get::<_, String>(0),
     )?;
     TagId::parse(&tag_id).map_err(|_| super::ServiceError::InvalidInput("invalid tag id"))
+}
+
+fn job_is_parsing(transaction: &Transaction<'_>, job_id: ParseJobId) -> ServiceResult<bool> {
+    let parsing = transaction
+        .query_row(
+            "SELECT 1 FROM parse_jobs WHERE id = ?1 AND status = 'parsing'",
+            [job_id.to_string()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(parsing)
 }
 
 fn mark_job_parsed(
@@ -861,6 +902,155 @@ mod tests {
             stored.cleaned_text.as_deref(),
             Some("Parsed from: maya said update the calico rollout")
         );
+    }
+
+    fn parse_run_count(repositories: &AppRepositories, note_id: crate::domain::NoteId) -> i64 {
+        repositories
+            .database
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM parse_runs WHERE note_id = ?1",
+                [note_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn cancelling_a_first_parse_leaves_the_note_failed_with_the_reason() {
+        let repositories = test_repositories();
+        let note = repositories.notes.create_raw_note("raw note").unwrap();
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        let queue = ParseQueue::new(repositories.clone());
+
+        assert!(queue.cancel_note(note.id).unwrap());
+
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.raw_text, "raw note");
+        assert_eq!(stored.parse_status, ParseStatus::Failed);
+        assert_eq!(
+            repositories
+                .parse_jobs
+                .latest_error_for_note(note.id)
+                .unwrap()
+                .as_deref(),
+            Some("Parsing was cancelled.")
+        );
+        assert!(!queue.process_next_with_provider(&StaticProvider).unwrap());
+    }
+
+    #[test]
+    fn cancelling_a_reparse_keeps_the_earlier_parse() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        let queue = ParseQueue::new(repositories.clone());
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        queue.process_next_with_provider(&StaticProvider).unwrap();
+        queue
+            .retry_note_with_feedback(note.id, "make it shorter")
+            .unwrap();
+
+        assert!(queue.cancel_note(note.id).unwrap());
+
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.parse_status, ParseStatus::Parsed);
+        assert_eq!(
+            stored.cleaned_text.as_deref(),
+            Some("Sam said to fix the QA flag.")
+        );
+        assert!(repositories.parse_jobs.next_queued().unwrap().is_none());
+    }
+
+    #[test]
+    fn cancelling_with_no_parse_in_progress_changes_nothing() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        let queue = ParseQueue::new(repositories.clone());
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        queue.process_next_with_provider(&StaticProvider).unwrap();
+
+        assert!(!queue.cancel_note(note.id).unwrap());
+
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.parse_status, ParseStatus::Parsed);
+    }
+
+    #[test]
+    fn a_result_that_arrives_after_cancelling_is_discarded() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        let queue = ParseQueue::new(repositories.clone());
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        let provider = CancelDuringParse {
+            queue: queue.clone(),
+            note_id: note.id,
+            result: || StaticProvider.parse(""),
+        };
+
+        queue.process_next_with_provider(&provider).unwrap();
+
+        let stored = repositories.notes.get(note.id).unwrap().unwrap();
+        assert_eq!(stored.parse_status, ParseStatus::Failed);
+        assert_eq!(stored.cleaned_text, None);
+        assert_eq!(parse_run_count(&repositories, note.id), 0);
+        assert!(repositories
+            .action_items
+            .list_for_note(note.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_failure_that_arrives_after_cancelling_does_not_requeue_the_job() {
+        let repositories = test_repositories();
+        let note = repositories.notes.create_raw_note("raw note").unwrap();
+        let queue = ParseQueue::new(repositories.clone());
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        let provider = CancelDuringParse {
+            queue: queue.clone(),
+            note_id: note.id,
+            result: || {
+                Err(ParserError::Provider(
+                    "codex command was cancelled".to_string(),
+                ))
+            },
+        };
+
+        queue.process_next_with_provider(&provider).unwrap();
+
+        assert!(repositories.parse_jobs.next_queued().unwrap().is_none());
+        assert_eq!(
+            repositories
+                .parse_jobs
+                .latest_error_for_note(note.id)
+                .unwrap()
+                .as_deref(),
+            Some("Parsing was cancelled.")
+        );
+    }
+
+    /// Stands in for the user cancelling while Codex is still running.
+    struct CancelDuringParse {
+        queue: ParseQueue,
+        note_id: crate::domain::NoteId,
+        result: fn() -> Result<ParserResult, ParserError>,
+    }
+
+    impl ParserProvider for CancelDuringParse {
+        fn parse(&self, _input: &str) -> Result<ParserResult, ParserError> {
+            assert!(self.queue.cancel_note(self.note_id).unwrap());
+            (self.result)()
+        }
     }
 
     struct StaticProvider;

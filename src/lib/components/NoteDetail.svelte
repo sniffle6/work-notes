@@ -59,6 +59,7 @@
 
   const dispatch = createEventDispatcher<{
     retryParse: void;
+    cancelParse: void;
     reparseWithFeedback: string;
     deleteNote: void;
     reopenNote: void;
@@ -73,6 +74,8 @@
     saveCleaned: { title: string; summary: string; cleanedText: string; done: () => void };
     saveRaw: { rawText: string; done: () => void };
     createJiraTicket: void;
+    /** Key of a ticket created from this note. */
+    openJiraTicket: string;
   }>();
 
   $effect(() => {
@@ -397,7 +400,15 @@
         <div class="jira-links" role="group" aria-label="Jira tickets">
           <span>Jira</span>
           {#each note.jiraIssueKeys as issueKey}
-            <span class="jira-key">{issueKey}</span>
+            <button
+              class="jira-key"
+              type="button"
+              aria-label={`Open ${issueKey} in Jira`}
+              title="Open in the Jira view"
+              onclick={() => dispatch("openJiraTicket", issueKey)}
+            >
+              {issueKey}
+            </button>
           {/each}
         </div>
       {/if}
@@ -466,6 +477,9 @@
                 : "Codex is cleaning and tagging. Raw note is saved."}
             </span>
           </div>
+          <button type="button" aria-label="Cancel parsing" onclick={() => dispatch("cancelParse")} disabled={loading}>
+            Cancel
+          </button>
         </div>
       {/if}
 
@@ -915,8 +929,24 @@
   }
 
   .jira-key {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-s);
     color: var(--color-accent-hot);
+    background: transparent;
+    font: inherit;
     font-family: var(--font-mono);
+    cursor: pointer;
+  }
+
+  .jira-key:hover {
+    text-decoration: underline;
+  }
+
+  .jira-key:focus-visible {
+    outline: 2px solid var(--color-accent-hot);
+    outline-offset: 2px;
   }
 
   :global([data-theme="memphis"]) h1 {
@@ -963,8 +993,13 @@
   }
 
   .detail-banner.parser-progress {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 10px;
+  }
+
+  .detail-banner.parser-progress button {
+    grid-row: auto;
+    grid-column: 3;
   }
 
   .detail-banner.parser-progress div {

@@ -9,7 +9,7 @@ use tauri::Emitter;
 
 use super::{parse_note_id, CommandError};
 use crate::app_state::AppState;
-use crate::jira::agent::{AgentContext, CodexAgentRunner, ViewAction};
+use crate::jira::agent::{AgentContext, CodexAgentRunner, TicketDraft, ViewAction};
 use crate::jira::chat::{ChatMessage, ChatThread};
 use crate::jira::client::DEFAULT_SEARCH_LIMIT;
 use crate::jira::{
@@ -66,6 +66,22 @@ pub struct UpdateJiraIssueDto {
     pub summary: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+/// The new-ticket form as it stands when the user messages the agent.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraDraftContextDto {
+    pub issue_type: String,
+    pub summary: String,
+    #[serde(default)]
+    pub description: String,
+    /// Issue types the form offers.
+    #[serde(default)]
+    pub issue_types: Vec<String>,
+    /// Note the draft was started from; its text is shown to the agent.
+    #[serde(default)]
+    pub note_id: Option<String>,
 }
 
 async fn run_blocking<T: Send + 'static>(
@@ -333,8 +349,9 @@ pub async fn list_jira_chat_messages(
 ///
 /// Lookups and view changes run immediately; view changes are emitted as
 /// [`JIRA_VIEW_ACTION_EVENT`]. Changes to Jira are stored as proposals for
-/// [`resolve_jira_chat_proposal`]. Fails with `agent_busy` when the thread
-/// already has a run in progress.
+/// [`resolve_jira_chat_proposal`]. `draft` is the new-ticket form when one is
+/// open; the agent may rewrite it, which is a view change. Fails with
+/// `agent_busy` when the thread already has a run in progress.
 #[tauri::command]
 pub async fn send_jira_chat_message(
     app: tauri::AppHandle,
@@ -342,6 +359,7 @@ pub async fn send_jira_chat_message(
     thread_id: String,
     text: String,
     focus_issue_key: Option<String>,
+    draft: Option<JiraDraftContextDto>,
 ) -> Result<Vec<ChatMessage>, CommandError> {
     let state = state.inner().clone();
     run_blocking(move || {
@@ -360,6 +378,7 @@ pub async fn send_jira_chat_message(
             focus_issue_key: focus_issue_key
                 .and_then(|key| IssueKey::parse(&key).ok())
                 .map(String::from),
+            draft: draft.map(|draft| ticket_draft(&state, draft)),
         };
         let runner = CodexAgentRunner {
             program: settings.codex_command_path,
@@ -389,6 +408,24 @@ pub async fn send_jira_chat_message(
     .await
 }
 
+/// Builds the agent's view of the draft, with the text of its source note.
+/// A note that is gone or unreadable is left out; the draft still stands.
+fn ticket_draft(state: &AppState, draft: JiraDraftContextDto) -> TicketDraft {
+    let source_note = draft
+        .note_id
+        .as_deref()
+        .and_then(|note_id| parse_note_id(note_id).ok())
+        .and_then(|note_id| state.repositories.notes.get(note_id).ok().flatten())
+        .map(|note| format!("{}\n\n{}", note.title, note.raw_text));
+    TicketDraft {
+        issue_type: draft.issue_type,
+        summary: draft.summary,
+        description: draft.description,
+        issue_types: draft.issue_types,
+        source_note,
+    }
+}
+
 /// Approves (and runs) or rejects a change the agent proposed. Returns the
 /// whole thread; a Jira failure is recorded on the proposal as `failed`.
 #[tauri::command]
@@ -415,7 +452,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        CreateJiraIssueDto, JiraChatUpdatedPayload, JiraViewActionPayload, UpdateJiraIssueDto,
+        CreateJiraIssueDto, JiraChatUpdatedPayload, JiraDraftContextDto, JiraViewActionPayload,
+        UpdateJiraIssueDto,
     };
     use crate::jira::agent::ViewAction;
 
@@ -440,6 +478,27 @@ mod tests {
             serde_json::from_value(json!({ "summary": null, "description": "Body" })).unwrap();
         assert_eq!(update.summary, None);
         assert_eq!(update.description.as_deref(), Some("Body"));
+    }
+
+    #[test]
+    fn draft_context_dto_accepts_camel_case_and_optional_fields() {
+        let draft: JiraDraftContextDto = serde_json::from_value(json!({
+            "issueType": "Bug",
+            "summary": "Printer jams",
+            "description": "Observed",
+            "issueTypes": ["Bug", "Task"],
+            "noteId": "note-1",
+        }))
+        .unwrap();
+        assert_eq!(draft.issue_type, "Bug");
+        assert_eq!(draft.issue_types, vec!["Bug", "Task"]);
+        assert_eq!(draft.note_id.as_deref(), Some("note-1"));
+
+        let minimal: JiraDraftContextDto =
+            serde_json::from_value(json!({ "issueType": "Task", "summary": "" })).unwrap();
+        assert_eq!(minimal.description, "");
+        assert!(minimal.issue_types.is_empty());
+        assert_eq!(minimal.note_id, None);
     }
 
     #[test]

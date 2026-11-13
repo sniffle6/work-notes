@@ -196,38 +196,125 @@ impl ParseJobRepository {
         self.finish_job(id, ParseStatus::Failed, Some(error))
     }
 
-    pub fn mark_queued(&self, id: ParseJobId, error: &str) -> RepositoryResult<()> {
-        let id_text = id.to_string();
+    /// Puts a job whose attempt failed back in the queue with `error`.
+    ///
+    /// Returns `false`, changing nothing, when the job is no longer parsing,
+    /// for example because the user cancelled it.
+    pub fn requeue_parsing(&self, id: ParseJobId, error: &str) -> RepositoryResult<bool> {
+        self.end_parsing_attempt(id, ParseStatus::Queued, error)
+    }
+
+    /// Records a job whose attempt failed as failed with `error`.
+    ///
+    /// Returns `false`, changing nothing, when the job is no longer parsing,
+    /// for example because the user cancelled it.
+    pub fn fail_parsing(&self, id: ParseJobId, error: &str) -> RepositoryResult<bool> {
+        self.end_parsing_attempt(id, ParseStatus::Failed, error)
+    }
+
+    pub fn is_parsing(&self, id: ParseJobId) -> RepositoryResult<bool> {
+        let connection = self.db.connection()?;
+        let parsing = connection
+            .query_row(
+                "SELECT 1 FROM parse_jobs WHERE id = ?1 AND status = ?2",
+                params![id.to_string(), ParseStatus::Parsing.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(parsing)
+    }
+
+    /// Ends the note's queued or running parse job without a result.
+    ///
+    /// The job is recorded as failed with `error`. The note returns to
+    /// `parsed` when an earlier parse run exists, so what that run produced
+    /// stays in use; otherwise the note becomes `failed`. Returns `false`,
+    /// changing nothing, when the note has no queued or running job.
+    pub fn cancel_active_for_note(&self, note_id: NoteId, error: &str) -> RepositoryResult<bool> {
+        let note_id_text = note_id.to_string();
         let now = now_db_string();
         let mut connection = self.db.connection()?;
         let transaction = connection.transaction()?;
-        let note_id = transaction
+        let cancelled = transaction.execute(
+            "UPDATE parse_jobs
+             SET status = ?2, last_error = ?3, finished_at = ?4
+             WHERE note_id = ?1 AND status IN (?5, ?6)",
+            params![
+                note_id_text,
+                ParseStatus::Failed.as_str(),
+                error,
+                now,
+                ParseStatus::Queued.as_str(),
+                ParseStatus::Parsing.as_str()
+            ],
+        )?;
+        if cancelled == 0 {
+            return Ok(false);
+        }
+
+        let parsed_before = transaction
             .query_row(
-                "SELECT note_id FROM parse_jobs WHERE id = ?1",
-                [id_text.as_str()],
-                |row| row.get::<_, String>(0),
+                "SELECT 1 FROM parse_runs WHERE note_id = ?1 LIMIT 1",
+                [note_id_text.as_str()],
+                |_| Ok(()),
             )
             .optional()?
-            .ok_or_else(|| RepositoryError::NotFound {
-                entity: "parse_job",
-                id: id.to_string(),
-            })?;
-
-        transaction.execute(
-            "UPDATE parse_jobs
-             SET status = ?2,
-                 last_error = ?3,
-                 started_at = NULL,
-                 finished_at = NULL
-             WHERE id = ?1",
-            params![id_text, ParseStatus::Queued.as_str(), error],
-        )?;
+            .is_some();
+        let note_status = if parsed_before {
+            ParseStatus::Parsed
+        } else {
+            ParseStatus::Failed
+        };
         transaction.execute(
             "UPDATE notes SET parse_status = ?2, updated_at = ?3 WHERE id = ?1",
-            params![note_id, ParseStatus::Queued.as_str(), now],
+            params![note_id_text, note_status.as_str(), now],
         )?;
         transaction.commit()?;
-        Ok(())
+        Ok(true)
+    }
+
+    fn end_parsing_attempt(
+        &self,
+        id: ParseJobId,
+        next: ParseStatus,
+        error: &str,
+    ) -> RepositoryResult<bool> {
+        let id_text = id.to_string();
+        let now = now_db_string();
+        // A queued job has not started; a finished one keeps its start time.
+        let (started_at_sql, finished_at) = if next == ParseStatus::Queued {
+            ("NULL", None)
+        } else {
+            ("started_at", Some(now.as_str()))
+        };
+        let mut connection = self.db.connection()?;
+        let transaction = connection.transaction()?;
+        let ended = transaction.execute(
+            &format!(
+                "UPDATE parse_jobs
+                 SET status = ?2, last_error = ?3, started_at = {started_at_sql}, finished_at = ?4
+                 WHERE id = ?1 AND status = ?5"
+            ),
+            params![
+                id_text,
+                next.as_str(),
+                error,
+                finished_at,
+                ParseStatus::Parsing.as_str()
+            ],
+        )?;
+        if ended == 0 {
+            return Ok(false);
+        }
+
+        transaction.execute(
+            "UPDATE notes SET parse_status = ?2, updated_at = ?3
+             WHERE id = (SELECT note_id FROM parse_jobs WHERE id = ?1)",
+            params![id_text, next.as_str(), now],
+        )?;
+        transaction.commit()?;
+        Ok(true)
     }
 
     pub fn requeue_interrupted(&self, error: &str) -> RepositoryResult<usize> {

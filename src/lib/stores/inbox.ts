@@ -16,6 +16,7 @@ import {
   reopenActionItem,
   reopenNote,
   retryParse,
+  cancelParse,
   retryParseWithFeedback,
   updateNoteCleaned,
   updateNoteRaw,
@@ -70,6 +71,7 @@ type WorkNotesApi = {
   listInbox: typeof listInbox;
   getNote: typeof getNote;
   retryParse: typeof retryParse;
+  cancelParse: typeof cancelParse;
   retryParseWithFeedback: typeof retryParseWithFeedback;
   updateNoteCleaned: typeof updateNoteCleaned;
   updateNoteRaw: typeof updateNoteRaw;
@@ -98,6 +100,7 @@ const defaultApi: WorkNotesApi = {
   listInbox,
   getNote,
   retryParse,
+  cancelParse,
   retryParseWithFeedback,
   updateNoteCleaned,
   updateNoteRaw,
@@ -295,6 +298,31 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       await refreshNavSummary();
     } catch (unknownError) {
       error.set(errorMessage(unknownError, "Could not retry parse."));
+    } finally {
+      loadingNote.set(false);
+    }
+  }
+
+  /**
+   * Cancels the selected note's queued or running parse. A note parsed before
+   * keeps that parse; a note never parsed is left failed so it can be retried.
+   */
+  async function cancelSelectedParse(): Promise<void> {
+    const note = get(selectedNote);
+    if (!note) {
+      return;
+    }
+
+    loadingNote.set(true);
+    error.set(null);
+
+    try {
+      await api.cancelParse(note.id);
+      await loadInbox();
+      selectedNote.set(await api.getNote(note.id));
+      await refreshNavSummary();
+    } catch (unknownError) {
+      error.set(errorMessage(unknownError, "Could not cancel parsing."));
     } finally {
       loadingNote.set(false);
     }
@@ -986,6 +1014,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     refreshParserActivity,
     clearParserNotification,
     retrySelectedParse,
+    cancelSelectedParse,
     retrySelectedParseWithFeedback,
     saveCleanedEdits,
     saveRawEdit,

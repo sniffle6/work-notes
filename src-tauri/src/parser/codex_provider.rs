@@ -23,6 +23,8 @@ pub const DEFAULT_SCHEMA_PATH: &str = "schemas/parse-note.schema.json";
 pub const DEFAULT_MODEL: &str = "gpt-5.6-luna";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_SCHEMA_JSON: &str = include_str!("../../../schemas/parse-note.schema.json");
+/// How often a running command asks whether its parse was cancelled.
+const CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexCommandSpec {
@@ -141,6 +143,18 @@ impl CodexParserProvider {
         raw_note: &str,
         feedback: Option<&str>,
     ) -> Result<ParserOutput, CodexParserError> {
+        self.parse_output_cancellable(raw_note, feedback, &|| false)
+    }
+
+    /// Parses like [`Self::parse_output_with_feedback`], but stops the Codex
+    /// command and fails with [`CodexParserError::Cancelled`] once
+    /// `cancelled` returns true. `cancelled` is asked a few times a second.
+    pub fn parse_output_cancellable(
+        &self,
+        raw_note: &str,
+        feedback: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ParserOutput, CodexParserError> {
         let temp_dir = tempfile::Builder::new()
             .prefix("work-notes-codex-parser-")
             .tempdir()
@@ -174,6 +188,7 @@ impl CodexParserProvider {
             ),
             self.timeout,
             working_dir,
+            cancelled,
         )?;
         read_parser_result(output_path)
     }
@@ -216,7 +231,7 @@ pub fn run_structured_exec(
         .output_path(&output_path)
         .build();
 
-    run_codex_command(&command, prompt, timeout, Some(temp_dir.path()))?;
+    run_codex_command(&command, prompt, timeout, Some(temp_dir.path()), &|| false)?;
 
     fs::read_to_string(&output_path).map_err(|source| {
         if source.kind() == io::ErrorKind::NotFound {
@@ -253,6 +268,8 @@ pub enum CodexParserError {
     MissingCommand { program: String },
     #[error("codex command timed out after {timeout:?}")]
     Timeout { timeout: Duration },
+    #[error("codex command was cancelled")]
+    Cancelled,
     #[error("codex command exited with status {code:?}: {stderr}")]
     NonZeroExit { code: Option<i32>, stderr: String },
     #[error("codex parser output file was not written: {path:?}")]
@@ -279,6 +296,7 @@ impl From<CodexParserError> for ParserError {
             }
             CodexParserError::MissingCommand { .. }
             | CodexParserError::Timeout { .. }
+            | CodexParserError::Cancelled
             | CodexParserError::NonZeroExit { .. }
             | CodexParserError::Io { .. } => ParserError::Provider(error.to_string()),
         }
@@ -312,6 +330,7 @@ fn run_codex_command(
     stdin_body: &str,
     timeout: Duration,
     working_dir: Option<&Path>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<(), CodexParserError> {
     let mut process = Command::new(&command.program);
     process
@@ -347,7 +366,7 @@ fn run_codex_command(
         thread::spawn(move || write_stdin(&mut stdin, &stdin_body))
     });
 
-    let status = wait_with_timeout(&mut child, timeout)?;
+    let status = wait_with_timeout(&mut child, timeout, cancelled)?;
     read_stdin_result(stdin_writer)?;
     let stderr = read_stderr(stderr_reader)?;
 
@@ -391,16 +410,24 @@ fn read_stdin_result(
 fn wait_with_timeout(
     child: &mut std::process::Child,
     timeout: Duration,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<ExitStatus, CodexParserError> {
     let started_at = Instant::now();
+    let mut cancel_checked_at = started_at;
 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) if started_at.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_process_tree(child);
                 return Err(CodexParserError::Timeout { timeout });
+            }
+            Ok(None) if cancel_checked_at.elapsed() >= CANCEL_CHECK_INTERVAL => {
+                cancel_checked_at = Instant::now();
+                if cancelled() {
+                    kill_process_tree(child);
+                    return Err(CodexParserError::Cancelled);
+                }
             }
             Ok(None) => thread::sleep(Duration::from_millis(10)),
             Err(source) => {
@@ -411,6 +438,27 @@ fn wait_with_timeout(
             }
         }
     }
+}
+
+/// Stops the command and waits for it to exit.
+///
+/// On Windows `codex.cmd` runs Codex as a child of `cmd.exe`, and killing
+/// `cmd.exe` alone leaves Codex running, so the whole process tree is ended.
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Keeps the helper from flashing a console window over the app.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn read_stderr(
@@ -540,6 +588,24 @@ mod tests {
         };
         assert_eq!(code, Some(3));
         assert!(stderr.contains("not logged in"), "{stderr}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_cancelled_parse_stops_the_command_without_waiting_for_it() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let program = fake_codex(temp_dir.path(), "ping -n 60 127.0.0.1 >nul");
+        let provider = CodexParserProvider::new()
+            .program(program)
+            .timeout(Duration::from_secs(120));
+        let started = std::time::Instant::now();
+
+        let error = provider
+            .parse_output_cancellable("raw note", None, &|| true)
+            .unwrap_err();
+
+        assert!(matches!(error, CodexParserError::Cancelled), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(20));
     }
 
     #[test]

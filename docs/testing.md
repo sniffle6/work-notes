@@ -77,7 +77,7 @@ Rust tests are inline in `src-tauri/src/**`. Current coverage includes:
 - prompt text behavior
 - parser result application trust rules, including title updates
 - capture service behavior
-- parse queue success, failure, retry, and parse-run recording
+- parse queue success, failure, retry, cancelling, and parse-run recording
 - command DTO serialization
 - settings validation
 - hotkey validation
@@ -100,7 +100,7 @@ scripts\cargo-test.cmd
 
 Unit tests must not call Jira or `codex exec`. Use the fake transport, fake agent runner, and fake Jira in the test modules.
 
-Two ignored tests check real services and are run by hand. Set the Jira environment variables and `WORK_NOTES_JIRA_SITE_URL` first:
+Ignored tests check real services and are run by hand. Set the Jira environment variables and `WORK_NOTES_JIRA_SITE_URL` first:
 
 ```powershell
 scripts\cargo-test.cmd live_jira -- --ignored --nocapture
@@ -108,7 +108,7 @@ scripts\cargo-test.cmd live_agent -- --ignored --nocapture
 scripts\cargo-test.cmd live_theme -- --ignored --nocapture
 ```
 
-`live_jira` only reads from Jira. `live_agent` runs real Codex conversations with read-only lookups and never approves a proposal. `live_theme` asks real Codex for two themes, one flat and one with a background gradient, and needs no Jira setup.
+`live_jira` only reads from Jira. `live_agent` runs real Codex conversations with read-only lookups and never approves a proposal; its draft test, `live_agent_drafts`, needs no Jira setup. `live_theme` asks real Codex for two themes, one flat and one with a background gradient, and needs no Jira setup.
 
 Manual checks in the running app after Jira changes:
 
@@ -118,7 +118,9 @@ Manual checks in the running app after Jira changes:
 - An image attachment shows a thumbnail; clicking it opens the full image in the app, and the viewer's folder button opens File Explorer on the file.
 - A ticket with attachments lists them. Download and Download all save files to `Downloads\Work Notes\<KEY>`, and Show in folder opens File Explorer on the file.
 - Copy agent prompt on a ticket with attachments lists each attachment by local path.
-- Create ticket from a note prefills the form and shows the new key on the note afterwards.
+- Create ticket from a note prefills the form, opens the agent, and the agent rewrites the form into a ticket. Nothing is in Jira yet.
+- Asking the agent to change the draft updates the form, and an edit typed into the form is kept by the next rewrite of another field.
+- Create ticket on the draft shows the new key on the note afterwards.
 - An agent request to change a ticket appears as a proposal and changes nothing until approved.
 - Rejecting a proposal changes nothing in Jira.
 

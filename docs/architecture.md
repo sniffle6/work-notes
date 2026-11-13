@@ -21,7 +21,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `src/lib/api.ts`: the only frontend module that invokes Tauri commands. It also normalizes DTOs and provides browser fallback data.
 - `src/lib/types.ts`: frontend note, tag, action item, filter, and settings types.
 - `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, card notes, parse retry, note completion and resolution, delete/archive, action status changes, filters, and settings.
-- `src/lib/stores/jira.ts`: workflow store for the Jira view: setup status, ticket filters and list, the open ticket, ticket changes, and agent conversations with proposal approval.
+- `src/lib/stores/jira.ts`: workflow store for the Jira view: setup status, ticket filters and list, the open ticket, ticket changes, the new-ticket draft, and agent conversations with proposal approval.
 - `src/lib/jira-fallback.ts`: sample Jira data for browser smoke checks without the Tauri backend.
 - `src/lib/stores/filters.ts`: filter creation and client-side matching helpers used by tests and fallback paths.
 - `src/lib/events.ts`: named frontend/native event contract.
@@ -42,7 +42,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `ReviewQueue.svelte`: standalone accept/dismiss surface for suggested action items; current main flow reviews actions through the inbox Actions mode and note detail.
 - `JiraView.svelte`: Jira screen. Takes the Jira store and lays out the filter bar, ticket list, ticket pane, and agent chat; shows setup steps when Jira is not configured.
 - `JiraIssueDetail.svelte`: one ticket with transitions, description, attachments, comments, comment entry, and summary/description editing.
-- `JiraIssueForm.svelte`: new-ticket form, optionally prefilled from a note.
+- `JiraIssueForm.svelte`: new-ticket form, optionally prefilled from a note. It reports edits so the agent is shown the form as it stands.
 - `JiraChat.svelte`: agent conversation, lookup results, and Approve/Reject controls for proposed changes.
 - `SettingsView.svelte`: hotkey, parser timeout, Codex command path, Jira site/project/filters, startup/tray, theme settings, and settings-save errors.
 - `StatusBadge.svelte`: shared visual status indicator.
@@ -94,6 +94,7 @@ list_inbox
 get_note
 retry_parse
 retry_parse_with_feedback
+cancel_parse
 delete_note
 complete_note
 add_card_note
@@ -131,7 +132,7 @@ send_jira_chat_message
 resolve_jira_chat_proposal
 ```
 
-`send_jira_chat_message` runs the agent and returns the whole thread when it stops. While it runs, the backend emits `jira-chat:updated` with the thread ID after each stored step.
+`send_jira_chat_message` runs the agent and returns the whole thread when it stops. It takes the open new-ticket draft, if any, which the agent may rewrite. While it runs, the backend emits `jira-chat:updated` with the thread ID after each stored step.
 `resolve_jira_chat_proposal` is the only path by which an agent-requested change reaches Jira.
 Note detail DTOs include `jiraIssueKeys`, the tickets created from that note.
 

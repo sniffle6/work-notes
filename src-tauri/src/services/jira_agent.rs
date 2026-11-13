@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::jira::agent::{
-    build_agent_prompt, parse_agent_turn, AgentContext, AgentRunner, JiraToolCall, ViewAction,
+    build_agent_prompt, parse_agent_turn, AgentContext, AgentRunner, JiraToolCall, TicketDraft,
+    ViewAction,
 };
 use crate::jira::chat::{ChatMessage, ChatMessageStatus, ChatRole, NewChatMessage};
 use crate::jira::client::DEFAULT_SEARCH_LIMIT;
@@ -123,11 +124,14 @@ impl JiraAgentService {
             self.chat.rename_thread(thread_id, &thread_title(text))?;
         }
 
+        // The agent may rewrite the ticket draft; later turns must see the
+        // draft as the form now shows it.
+        let mut context = context.clone();
         let mut awaiting_agent = true;
         for _ in 0..MAX_AGENT_TURNS {
             let transcript = self.chat.list_messages(thread_id)?;
             let raw = runner
-                .run_turn(&build_agent_prompt(context, &transcript))
+                .run_turn(&build_agent_prompt(&context, &transcript))
                 .map_err(ServiceError::Agent)?;
             let turn =
                 parse_agent_turn(&raw).map_err(|error| ServiceError::Agent(error.to_string()))?;
@@ -167,7 +171,8 @@ impl JiraAgentService {
                         result: None,
                     },
                     Ok(call) if call.view_action().is_some() => {
-                        let (status, result) = match run_view_call(&call, jira) {
+                        let view_call = run_view_call(&call, jira, context.draft.as_mut());
+                        let (status, result) = match view_call {
                             Ok(outcome) => {
                                 // Reported now so the app updates while the
                                 // agent is still writing its follow-up.
@@ -323,11 +328,16 @@ struct ViewCallOutcome {
     agent_should_see_result: bool,
 }
 
-/// Checks a view call against Jira and describes what the app now shows.
+/// Checks a view call and describes what the app now shows.
 ///
-/// A ticket search runs here first, so a query Jira rejects never reaches
-/// the app's ticket list.
-fn run_view_call(call: &JiraToolCall, jira: &dyn JiraOps) -> Result<ViewCallOutcome, JiraError> {
+/// A ticket search runs against Jira here first, so a query Jira rejects
+/// never reaches the app's ticket list. A draft rewrite is applied to
+/// `draft` and fails when no draft is open or the form cannot show it.
+fn run_view_call(
+    call: &JiraToolCall,
+    jira: &dyn JiraOps,
+    draft: Option<&mut TicketDraft>,
+) -> Result<ViewCallOutcome, JiraError> {
     let action = call.view_action().ok_or_else(|| {
         JiraError::InvalidInput("this request does not change the view".to_string())
     })?;
@@ -366,6 +376,27 @@ fn run_view_call(call: &JiraToolCall, jira: &dyn JiraOps) -> Result<ViewCallOutc
             action,
             agent_should_see_result: false,
         }),
+        ViewAction::SetDraft {
+            issue_type,
+            summary,
+            description,
+        } => {
+            let draft = draft.ok_or_else(|| {
+                JiraError::InvalidInput("no ticket draft is open in the app".to_string())
+            })?;
+            let action = draft
+                .rewrite(
+                    issue_type.as_deref(),
+                    summary.as_deref(),
+                    description.as_deref(),
+                )
+                .map_err(JiraError::InvalidInput)?;
+            Ok(ViewCallOutcome {
+                action,
+                result: "The draft form shows the rewrite. It is not in Jira yet.".to_string(),
+                agent_should_see_result: false,
+            })
+        }
     }
 }
 
@@ -500,7 +531,8 @@ pub fn apply_change(
         JiraToolCall::SearchIssues { .. }
         | JiraToolCall::GetIssue { .. }
         | JiraToolCall::ShowIssues { .. }
-        | JiraToolCall::OpenIssue { .. } => Err(JiraError::InvalidInput(
+        | JiraToolCall::OpenIssue { .. }
+        | JiraToolCall::SetDraft { .. } => Err(JiraError::InvalidInput(
             "this request does not change Jira".to_string(),
         )),
     }
@@ -515,7 +547,7 @@ mod tests {
 
     use super::{apply_change, run_lookup, AgentProgress, JiraAgentService, MAX_AGENT_TURNS};
     use crate::db::Database;
-    use crate::jira::agent::{AgentContext, AgentRunner, JiraToolCall, ViewAction};
+    use crate::jira::agent::{AgentContext, AgentRunner, JiraToolCall, TicketDraft, ViewAction};
     use crate::jira::chat::{ChatMessage, ChatMessageStatus, ChatRole};
     use crate::jira::{
         Assignee, IssueKey, IssueUpdate, JiraAttachment, JiraComment, JiraError, JiraIssueDetail,
@@ -904,6 +936,67 @@ mod tests {
         );
     }
 
+    /// Manual check that real Codex writes a ticket draft from a note. It
+    /// needs no Jira setup; a lookup would hit the fake Jira.
+    #[test]
+    #[ignore = "runs codex exec"]
+    fn live_agent_drafts_a_ticket_from_a_note() {
+        use crate::jira::agent::CodexAgentRunner;
+        use crate::parser::DEFAULT_CODEX_PROGRAM;
+
+        let note = "printer on cab 12 jams after every reboot. maya saw it too on tuesday. \
+                    clearing the paper path fixes it until the next restart";
+        let fixture = fixture();
+        let progress = RefCell::new(Vec::new());
+
+        let messages = fixture
+            .service
+            .send_message(
+                &fixture.thread_id,
+                "Draft a ticket from my note: printer thing\nWrite the summary and description \
+                 from the source note, and pick the issue type that fits.",
+                &AgentContext {
+                    project_key: "AB".to_string(),
+                    today: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                    draft: Some(TicketDraft {
+                        issue_type: "Task".to_string(),
+                        summary: "printer thing".to_string(),
+                        description: note.to_string(),
+                        issue_types: vec!["Task".to_string(), "Bug".to_string()],
+                        source_note: Some(format!("printer thing\n\n{note}")),
+                    }),
+                    ..AgentContext::default()
+                },
+                &CodexAgentRunner {
+                    program: DEFAULT_CODEX_PROGRAM.to_string(),
+                    timeout: std::time::Duration::from_secs(180),
+                },
+                &FakeJira::default(),
+                &|event| progress.borrow_mut().push(event),
+            )
+            .expect("agent run");
+
+        let rewrite = progress
+            .borrow()
+            .iter()
+            .find_map(|event| match event {
+                AgentProgress::View(ViewAction::SetDraft {
+                    issue_type,
+                    summary,
+                    description,
+                }) => Some((issue_type.clone(), summary.clone(), description.clone())),
+                _ => None,
+            })
+            .expect("the agent should rewrite the draft");
+        println!("issue type: {:?}\nsummary: {:?}", rewrite.0, rewrite.1);
+        println!("description:\n{}", rewrite.2.as_deref().unwrap_or("(unchanged)"));
+        println!("reply: {}", messages[1].content);
+        assert!(rewrite.1.is_some() && rewrite.2.is_some());
+        assert!(messages
+            .iter()
+            .all(|message| message.role != ChatRole::Proposal));
+    }
+
     #[test]
     fn a_thread_is_busy_until_its_guard_is_dropped() {
         let busy = super::AgentBusyThreads::default();
@@ -1154,6 +1247,154 @@ mod tests {
             progress.borrow()[0],
             AgentProgress::View(ViewAction::ShowIssues { .. })
         ));
+    }
+
+    fn draft_context() -> AgentContext {
+        AgentContext {
+            draft: Some(TicketDraft {
+                issue_type: "Task".to_string(),
+                summary: "printer thing".to_string(),
+                description: "it jams".to_string(),
+                issue_types: vec!["Task".to_string(), "Bug".to_string()],
+                source_note: None,
+            }),
+            ..AgentContext::default()
+        }
+    }
+
+    #[test]
+    fn rewriting_the_draft_updates_the_form_without_jira_or_another_agent_turn() {
+        let fixture = fixture();
+        let runner = FakeRunner::new(vec![turn(
+            "Drafted it as a bug.",
+            vec![raw_call(json!({
+                "tool": "set_draft", "issueType": "bug", "summary": "Printer jams after reboot",
+            }))],
+        )]);
+        let jira = FakeJira::default();
+        let progress = RefCell::new(Vec::new());
+
+        let messages = fixture
+            .service
+            .send_message(
+                &fixture.thread_id,
+                "draft this",
+                &draft_context(),
+                &runner,
+                &jira,
+                &|event| progress.borrow_mut().push(event),
+            )
+            .unwrap();
+
+        assert_eq!(
+            roles(&messages),
+            vec![ChatRole::User, ChatRole::Assistant, ChatRole::Tool]
+        );
+        assert_eq!(messages[2].status, Some(ChatMessageStatus::Ok));
+        assert_eq!(
+            messages[2].result.as_deref(),
+            Some("The draft form shows the rewrite. It is not in Jira yet.")
+        );
+        assert!(jira.calls().is_empty());
+        assert_eq!(
+            *progress.borrow(),
+            vec![
+                AgentProgress::View(ViewAction::SetDraft {
+                    issue_type: Some("Bug".to_string()),
+                    summary: Some("Printer jams after reboot".to_string()),
+                    description: None,
+                }),
+                AgentProgress::MessagesStored,
+            ]
+        );
+        assert_eq!(runner.prompts().len(), 1);
+    }
+
+    #[test]
+    fn a_draft_rewrite_the_app_cannot_apply_is_reported_to_the_agent() {
+        let fixture = fixture();
+        let rewrite = || {
+            turn(
+                "",
+                vec![raw_call(
+                    json!({ "tool": "set_draft", "issueType": "Epic" }),
+                )],
+            )
+        };
+        let runner = FakeRunner::new(vec![
+            rewrite(),
+            turn("No draft is open.", vec![]),
+            rewrite(),
+            turn("Epic is not offered.", vec![]),
+        ]);
+        let jira = FakeJira::default();
+        let progress = RefCell::new(Vec::new());
+        let send = |context: &AgentContext| {
+            fixture
+                .service
+                .send_message(
+                    &fixture.thread_id,
+                    "make it an epic",
+                    context,
+                    &runner,
+                    &jira,
+                    &|event| progress.borrow_mut().push(event),
+                )
+                .unwrap()
+        };
+
+        let without_draft = send(&AgentContext::default());
+        assert_eq!(without_draft[1].status, Some(ChatMessageStatus::Error));
+        assert_eq!(
+            without_draft[1].result.as_deref(),
+            Some("no ticket draft is open in the app")
+        );
+
+        let unknown_type = send(&draft_context());
+        assert_eq!(unknown_type[4].status, Some(ChatMessageStatus::Error));
+        assert_eq!(
+            unknown_type[4].result.as_deref(),
+            Some("the draft offers these issue types: Task, Bug")
+        );
+
+        assert_eq!(runner.prompts().len(), 4);
+        assert!(progress
+            .borrow()
+            .iter()
+            .all(|event| *event == AgentProgress::MessagesStored));
+    }
+
+    #[test]
+    fn a_later_turn_of_the_same_run_sees_the_rewritten_draft() {
+        let fixture = fixture();
+        let runner = FakeRunner::new(vec![
+            turn(
+                "",
+                vec![
+                    raw_call(
+                        json!({ "tool": "set_draft", "summary": "Printer jams after reboot" }),
+                    ),
+                    raw_call(json!({ "tool": "get_issue", "issueKey": "AB-7" })),
+                ],
+            ),
+            turn("Drafted; AB-7 looks related.", vec![]),
+        ]);
+
+        fixture
+            .service
+            .send_message(
+                &fixture.thread_id,
+                "draft this and check AB-7",
+                &draft_context(),
+                &runner,
+                &FakeJira::default(),
+                &|_| {},
+            )
+            .unwrap();
+
+        let prompts = runner.prompts();
+        assert!(prompts[0].contains("- Summary: printer thing\n"));
+        assert!(prompts[1].contains("- Summary: Printer jams after reboot\n"));
     }
 
     #[test]

@@ -21,6 +21,7 @@ import type {
   JiraChatThread,
   JiraFilter,
   JiraIssueDetail,
+  JiraDraftContext,
   JiraIssueDraft,
   JiraIssueEdit,
   JiraIssueSummary,
@@ -295,6 +296,11 @@ export async function getNote(noteId: string): Promise<NoteDetail> {
 
 export async function retryParse(noteId: string): Promise<void> {
   await invokeCommand<void>("retry_parse", { noteId });
+}
+
+/** Cancels the note's queued or running parse. Does nothing when none is in progress. */
+export async function cancelParse(noteId: string): Promise<void> {
+  await invokeCommand<void>("cancel_parse", { noteId });
 }
 
 export async function retryParseWithFeedback(noteId: string, feedback: string): Promise<void> {
@@ -585,16 +591,21 @@ export async function listJiraChatMessages(threadId: string): Promise<JiraChatMe
   return messages.map(normalizeJiraChatMessage);
 }
 
-/** Runs one agent turn. Resolves with the whole thread once the agent stops. */
+/**
+ * Runs one agent turn. Resolves with the whole thread once the agent stops.
+ * `draft` is the new-ticket form when one is open, so the agent can rewrite it.
+ */
 export async function sendJiraChatMessage(
   threadId: string,
   text: string,
   focusIssueKey: string | null,
+  draft: JiraDraftContext | null = null,
 ): Promise<JiraChatMessage[]> {
   const messages = await invokeCommand<unknown[]>("send_jira_chat_message", {
     threadId,
     text,
     focusIssueKey,
+    draft,
   });
   return messages.map(normalizeJiraChatMessage);
 }
@@ -613,6 +624,7 @@ export const api = {
   listInbox,
   getNote,
   retryParse,
+  cancelParse,
   retryParseWithFeedback,
   updateNoteCleaned,
   updateNoteRaw,
@@ -1120,6 +1132,14 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
       if (note) {
         note.parseStatus = "queued";
         note.parseError = null;
+        note.updatedAt = new Date().toISOString();
+      }
+      return undefined as T;
+    }
+    case "cancel_parse": {
+      const note = fallbackNotes.find((item) => item.id === args?.noteId);
+      if (note && (note.parseStatus === "queued" || note.parseStatus === "parsing")) {
+        note.parseStatus = "parsed";
         note.updatedAt = new Date().toISOString();
       }
       return undefined as T;

@@ -39,6 +39,7 @@
     selectedIssue,
     issueTypes,
     draft,
+    draftAgentOpen,
     loadingIssues,
     loadingIssue,
     savingIssue,
@@ -58,6 +59,8 @@
 
   const dispatch = createEventDispatcher<{
     openSettings: void;
+    /** A ticket was created in Jira; `noteId` is the note it was drafted from. */
+    ticketCreated: { issueKey: string; noteId: string | null };
   }>();
 
   const visibleIssues = $derived(filterIssues($issues, searchQuery));
@@ -68,9 +71,15 @@
     return searchQuery.trim() ? `${visibleIssues.length} of ${total}${project}` : `${total}${project}`;
   });
 
+  // A draft started from a note brings the agent along, whatever the saved choice.
+  const agentVisible = $derived(agentOpen || ($draftAgentOpen && $draft !== null));
+
   function toggleAgent() {
-    agentOpen = !agentOpen;
+    agentOpen = !agentVisible;
     writeFlag(AGENT_OPEN_KEY, agentOpen);
+    if (!agentOpen) {
+      jira.closeDraftAgent();
+    }
   }
 
   function toggleList() {
@@ -183,10 +192,10 @@
         </button>
         <button
           class="quiet-button"
-          class:active={agentOpen}
+          class:active={agentVisible}
           type="button"
-          aria-pressed={agentOpen}
-          title={agentOpen ? "Hide the agent ( ] )" : "Ask the agent ( ] )"}
+          aria-pressed={agentVisible}
+          title={agentVisible ? "Hide the agent ( ] )" : "Ask the agent ( ] )"}
           onclick={toggleAgent}
         >
           <Bot size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -214,7 +223,7 @@
       <button class="primary-button" type="button" onclick={() => dispatch("openSettings")}>Open settings</button>
     </div>
   {:else if $status}
-    <div class="jira-body" class:with-agent={agentOpen} class:without-list={listHidden}>
+    <div class="jira-body" class:with-agent={agentVisible} class:without-list={listHidden}>
       {#if !listHidden}
         <div class="list-pane">
           <label class="list-search">
@@ -278,7 +287,14 @@
             issueTypes={$issueTypes}
             projectKey={$status.projectKey}
             saving={$savingIssue}
-            on:submit={(event) => void jira.submitDraft(event.detail)}
+            agentBusy={$agentBusy}
+            on:edit={(event) => jira.editDraft(event.detail)}
+            on:submit={async (event) => {
+              const issueKey = await jira.submitDraft(event.detail);
+              if (issueKey) {
+                dispatch("ticketCreated", { issueKey, noteId: event.detail.noteId ?? null });
+              }
+            }}
             on:cancel={() => jira.cancelDraft()}
           />
         {:else}
@@ -316,7 +332,7 @@
         {/if}
       </div>
 
-      {#if agentOpen}
+      {#if agentVisible}
         <JiraChat
           threads={$threads}
           activeThreadId={$activeThreadId}
@@ -324,7 +340,7 @@
           busy={$agentBusy}
           busyProposalId={$busyProposalId}
           error={$chatError}
-          focusIssueKey={$selectedIssue?.key ?? null}
+          focusIssueKey={$draft ? null : ($selectedIssue?.key ?? null)}
           on:send={(event) => void jira.sendChat(event.detail)}
           on:resolve={(event) => void jira.resolveProposal(event.detail.messageId, event.detail.approve)}
           on:openThread={(event) => void jira.openThread(event.detail)}

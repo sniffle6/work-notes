@@ -26,7 +26,7 @@ This repo is a Windows-only local desktop app named Work Notes. It is built with
 - Default UI style is Dark Compact. Components should use semantic theme CSS variables, not raw palette colors.
 - The UI is quiet and text-first: regular-weight type, hairline rules instead of boxes, and colour only for state and the next action. Use the shared tokens declared in `src/routes/+page.svelte` (`--font-ui`, `--font-display`, `--font-mono`, `--weight-*`, `--rule`, `--radius-*`) instead of hard-coded weights, font stacks, or uppercase letter-spaced labels.
 - A toolbar or header stays on one line. Drop labels to icons with `aria-label` and `title` before letting controls wrap.
-- The Jira agent never changes Jira on its own. Every change is a stored proposal that runs only after the user approves it. The agent may change the app's own Jira view (ticket list, open ticket) without asking.
+- The Jira agent never changes Jira on its own. Every change is a stored proposal that runs only after the user approves it. The agent may change the app's own Jira view (ticket list, open ticket, new-ticket draft) without asking. A draft becomes a ticket only when the user creates it.
 - The Jira API token comes from the environment. Do not store it in SQLite or include it in an agent prompt.
 
 ## Boundaries

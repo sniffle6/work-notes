@@ -208,7 +208,9 @@ export type JiraAccount = {
 /** A change the Jira agent makes to the Jira view. It never changes Jira. */
 export type JiraViewAction =
   | { kind: "showIssues"; title: string; jql: string }
-  | { kind: "openIssue"; issueKey: string };
+  | { kind: "openIssue"; issueKey: string }
+  /** New values for the new-ticket form; `null` leaves a field as it is. */
+  | { kind: "setDraft"; issueType: string | null; summary: string | null; description: string | null };
 
 export type JiraStatusCategory = "new" | "indeterminate" | "done" | "unknown";
 
@@ -307,6 +309,16 @@ export type JiraIssueDraft = {
   description: string;
   /** Note the ticket is created from, so the key can be linked back. */
   noteId?: string | null;
+};
+
+/** The new-ticket form as the Jira agent is shown it. */
+export type JiraDraftContext = {
+  issueType: string;
+  summary: string;
+  description: string;
+  /** Issue types the form offers. */
+  issueTypes: string[];
+  noteId: string | null;
 };
 
 export type JiraIssueEdit = {

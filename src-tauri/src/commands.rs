@@ -486,6 +486,23 @@ pub async fn retry_parse(
     Ok(())
 }
 
+/// Cancels the note's queued or running parse. Does nothing when the note
+/// has no parse in progress.
+#[tauri::command]
+pub async fn cancel_parse(
+    state: tauri::State<'_, AppState>,
+    note_id: String,
+) -> Result<(), CommandError> {
+    let note_id = parse_note_id(&note_id)?;
+    ParseQueue::with_config(
+        state.repositories.clone(),
+        state.parse_queue_config.clone(),
+        state.parser_provider_config.clone(),
+    )
+    .cancel_note(note_id)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn retry_parse_with_feedback(
     state: tauri::State<'_, AppState>,

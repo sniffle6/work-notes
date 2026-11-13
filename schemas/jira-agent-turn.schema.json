@@ -42,7 +42,8 @@
               "add_comment",
               "assign_issue",
               "show_issues",
-              "open_issue"
+              "open_issue",
+              "set_draft"
             ]
           },
           "issueKey": {

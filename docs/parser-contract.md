@@ -128,6 +128,18 @@ Confidence values must be numbers from `0` through `1`. Additional properties ar
 - A failed job stores `last_error` and can be retried.
 - Reparse feedback is stored with the parse job/run so prompt iteration is auditable.
 
+## Cancelling
+
+The user can cancel a note's queued or running parse from the note's parsing banner (`cancel_parse`).
+
+- The job is recorded as `failed` with the error `Parsing was cancelled.`; no separate cancelled status exists.
+- A note with an earlier parse run returns to `parsed` and keeps everything that run produced. A note never parsed becomes `failed`, shows the cancelled message, and can be retried.
+- Nothing from the cancelled attempt is applied and no parse run is recorded for it.
+- A running Codex command asks about four times a second whether its job is still parsing. Once cancelled, the command and the processes it started are stopped and the worker moves to the next job.
+- A result or failure that arrives after cancelling is dropped. The worker only finishes, requeues, or fails a job that is still `parsing`.
+- Cancelling a note with no parse in progress does nothing.
+- A timed-out command is stopped the same way, including the processes it started.
+
 ## Failure Modes To Preserve
 
 The provider and queue should distinguish these cases where practical:
