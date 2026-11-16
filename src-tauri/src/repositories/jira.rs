@@ -173,6 +173,21 @@ impl JiraChatRepository {
             .collect()
     }
 
+    /// Lists pending proposals across conversations, oldest first.
+    pub fn list_pending_proposals(&self) -> RepositoryResult<Vec<ChatMessage>> {
+        let connection = self.db.connection()?;
+        let mut statement = connection.prepare(&format!(
+            "{MESSAGE_SELECT} WHERE role = 'proposal' AND status = 'pending' ORDER BY created_at ASC, rowid ASC"
+        ))?;
+        let records = statement
+            .query_map([], MessageRecord::from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        records
+            .into_iter()
+            .map(MessageRecord::into_message)
+            .collect()
+    }
+
     pub fn get_message(&self, message_id: &str) -> RepositoryResult<Option<ChatMessage>> {
         self.db
             .connection()?
@@ -443,6 +458,27 @@ mod tests {
             vec![first.id.as_str(), second.id.as_str()]
         );
         assert!(threads[0].updated_at > first.updated_at);
+    }
+
+    #[test]
+    fn pending_queue_spans_threads_and_excludes_resolved_or_deleted_messages() {
+        let chat = chat();
+        let first = chat.create_thread("First").unwrap();
+        let second = chat.create_thread("Second").unwrap();
+        let a = chat
+            .add_message(&first.id, proposal("First change"))
+            .unwrap();
+        let b = chat
+            .add_message(&second.id, proposal("Second change"))
+            .unwrap();
+        chat.add_message(&first.id, NewChatMessage::text(ChatRole::User, "hello"))
+            .unwrap();
+        assert_eq!(chat.list_pending_proposals().unwrap(), vec![a, b.clone()]);
+        chat.resolve_pending_proposal(&b.id, ChatMessageStatus::Rejected)
+            .unwrap();
+        assert_eq!(chat.list_pending_proposals().unwrap().len(), 1);
+        chat.delete_thread(&first.id).unwrap();
+        assert!(chat.list_pending_proposals().unwrap().is_empty());
     }
 
     #[test]

@@ -409,6 +409,13 @@ pub async fn list_jira_chat_messages(
     Ok(state.repositories.jira_chat.list_messages(&thread_id)?)
 }
 
+#[tauri::command]
+pub async fn list_jira_pending_proposals(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ChatMessage>, CommandError> {
+    Ok(state.repositories.jira_chat.list_pending_proposals()?)
+}
+
 /// Runs the agent on a new user message and returns the whole thread.
 ///
 /// Lookups and view changes run immediately; view changes are emitted as

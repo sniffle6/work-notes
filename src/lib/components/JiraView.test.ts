@@ -95,6 +95,7 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     listJiraChatThreads: vi.fn(async () => []),
     createJiraChatThread: vi.fn(async () => ({ id: "thread-1", title: "New chat", createdAt: "", updatedAt: "" })),
     deleteJiraChatThread: vi.fn(async () => undefined),
+    listJiraPendingProposals: vi.fn(async () => []),
     listJiraChatMessages: vi.fn(async () => []),
     sendJiraChatMessage: vi.fn(async () => []),
     resolveJiraChatProposal: vi.fn(async () => []),
@@ -110,6 +111,22 @@ async function renderOpened(api: JiraApi, events: Record<string, (event: CustomE
 }
 
 describe("JiraView", () => {
+  it("marks drafts and finds saved writing outside the current Jira results", async () => {
+    const api = fakeApi({ loadJiraWriting: vi.fn(async () => ({ draft: null, tickets: {
+      "AB-7": { editing: false, summary: "Printer", description: "", comment: "Unsent" },
+      "AB-99": { editing: true, summary: "Outside ticket", description: "Work", comment: "" },
+    } })) });
+    await renderOpened(api);
+    expect(screen.getByText("Unsent comment")).toBeTruthy();
+    const draftedRow = screen.getByRole("button", { name: "AB-7: Printer jams on reboot" });
+    expect(document.getElementById(draftedRow.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Unsent comment");
+    await fireEvent.click(screen.getByRole("button", { name: /Has drafts/ }));
+    expect(screen.queryByRole("button", { name: "AB-8: Bill acceptor rejects notes" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /AB-99: Outside ticket/ }));
+    expect(api.getJiraIssue).toHaveBeenCalledWith("AB-99");
+    await fireEvent.click(screen.getByRole("button", { name: /Has drafts/ }));
+    expect(screen.getByRole("button", { name: "AB-8: Bill acceptor rejects notes" })).toBeTruthy();
+  });
   it("brings a new draft forward when the agent occupies a narrow workspace", async () => {
     const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
     try {
