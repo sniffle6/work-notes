@@ -9,9 +9,10 @@
     saving?: boolean;
     /** The agent is working and may rewrite the fields. */
     agentBusy?: boolean;
+    canUndo?: boolean;
   };
 
-  let { draft, issueTypes, projectKey = "", saving = false, agentBusy = false }: Props = $props();
+  let { draft, issueTypes, projectKey = "", saving = false, agentBusy = false, canUndo = false }: Props = $props();
   let issueType = $state("");
   let summary = $state("");
   let description = $state("");
@@ -23,6 +24,8 @@
     /** The user changed a field. */
     edit: Pick<JiraIssueDraft, "issueType" | "summary" | "description">;
     cancel: void;
+    close: void;
+    undo: void;
   }>();
 
   $effect(() => {
@@ -70,7 +73,15 @@
         ? "The agent is working on this draft."
         : "Nothing is in Jira until you create the ticket. Ask the agent to rework the draft."}
     </p>
+    <p>Drafts save on this device, including after restarting Work Notes.</p>
   </header>
+
+  {#if canUndo}
+    <div class="draft-feedback" role="status">
+      <span>The agent updated this draft.</span>
+      <button type="button" disabled={saving} onclick={() => dispatch("undo")}>Undo agent changes</button>
+    </div>
+  {/if}
 
   <label>
     <span>Issue type</span>
@@ -93,7 +104,8 @@
   </label>
 
   <div class="form-actions">
-    <button type="button" disabled={saving} onclick={() => dispatch("cancel")}>Cancel</button>
+    <button type="button" disabled={saving} onclick={() => dispatch("cancel")}>Discard draft</button>
+    <button type="button" disabled={saving} onclick={() => dispatch("close")}>Keep for later</button>
     <button class="primary-button" type="submit" disabled={saving || !summary.trim()}>
       {saving ? "Creating" : "Create ticket"}
     </button>
@@ -170,6 +182,16 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .draft-feedback {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--color-text-muted);
   }
 
   button {

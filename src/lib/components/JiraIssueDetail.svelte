@@ -1,5 +1,7 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check";
+  import Pencil from "@lucide/svelte/icons/pencil";
+  import UserRoundPlus from "@lucide/svelte/icons/user-round-plus";
   import Copy from "@lucide/svelte/icons/copy";
   import Download from "@lucide/svelte/icons/download";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
@@ -23,6 +25,7 @@
   } from "$lib/types";
 
   import MarkdownView from "./MarkdownView.svelte";
+  import type { JiraTicketWriting } from "$lib/stores/jira";
 
   type CopyState = "idle" | "copied" | "failed";
 
@@ -35,6 +38,7 @@
 
   type Props = {
     issue: JiraIssueDetail | null;
+    writing?: JiraTicketWriting;
     loading?: boolean;
     saving?: boolean;
     /** The open ticket's attachments that are already saved to disk. */
@@ -52,6 +56,7 @@
 
   let {
     issue,
+    writing,
     loading = false,
     saving = false,
     attachmentDownload = null,
@@ -83,6 +88,7 @@
     /** The id of an image attachment to open in the viewer. */
     openAttachment: string;
     closeAttachmentViewer: void;
+    writing: { key: string; writing: JiraTicketWriting };
   }>();
 
   const ACTUAL_SIZE = 1;
@@ -127,8 +133,11 @@
     const key = issue?.key ?? null;
     if (key !== currentKey) {
       currentKey = key;
-      editing = false;
-      commentText = "";
+      editing = writing?.editing ?? false;
+      summaryDraft = writing?.summary ?? issue?.summary ?? "";
+      descriptionDraft = writing?.description ?? issue?.description ?? "";
+      commentText = writing?.comment ?? "";
+      flattenAcknowledged = false;
       showCopyState("idle");
     }
   });
@@ -277,6 +286,23 @@
     descriptionDraft = issue.description;
     flattenAcknowledged = false;
     editing = true;
+    rememberWriting();
+  }
+
+  function rememberWriting() {
+    if (issue) {
+      dispatch("writing", {
+        key: issue.key,
+        writing: { editing, summary: summaryDraft, description: descriptionDraft, comment: commentText },
+      });
+    }
+  }
+
+  function discardEdit() {
+    editing = false;
+    summaryDraft = issue?.summary ?? "";
+    descriptionDraft = issue?.description ?? "";
+    rememberWriting();
   }
 
   function saveEdit(event: SubmitEvent) {
@@ -292,7 +318,15 @@
     if (descriptionChanged) {
       edit.description = descriptionDraft;
     }
-    dispatch("saveEdit", { edit, done: () => (editing = false) });
+    const key = issue?.key;
+    dispatch("saveEdit", {
+      edit,
+      done: () => {
+        if (issue?.key === key) {
+          editing = false;
+        }
+      },
+    });
   }
 
   function addComment(event: SubmitEvent) {
@@ -301,7 +335,15 @@
     if (!text || saving) {
       return;
     }
-    dispatch("comment", { text, done: () => (commentText = "") });
+    const key = issue?.key;
+    dispatch("comment", {
+      text,
+      done: () => {
+        if (issue?.key === key && commentText.trim() === text) {
+          commentText = "";
+        }
+      },
+    });
   }
 
   function transitionLabel(transition: JiraTransition): string {
@@ -329,20 +371,22 @@
       <div class="head-meta">
         <a class="issue-key" href={issue.url} target="_blank" rel="noreferrer" title="Open in Jira">{issue.key}</a>
         <span class={`status-pill ${issue.statusCategory}`}>{issue.status}</span>
-        <span>{issue.issueType}</span>
+        <span class="secondary-meta">{issue.issueType}</span>
         {#if issue.priority}
-          <span>{issue.priority}</span>
+          <span class="secondary-meta">{issue.priority}</span>
         {/if}
-        <span>{issue.assignee ?? "Unassigned"}</span>
+        <span class="secondary-meta">{issue.assignee ?? "Unassigned"}</span>
       </div>
       <div class="header-actions">
-        <button class="ghost-button" type="button" disabled={saving} onclick={() => dispatch("assignToMe")}>
-          Assign to me
+        <button class="ghost-button" type="button" aria-label="Assign to me" title="Assign to me" disabled={saving} onclick={() => dispatch("assignToMe")}>
+          <UserRoundPlus size={14} aria-hidden="true" />
+          <span class="action-label">Assign to me</span>
         </button>
-        <button class="ghost-button" type="button" disabled={saving || editing} onclick={startEdit}>Edit</button>
+        <button class="ghost-button" type="button" aria-label="Edit" title="Edit ticket" disabled={saving || editing} onclick={startEdit}><Pencil size={14} aria-hidden="true" /><span class="action-label">Edit</span></button>
         <button
           class="primary-button copy-button"
           class:failed={copyState === "failed"}
+          aria-label={COPY_LABELS[copyState]}
           type="button"
           title="Copy a prompt with this ticket's details to paste into your coding agent. Attachments are downloaded first."
           disabled={preparingPrompt}
@@ -353,7 +397,7 @@
           {:else}
             <Copy size={14} aria-hidden="true" />
           {/if}
-          {COPY_LABELS[copyState]}
+          <span class="action-label">{COPY_LABELS[copyState]}</span>
         </button>
       </div>
     </header>
@@ -361,7 +405,7 @@
     <div class="detail-scroll" class:loading>
       <div class="detail-content">
       {#if editing}
-        <form class="edit-form" aria-label="Edit ticket" onsubmit={saveEdit}>
+        <form class="edit-form" aria-label="Edit ticket" onsubmit={saveEdit} oninput={rememberWriting}>
           <label>
             <span>Summary</span>
             <input bind:value={summaryDraft} aria-label="Summary" disabled={saving} />
@@ -381,7 +425,7 @@
             </label>
           {/if}
           <div class="form-actions">
-            <button class="ghost-button" type="button" disabled={saving} onclick={() => (editing = false)}>
+            <button class="ghost-button" type="button" disabled={saving} onclick={discardEdit}>
               Cancel
             </button>
             <button class="primary-button" type="submit" disabled={!canSave}>Save</button>
@@ -528,7 +572,7 @@
           </article>
         {/each}
 
-        <form class="comment-form" aria-label="Add comment" onsubmit={addComment}>
+        <form class="comment-form" aria-label="Add comment" onsubmit={addComment} oninput={rememberWriting}>
           <textarea
             bind:value={commentText}
             aria-label="Comment"
@@ -668,6 +712,7 @@
 
 <style>
   .jira-detail {
+    container: ticket / inline-size;
     position: relative;
     display: flex;
     min-width: 0;
@@ -689,7 +734,8 @@
 
   .detail-header {
     display: flex;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: 6px 12px;
@@ -714,6 +760,34 @@
   .header-actions,
   .transition-row {
     gap: 4px;
+  }
+
+  .head-meta {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .header-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  @container ticket (max-width: 800px) {
+    .header-actions .action-label {
+      display: none;
+    }
+    .header-actions button {
+      justify-content: center;
+      width: 30px;
+      padding: 0;
+    }
+  }
+
+  @container ticket (max-width: 560px) {
+    .secondary-meta { display: none; }
+    .detail-header { padding-inline: 16px; }
+    .detail-scroll { padding: 20px 16px; }
   }
 
   .head-meta,

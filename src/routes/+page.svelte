@@ -312,7 +312,7 @@
   async function openJiraTicket(issueKey: string) {
     workNotes.showJira();
     await jira.open();
-    jira.cancelDraft();
+    jira.hideDraft();
     await jira.selectIssue(issueKey);
   }
 

@@ -82,6 +82,7 @@ Core tables:
 - `parse_runs`: raw provider response and normalized parsed JSON for audit/debugging.
 - `settings`: persisted app, parser, and Jira settings. The Jira API token is not stored.
 - `jira_chat_threads` and `jira_chat_messages`: Jira agent conversations, including lookups and proposed changes with their approval status.
+- `jira_writing`: unfinished new-ticket drafts, comments, and edits, keyed by Jira site and project.
 - `note_jira_links`: Jira ticket keys created from a note.
 
 ## Command Contract
@@ -112,6 +113,8 @@ Jira commands, registered from `commands::jira`:
 
 ```text
 get_jira_status
+load_jira_writing
+save_jira_writing
 test_jira_connection
 list_jira_issues
 get_jira_issue

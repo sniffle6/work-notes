@@ -8,6 +8,38 @@ use crate::jira::IssueKey;
 
 use super::{now_db_string, parse_db_datetime, RepositoryError, RepositoryResult};
 
+/// Local unfinished writing, isolated by Jira site and project.
+pub(crate) struct JiraWritingRepository {
+    db: Database,
+}
+
+impl JiraWritingRepository {
+    pub(crate) fn new(db: Database) -> Self {
+        Self { db }
+    }
+
+    pub(crate) fn load(&self, scope: &str) -> RepositoryResult<Option<String>> {
+        Ok(self
+            .db
+            .connection()?
+            .query_row(
+                "SELECT content FROM jira_writing WHERE scope = ?1",
+                [scope],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub(crate) fn save(&self, scope: &str, content: &str) -> RepositoryResult<()> {
+        self.db.connection()?.execute(
+            "INSERT INTO jira_writing (scope, content) VALUES (?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET content = excluded.content",
+            params![scope, content],
+        )?;
+        Ok(())
+    }
+}
+
 /// Stores Jira agent conversations.
 #[derive(Clone)]
 pub struct JiraChatRepository {
@@ -118,6 +150,7 @@ impl JiraChatRepository {
             thread_id: thread_id.to_string(),
             role: message.role,
             content: message.content,
+            review: crate::jira::chat::ProposalReview::from_payload(message.payload.as_deref()),
             payload: message.payload,
             status: message.status,
             result: message.result,
@@ -199,6 +232,34 @@ impl JiraChatRepository {
 const MESSAGE_SELECT: &str =
     "SELECT id, thread_id, role, content, payload, status, result, created_at
      FROM jira_chat_messages";
+
+#[cfg(test)]
+mod writing_tests {
+    use super::*;
+
+    #[test]
+    fn writing_survives_reopening_and_stays_scoped_to_its_site_and_project() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("writing.sqlite3");
+        {
+            let repository = JiraWritingRepository::new(Database::open(&path).unwrap());
+            repository
+                .save("site-a/AB", r#"{"draft":{"summary":"Keep me"}}"#)
+                .unwrap();
+        }
+        let repository = JiraWritingRepository::new(Database::open(&path).unwrap());
+        assert_eq!(
+            repository.load("site-a/AB").unwrap().as_deref(),
+            Some(r#"{"draft":{"summary":"Keep me"}}"#)
+        );
+        assert_eq!(repository.load("site-b/AB").unwrap(), None);
+        repository.save("site-a/AB", r#"{"draft":null}"#).unwrap();
+        assert_eq!(
+            repository.load("site-a/AB").unwrap().as_deref(),
+            Some(r#"{"draft":null}"#)
+        );
+    }
+}
 
 fn thread_must_exist(changed_rows: usize, thread_id: &str) -> RepositoryResult<()> {
     if changed_rows == 0 {
@@ -282,6 +343,7 @@ impl MessageRecord {
             thread_id: self.thread_id,
             role,
             content: self.content,
+            review: crate::jira::chat::ProposalReview::from_payload(self.payload.as_deref()),
             payload: self.payload,
             status,
             result: self.result,

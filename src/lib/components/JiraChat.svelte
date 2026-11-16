@@ -87,9 +87,12 @@
   }
 
   function proposalOutcome(message: JiraChatMessage): string {
+    if (message.status === "pending" && busyProposalId === message.id) {
+      return "Processing decision";
+    }
     switch (message.status) {
       case "approved":
-        return "Applied";
+        return message.result ? "Applied" : "Applying";
       case "rejected":
         return "Rejected";
       case "failed":
@@ -166,7 +169,7 @@
         </details>
       {:else}
         <div
-          class={`proposal ${message.status ?? "pending"}`}
+          class={`proposal ${message.status === "approved" && !message.result ? "applying" : message.status ?? "pending"}`}
           role="group"
           aria-label="Proposed change"
         >
@@ -174,11 +177,39 @@
             <strong>Proposed change</strong>
             <span>{proposalOutcome(message)}</span>
           </div>
-          <pre>{message.content}</pre>
+          {#if message.review}
+            <p class="change-title">{message.review.title}</p>
+            {#each message.review.fields as field}
+              <section class="change-field" aria-label={field.label}>
+                <h4>{field.label}</h4>
+                {#if field.before !== null}
+                  <div class="field-value previous"><small>Before</small><p>{field.before || "Empty"}</p></div>
+                {/if}
+                <div class="field-value proposed"><small>Proposed</small><p>{field.after || "Empty"}</p></div>
+              </section>
+            {/each}
+            {#if message.review.fields.some((field) => field.before !== null)}
+              <small>Before values were captured when proposed; Jira may have changed since.</small>
+            {/if}
+            {#if message.review.warning}
+              <p class="review-warning">{message.review.warning}</p>
+            {/if}
+          {:else}
+            <pre>{message.content}</pre>
+            {#if message.status === "pending"}
+              <small>This older proposal has no saved comparison. Check the ticket before approving.</small>
+            {/if}
+          {/if}
           {#if message.result}
             <p class="proposal-result">{message.result}</p>
           {/if}
+          {#if message.status === "failed"}
+            <small>This change will not retry. Check Jira before requesting another proposal.</small>
+          {:else if message.status === "approved" && !message.result}
+            <small>Waiting for the Jira result. This change cannot be submitted again.</small>
+          {/if}
           {#if message.status === "pending"}
+            <small>Approve sends this change to Jira.</small>
             <div class="proposal-actions">
               <button
                 class="text-button"
@@ -244,6 +275,49 @@
 </section>
 
 <style>
+  .change-title {
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .change-field {
+    min-width: 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .change-field h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: var(--weight-medium);
+  }
+
+  .field-value {
+    padding: 4px 0 4px 8px;
+    border-left: 2px solid var(--rule);
+  }
+
+  .field-value p {
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .previous {
+    color: var(--color-text-muted);
+  }
+
+  .proposed {
+    margin-top: 6px;
+    border-left-color: var(--color-accent-primary);
+  }
+
+  .review-warning {
+    color: var(--color-status-warning);
+    font-size: 12px;
+  }
+
   .jira-chat {
     display: flex;
     min-width: 0;

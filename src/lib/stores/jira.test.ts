@@ -8,6 +8,7 @@ import type {
   JiraIssueDetail,
   JiraIssueSummary,
   JiraStatus,
+  JiraWriting,
 } from "$lib/types";
 import { createJiraStore, type JiraApi } from "./jira";
 
@@ -95,6 +96,8 @@ function message(overrides: Partial<JiraChatMessage> = {}): JiraChatMessage {
 
 function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
   return {
+    loadJiraWriting: vi.fn(async () => ({ draft: null, tickets: {} })),
+    saveJiraWriting: vi.fn(async () => undefined),
     getJiraStatus: vi.fn(async () => status()),
     listJiraIssues: vi.fn(async () => [issue(), issue({ key: "AB-8", summary: "Second" })]),
     getJiraIssue: vi.fn(async (key: string) => detail({ key })),
@@ -143,6 +146,139 @@ function deferred<T>() {
 }
 
 describe("createJiraStore", () => {
+  it("drops undo history when restoring a different Jira workspace", async () => {
+    let setup = status();
+    const store = createJiraStore(fakeApi({ getJiraStatus: vi.fn(async () => setup) }));
+    await store.open();
+    await store.startDraft({ summary: "Original project" });
+    await store.applyViewAction({ kind: "setDraft", summary: "Agent revision", description: null, issueType: null });
+    expect(get(store.draftBeforeAgent)).not.toBeNull();
+    setup = status({ projectKey: "OTHER" });
+    await store.open();
+    store.undoDraftRewrite();
+    expect(get(store.draft)).toBeNull();
+    expect(get(store.draftBeforeAgent)).toBeNull();
+  });
+
+  it("keeps saves ordered and restores the correct writing after changing projects", async () => {
+    let setup = status();
+    const disk = new Map<string, JiraWriting>();
+    const slow = deferred<void>();
+    let firstSave = true;
+    const api = fakeApi({
+      getJiraStatus: vi.fn(async () => setup),
+      loadJiraWriting: vi.fn(async (scope) => structuredClone(disk.get(scope) ?? { draft: null, tickets: {} })),
+      saveJiraWriting: vi.fn(async (scope, writing) => {
+        if (firstSave) { firstSave = false; await slow.promise; }
+        disk.set(scope, structuredClone(writing));
+      }),
+    });
+    const store = createJiraStore(api);
+    await store.open();
+    await store.startDraft({ summary: "First revision" });
+    store.editDraft({ issueType: "Bug", summary: "Latest revision", description: "Persist last" });
+    expect(api.saveJiraWriting).toHaveBeenCalledTimes(1);
+    slow.resolve();
+    await vi.waitFor(() => expect(get(store.writingSaving)).toBe(false));
+    setup = status({ projectKey: "OTHER" });
+    await store.open();
+    expect(get(store.draft)).toBeNull();
+    await store.startDraft({ summary: "Other project" });
+    setup = status();
+    await store.open();
+    expect(get(store.draft)?.summary).toBe("Latest revision");
+  });
+
+  it("retains failed submissions and clears successfully submitted writing on disk", async () => {
+    let saved: JiraWriting = { draft: null, tickets: {} };
+    const api = fakeApi({
+      saveJiraWriting: vi.fn(async (_scope, writing) => { saved = structuredClone(writing); }),
+      addJiraComment: vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(detail()),
+    });
+    const store = createJiraStore(api);
+    await store.open();
+    store.rememberWriting("AB-7", { editing: true, summary: "Changed", description: "Edited text", comment: "Hello" });
+    await store.commentOnSelected("Hello");
+    await vi.waitFor(() => expect(saved.tickets["AB-7"].comment).toBe("Hello"));
+    await store.commentOnSelected("Hello");
+    await vi.waitFor(() => expect(saved.tickets["AB-7"].comment).toBe(""));
+    await store.saveSelectedEdit({ summary: "Changed", description: "Edited text" });
+    await vi.waitFor(() => expect(saved.tickets["AB-7"]).toBeUndefined());
+  });
+
+  it("restores unfinished writing after recreating the store and removes discarded drafts", async () => {
+    let saved: JiraWriting = { draft: null, tickets: {} };
+    const api = fakeApi({
+      loadJiraWriting: vi.fn(async () => structuredClone(saved)),
+      saveJiraWriting: vi.fn(async (_scope, writing) => { saved = structuredClone(writing); }),
+    });
+    const first = createJiraStore(api);
+    await first.open();
+    await first.startDraft({ summary: "Restart test", description: "Keep this", noteId: "note-1" });
+    first.rememberWriting("AB-7", { editing: true, summary: "Edited", description: "Unsent edit", comment: "Unsent comment" });
+    await vi.waitFor(() => expect(saved.tickets["AB-7"]?.comment).toBe("Unsent comment"));
+    const restarted = createJiraStore(api);
+    await restarted.open();
+    expect(get(restarted.draft)?.summary).toBe("Restart test");
+    expect(get(restarted.draftVisible)).toBe(false);
+    expect(get(restarted.selectedWriting)?.description).toBe("Unsent edit");
+    restarted.cancelDraft();
+    await vi.waitFor(() => expect(saved.draft).toBeNull());
+  });
+
+  it("reports failed saves, retains writing, and retries the latest revision", async () => {
+    const save = vi.fn().mockRejectedValue(new Error("Disk full"));
+    const store = createJiraStore(fakeApi({ saveJiraWriting: save }));
+    await store.open();
+    await store.startDraft({ summary: "Still here" });
+    await vi.waitFor(() => expect(get(store.writingError)).toContain("Disk full"));
+    expect(get(store.draft)?.summary).toBe("Still here");
+    save.mockResolvedValue(undefined);
+    await store.retryWriting();
+    expect(get(store.writingError)).toBeNull();
+    expect(save.mock.lastCall?.[1].draft.summary).toBe("Still here");
+  });
+
+  it("does not overwrite stored writing when loading fails", async () => {
+    const api = fakeApi({ loadJiraWriting: vi.fn().mockRejectedValue(new Error("Unreadable")) });
+    const store = createJiraStore(api);
+    await store.open();
+    expect(await store.startDraft()).toBe(false);
+    expect(api.saveJiraWriting).not.toHaveBeenCalled();
+    expect(get(store.writingError)).toContain("Unreadable");
+    expect(get(store.writingReady)).toBe(false);
+    expect(api.listJiraIssues).not.toHaveBeenCalled();
+  });
+
+  it("does not apply a running agent's rewrite to a replacement draft", async () => {
+    const pending = deferred<JiraChatMessage[]>();
+    const api = fakeApi({ sendJiraChatMessage: vi.fn(() => pending.promise) });
+    const store = createJiraStore(api);
+    await store.open();
+    await store.startDraft({ summary: "First draft" });
+    const sending = store.sendChat("Improve it");
+    await vi.waitFor(() => expect(api.sendJiraChatMessage).toHaveBeenCalled());
+    store.cancelDraft();
+    await store.startDraft({ summary: "Replacement draft" });
+    await store.applyViewAction({ kind: "setDraft", summary: "Late rewrite", description: null, issueType: null });
+    expect(get(store.draft)?.summary).toBe("Replacement draft");
+    pending.resolve([]);
+    await sending;
+  });
+
+  it("does not replace unfinished writing when another note requests a ticket", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    await store.startDraft({ summary: "My unfinished ticket", description: "Evidence", noteId: "note-old" });
+    store.hideDraft();
+    await store.draftFromNote({ id: "note-new", title: "Another note", text: "Other evidence" });
+    expect(get(store.draft)).toMatchObject({ summary: "My unfinished ticket", noteId: "note-old" });
+    expect(get(store.draftVisible)).toBe(true);
+    expect(get(store.error)).toContain("Finish or discard");
+    expect(api.sendJiraChatMessage).not.toHaveBeenCalled();
+  });
+
   describe("attachments", () => {
     async function openWithAttachments(overrides: Partial<JiraApi> = {}) {
       const api = fakeApi({
@@ -910,7 +1046,7 @@ describe("createJiraStore", () => {
       expect(api.listJiraIssues).toHaveBeenCalledTimes(searches);
     });
 
-    it("opens the ticket the agent names and closes a new-ticket draft", async () => {
+    it("opens the ticket the agent names and keeps the new-ticket draft for later", async () => {
       const api = fakeApi();
       const store = createJiraStore(api);
       await store.open();
@@ -918,7 +1054,8 @@ describe("createJiraStore", () => {
 
       await store.applyViewAction({ kind: "openIssue", issueKey: "AB-8" });
 
-      expect(get(store.draft)).toBeNull();
+      expect(get(store.draftVisible)).toBe(false);
+      expect(get(store.draft)).not.toBeNull();
       expect(get(store.selectedIssue)?.key).toBe("AB-8");
     });
   });

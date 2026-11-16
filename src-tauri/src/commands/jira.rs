@@ -34,6 +34,70 @@ pub const JIRA_VIEW_ACTION_EVENT: &str = "jira-view:action";
 /// note parse.
 const AGENT_TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraWritingDto {
+    draft: Option<JiraSavedDraftDto>,
+    tickets: std::collections::BTreeMap<String, JiraTicketWritingDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JiraSavedDraftDto {
+    issue_type: String,
+    summary: String,
+    description: String,
+    note_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct JiraTicketWritingDto {
+    editing: bool,
+    summary: String,
+    description: String,
+    comment: String,
+}
+
+/// Reads local writing only; this command never contacts Jira.
+#[tauri::command]
+pub async fn load_jira_writing(
+    state: tauri::State<'_, AppState>,
+    scope: String,
+) -> Result<JiraWritingDto, CommandError> {
+    let repository = crate::repositories::jira::JiraWritingRepository::new(state.database.clone());
+    match repository.load(&scope)? {
+        Some(content) => serde_json::from_str(&content).map_err(|_| {
+            CommandError::new(
+                "storage_error",
+                "Saved Jira writing could not be read. It has not been replaced.",
+            )
+        }),
+        None => Ok(JiraWritingDto::default()),
+    }
+}
+
+/// Atomically replaces local writing after each frontend revision.
+#[tauri::command]
+pub async fn save_jira_writing(
+    state: tauri::State<'_, AppState>,
+    scope: String,
+    writing: JiraWritingDto,
+) -> Result<(), CommandError> {
+    if scope.is_empty() || scope.len() > 4096 {
+        return Err(CommandError::invalid_input("invalid Jira writing scope"));
+    }
+    let content = serde_json::to_string(&writing)
+        .map_err(|_| CommandError::invalid_input("invalid Jira writing"))?;
+    if content.len() > 10 * 1024 * 1024 {
+        return Err(CommandError::invalid_input(
+            "Jira drafts exceed the 10 MB local storage limit",
+        ));
+    }
+    crate::repositories::jira::JiraWritingRepository::new(state.database.clone())
+        .save(&scope, &content)?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraChatUpdatedPayload {

@@ -51,6 +51,12 @@ The list groups tickets by status in workflow order: to do, in progress, done. T
 
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 
+Ticket titles use the full row width, with the key and metadata underneath. A shared assignee is shown once above the list; high and urgent priorities remain visible in rows. Status groups collapse, and searching temporarily expands matching groups. The sort selector keeps Jira's order or sorts titles within each status.
+
+The layout responds to the Jira workspace's available width, including space taken by the app sidebar. Below 1101 px, opening the agent replaces the list. Below 760 px, the list, ticket, and agent occupy one surface at a time. Opening a ticket brings its detail forward; the list toggle returns to browsing. Toolbars remain on one line and use labeled icons when space is limited.
+
+Unsubmitted comments, summary/description edits, and the new-ticket draft save to local SQLite after each revision. They survive navigation and app restarts, separated by Jira site and project. Successful submission clears the corresponding writing; failed submission retains it. Saves run in order. Storage failures remain visible with a retry action; failed loading blocks the workspace instead of overwriting saved writing. The browser preview uses browser storage for its sample drafts.
+
 "Copy agent prompt" copies a self-contained prompt for the open ticket: key, summary, facts, description, subtasks, linked issues, attachments, and comments. It downloads the ticket's attachments first and lists each one by local path. If the download fails, the error is shown and the prompt names the attachments as not downloaded. Subtasks and linked issues are listed by key, status, and summary; their own descriptions are not fetched. It is meant for a coding agent in another tool, which needs no Jira access to start. The prompt tells that agent to restate the ticket, question the user on anything unclear, and implement only once both agree on the work. It is separate from the Jira chat agent and changes nothing in Jira.
 
 ## Ticket Drafts
@@ -58,9 +64,12 @@ The ticket list and the agent panel each collapse. `[` toggles the list and `]` 
 "New ticket" opens an empty form. "Create Jira ticket" on a note opens the form holding the note's title and text, shows the agent panel, and asks the agent in a new conversation to write the ticket.
 
 - A draft is the app's own form. Nothing reaches Jira until the user presses "Create ticket".
+- Browsing tickets or choosing "Keep for later" hides the form without losing it. "Resume draft" restores it; "Discard draft" removes it. A second note cannot replace an existing draft.
+- After restarting, a saved new-ticket draft stays tucked away behind "Resume draft". Undo history for agent rewrites remains session-only.
 - Each message sent while a draft is open carries the form as it stands, including the user's edits, the issue types the form offers, and the source note's ID. The open ticket is not sent as context then.
 - The backend reads the source note's title and raw text and shows them to the agent on every turn, so a later request can reach back to the note.
 - The agent rewrites the form with `set_draft`. The rewrite replaces what the form holds, including edits typed while the agent was working.
+- "Undo agent changes" restores the form as it stood immediately before the last rewrite. Further typing starts a new revision and clears that undo action. A running agent cannot rewrite a replacement draft.
 - The note's own text stays in the form when the agent is busy with another conversation, fails, or names nothing to change.
 - A draft that was closed while the agent worked stays closed; the rewrite is dropped.
 
@@ -143,7 +152,10 @@ View calls change what the app shows and never change Jira:
 - Lookups run immediately. Their results are stored in the conversation and the agent is called again.
 - View calls run immediately because they only change the app's own view. A ticket draft is part of that view: rewriting it creates nothing in Jira.
 - Changes never run when the agent asks for them. Each one is stored as a pending proposal.
+- New proposals store a field-by-field review alongside the executable call. Updates, transitions, and assignments read the ticket to capture previous values. The UI labels these as a snapshot, not current Jira state. Failed comparison lookups and description-formatting loss are shown explicitly. Comments and new tickets show the proposed content. Older proposals keep their original text and indicate that no comparison was captured.
+- The default project for a proposed new ticket is fixed when proposed, so its review and eventual creation name the same project.
 - A proposal reaches Jira only when the user approves it in the chat. Rejecting sends nothing.
+- An approved proposal without a recorded result shows "Applying", not "Applied". A failed proposal shows the error and says it will not retry. A process interrupted after claiming a proposal may leave it in "Applying"; check Jira before requesting another change.
 - A proposal is claimed in one SQL statement before Jira is called, so it can run at most once.
 - A Jira failure on an approved proposal is recorded on the proposal as `failed`. The proposal is not retried.
 - A tool call the app cannot accept is reported back to the agent as a failed lookup.

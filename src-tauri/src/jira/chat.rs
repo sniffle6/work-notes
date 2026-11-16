@@ -1,5 +1,29 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// A locally captured comparison for the approval UI, never supplied by the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalReview {
+    pub title: String,
+    pub captured_at: String,
+    pub warning: Option<String>,
+    pub fields: Vec<ProposalField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalField {
+    pub label: String,
+    pub before: Option<String>,
+    pub after: String,
+}
+
+impl ProposalReview {
+    pub(crate) fn from_payload(payload: Option<&str>) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_str(payload?).ok()?;
+        serde_json::from_value(value.get("review")?.clone()).ok()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +119,7 @@ pub struct ChatMessage {
     pub status: Option<ChatMessageStatus>,
     /// Lookup output or the outcome of an approved change.
     pub result: Option<String>,
+    pub review: Option<ProposalReview>,
     pub created_at: DateTime<Utc>,
 }
 
