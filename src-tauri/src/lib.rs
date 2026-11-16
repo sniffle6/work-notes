@@ -94,6 +94,8 @@ pub fn run() {
             commands::save_settings,
             commands::hide_quick_capture,
             commands::jira::get_jira_status,
+            commands::jira::load_jira_writing,
+            commands::jira::save_jira_writing,
             commands::jira::test_jira_connection,
             commands::jira::list_jira_issues,
             commands::jira::get_jira_issue,

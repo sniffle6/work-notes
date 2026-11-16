@@ -114,6 +114,11 @@ Manual checks in the running app after Jira changes:
 
 - With setup missing, the Jira view lists the missing steps and loads nothing.
 - Filters load tickets; selecting a ticket shows description, comments, and transitions.
+- At 1100 px window width, the ticket and agent remain readable without overlapping header controls. At narrower widths, switch between list, detail, and agent; each should fill the work area.
+- Collapse a status group, then search for one of its tickets. Matching tickets should become visible. Switch the list sort to Title A–Z and back to Jira order.
+- Write a comment and edit a ticket without submitting. Visit another ticket and another app view, then return; both pieces of unfinished writing should remain.
+- Keep a new-ticket draft for later, restart the app, and resume it. Unsent ticket comments and edits should also return. Discarding or successfully submitting removes the corresponding saved writing. An agent rewrite can be undone until the user edits again; undo history is session-only.
+- Switch Jira sites or projects and verify each workspace restores its own writing. A storage failure must show an error with a retry action, never a saved claim.
 - A transition, a comment, an edit, and Assign to me each update the open ticket and its list row.
 - An image attachment shows a thumbnail; clicking it opens the full image in the app, and the viewer's folder button opens File Explorer on the file.
 - A ticket with attachments lists them. Download and Download all save files to `Downloads\Work Notes\<KEY>`, and Show in folder opens File Explorer on the file.
@@ -122,6 +127,7 @@ Manual checks in the running app after Jira changes:
 - Asking the agent to change the draft updates the form, and an edit typed into the form is kept by the next rewrite of another field.
 - Create ticket on the draft shows the new key on the note afterwards.
 - An agent request to change a ticket appears as a proposal and changes nothing until approved.
+- Review the before/proposed values, including multiline descriptions, in the narrow agent pane. Older proposals and unavailable comparisons must be clearly labeled. While applying, a proposal must not claim it has already succeeded.
 - Rejecting a proposal changes nothing in Jira.
 
 ## Parser Checks

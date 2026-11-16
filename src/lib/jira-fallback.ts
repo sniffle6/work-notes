@@ -46,8 +46,26 @@ let issues = [
   sampleIssue("DEMO-1", "Printer reports paper out after reboot", "To Do", "new", "Bug"),
   sampleIssue("DEMO-2", "Add meter export to the service menu", "In Progress", "indeterminate", "Story"),
 ];
-let threads: { id: string; title: string; createdAt: string; updatedAt: string }[] = [];
-let messages: UnknownRecord[] = [];
+const reviewTime = new Date().toISOString();
+let threads = [{
+  id: "preview-review", title: "Proposal review example", createdAt: reviewTime, updatedAt: reviewTime,
+}];
+let messages: UnknownRecord[] = [{
+  id: "preview-review-intro", threadId: "preview-review", role: "assistant",
+  content: "Sample proposal for the browser preview. These controls do not contact Jira.",
+  status: null, result: null, createdAt: reviewTime,
+}, {
+  id: "preview-review-change", threadId: "preview-review", role: "proposal",
+  content: "Update DEMO-1", status: "pending", result: null, createdAt: reviewTime,
+  review: {
+    title: "Update DEMO-1", capturedAt: reviewTime, warning: null,
+    fields: [
+      { label: "Summary", before: "Printer reports paper out after reboot", after: "Clear stale paper-out state after printer reboot" },
+      { label: "Description", before: "Printer reports paper out after a reboot, even with paper loaded.",
+        after: "Recheck the paper sensor when the printer reconnects.\n\nVerify that a reboot with paper loaded clears the warning without requiring a second restart." },
+    ],
+  },
+}];
 let sequence = 0;
 
 function nextId(prefix: string): string {
@@ -77,6 +95,13 @@ function chatMessage(threadId: unknown, role: string, content: string): UnknownR
 
 export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): unknown {
   switch (command) {
+    case "load_jira_writing": {
+      const saved = localStorage.getItem(`work-notes.preview-writing.${args.scope}`);
+      return saved ? JSON.parse(saved) : { draft: null, tickets: {} };
+    }
+    case "save_jira_writing":
+      localStorage.setItem(`work-notes.preview-writing.${args.scope}`, JSON.stringify(args.writing));
+      return;
     case "get_jira_status":
       return {
         configured: true,
@@ -170,8 +195,15 @@ export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): 
         chatMessage(args.threadId, "assistant", "The Jira agent only runs in the desktop app."),
       ];
       return messages.filter((message) => message.threadId === args.threadId);
-    case "resolve_jira_chat_proposal":
-      return messages;
+    case "resolve_jira_chat_proposal": {
+      const proposal = messages.find((message) => message.id === args.messageId && message.role === "proposal");
+      if (!proposal || proposal.status !== "pending") {
+        throw new Error("This preview change is no longer pending.");
+      }
+      proposal.status = args.approve ? "approved" : "rejected";
+      proposal.result = args.approve ? "Preview only — no change was sent to Jira." : null;
+      return messages.filter((message) => message.threadId === proposal.threadId);
+    }
     default:
       throw new Error(`Unsupported fallback command: ${command}`);
   }

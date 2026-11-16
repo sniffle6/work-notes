@@ -9,7 +9,9 @@ use crate::jira::agent::{
     build_agent_prompt, parse_agent_turn, AgentContext, AgentRunner, JiraToolCall, TicketDraft,
     ViewAction,
 };
-use crate::jira::chat::{ChatMessage, ChatMessageStatus, ChatRole, NewChatMessage};
+use crate::jira::chat::{
+    ChatMessage, ChatMessageStatus, ChatRole, NewChatMessage, ProposalField, ProposalReview,
+};
 use crate::jira::client::DEFAULT_SEARCH_LIMIT;
 use crate::jira::transitions::describe_transition;
 use crate::jira::{Assignee, IssueUpdate, JiraError, JiraOps, NewIssue};
@@ -163,13 +165,23 @@ impl JiraAgentService {
                             result: Some(reason),
                         }
                     }
-                    Ok(call) if call.is_write() => NewChatMessage {
-                        role: ChatRole::Proposal,
-                        content: call.describe(),
-                        payload: Some(serde_json::to_string(&call)?),
-                        status: Some(ChatMessageStatus::Pending),
-                        result: None,
-                    },
+                    Ok(mut call) if call.is_write() => {
+                        // Freeze the default project so approval matches the displayed target.
+                        if let JiraToolCall::CreateIssue { project_key, .. } = &mut call {
+                            if project_key.is_none() {
+                                *project_key = Some(context.project_key.clone());
+                            }
+                        }
+                        let mut payload = serde_json::to_value(&call)?;
+                        payload["review"] = serde_json::to_value(proposal_review(&call, jira))?;
+                        NewChatMessage {
+                            role: ChatRole::Proposal,
+                            content: call.describe(),
+                            payload: Some(serde_json::to_string(&payload)?),
+                            status: Some(ChatMessageStatus::Pending),
+                            result: None,
+                        }
+                    }
                     Ok(call) if call.view_action().is_some() => {
                         let view_call = run_view_call(&call, jira, context.draft.as_mut());
                         let (status, result) = match view_call {
@@ -462,6 +474,112 @@ pub fn run_lookup(call: &JiraToolCall, jira: &dyn JiraOps) -> Result<String, Jir
             "this request changes Jira and needs approval".to_string(),
         )),
     }
+}
+
+/// Captures comparison values without changing Jira. Lookup failure is visible in the review.
+fn proposal_review(call: &JiraToolCall, jira: &dyn JiraOps) -> ProposalReview {
+    let mut review = ProposalReview {
+        title: call
+            .describe()
+            .lines()
+            .next()
+            .unwrap_or("Proposed change")
+            .to_string(),
+        captured_at: chrono::Utc::now().to_rfc3339(),
+        warning: None,
+        fields: Vec::new(),
+    };
+    let issue_key = match call {
+        JiraToolCall::UpdateIssue { issue_key, .. }
+        | JiraToolCall::TransitionIssue { issue_key, .. }
+        | JiraToolCall::AssignIssue { issue_key, .. } => Some(issue_key),
+        _ => None,
+    };
+    let issue = issue_key.and_then(|key| match jira.get_issue(key) {
+        Ok(issue) => Some(issue),
+        Err(_) => {
+            review.warning = Some(
+                "Previous values could not be loaded. Check the ticket in Jira before approving."
+                    .to_string(),
+            );
+            None
+        }
+    });
+    let mut field = |label: &str, before: Option<String>, after: &str| {
+        review.fields.push(ProposalField {
+            label: label.to_string(),
+            before,
+            after: after.to_string(),
+        });
+    };
+    match call {
+        JiraToolCall::UpdateIssue {
+            summary,
+            description,
+            ..
+        } => {
+            if let Some(value) = summary {
+                field(
+                    "Summary",
+                    issue.as_ref().map(|i| i.summary.summary.clone()),
+                    value,
+                );
+            }
+            if let Some(value) = description {
+                field(
+                    "Description",
+                    issue.as_ref().map(|i| i.description.clone()),
+                    value,
+                );
+                if issue
+                    .as_ref()
+                    .is_some_and(|i| !i.description_editable_losslessly)
+                {
+                    review.warning = Some("This replaces Jira's rich description with plain text and may remove formatting.".to_string());
+                }
+            }
+        }
+        JiraToolCall::TransitionIssue { status, .. } => {
+            field(
+                "Status",
+                issue.as_ref().map(|i| i.summary.status.clone()),
+                status,
+            );
+        }
+        JiraToolCall::AssignIssue { assignee, .. } => {
+            field(
+                "Assignee",
+                issue.as_ref().map(|i| {
+                    i.summary
+                        .assignee
+                        .clone()
+                        .unwrap_or_else(|| "Unassigned".to_string())
+                }),
+                match assignee {
+                    Assignee::Me => "Me (approving account)",
+                    Assignee::Unassigned => "Unassigned",
+                },
+            );
+        }
+        JiraToolCall::AddComment { comment, .. } => field("New comment", None, comment),
+        JiraToolCall::CreateIssue {
+            project_key,
+            issue_type,
+            summary,
+            description,
+        } => {
+            field(
+                "Project",
+                None,
+                project_key.as_deref().unwrap_or("Configured project"),
+            );
+            field("Issue type", None, issue_type);
+            field("Summary", None, summary);
+            field("Description", None, description);
+        }
+        _ => {}
+    }
+    review
 }
 
 /// Applies a write tool call to Jira and describes what changed.
@@ -989,7 +1107,10 @@ mod tests {
             })
             .expect("the agent should rewrite the draft");
         println!("issue type: {:?}\nsummary: {:?}", rewrite.0, rewrite.1);
-        println!("description:\n{}", rewrite.2.as_deref().unwrap_or("(unchanged)"));
+        println!(
+            "description:\n{}",
+            rewrite.2.as_deref().unwrap_or("(unchanged)")
+        );
         println!("reply: {}", messages[1].content);
         assert!(rewrite.1.is_some() && rewrite.2.is_some());
         assert!(messages
@@ -1474,8 +1595,76 @@ mod tests {
         assert_eq!(messages[2].content, "Move AB-7 to \"Dev Complete\"");
         assert_eq!(messages[2].status, Some(ChatMessageStatus::Pending));
         assert_eq!(messages[3].content, "Comment on AB-7:\nFixed in build 512.");
-        assert!(jira.calls().is_empty());
+        assert_eq!(jira.calls(), vec!["get AB-7"]);
+        let serialized = serde_json::to_value(&messages[2]).unwrap();
+        assert_eq!(serialized["review"]["fields"][0]["before"], "In Progress");
+        assert_eq!(serialized["review"]["fields"][0]["after"], "Dev Complete");
         assert_eq!(runner.prompts().len(), 1);
+    }
+
+    #[test]
+    fn proposal_reviews_persist_exact_edits_and_do_not_expose_executable_payloads() {
+        let fixture = fixture();
+        let id = pending_proposal(
+            &fixture,
+            json!({
+                "tool": "update_issue", "issueKey": "AB-7", "summary": "New title", "description": "Updated text"
+            }),
+        );
+        let stored = fixture.chat.get_message(&id).unwrap().unwrap();
+        let value = serde_json::to_value(stored).unwrap();
+        assert!(value.get("payload").is_none());
+        assert_eq!(
+            value["review"]["fields"],
+            json!([
+                { "label": "Summary", "before": "Printer jams", "after": "New title" },
+                { "label": "Description", "before": "Jams after reboot.", "after": "Updated text" }
+            ])
+        );
+    }
+
+    #[test]
+    fn unavailable_comparison_is_explicit_and_keeps_the_proposal_pending() {
+        let fixture = fixture();
+        let runner = FakeRunner::new(vec![turn(
+            "",
+            vec![raw_call(json!({
+                "tool": "assign_issue", "issueKey": "AB-7", "assignee": "unassigned"
+            }))],
+        )]);
+        let jira = FakeJira::failing(JiraError::InvalidInput("Offline".to_string()));
+        let messages = fixture.send("Unassign it", &runner, &jira).unwrap();
+        let proposal = messages
+            .iter()
+            .find(|m| m.role == ChatRole::Proposal)
+            .unwrap();
+        let review = proposal.review.as_ref().unwrap();
+        assert!(review
+            .warning
+            .as_deref()
+            .unwrap()
+            .contains("could not be loaded"));
+        assert_eq!(review.fields[0].before, None);
+        assert_eq!(review.fields[0].after, "Unassigned");
+        assert_eq!(proposal.status, Some(ChatMessageStatus::Pending));
+        assert_eq!(jira.calls(), vec!["get AB-7"]);
+    }
+
+    #[test]
+    fn creating_from_a_proposal_uses_the_project_shown_in_its_review() {
+        let fixture = fixture();
+        let id = pending_proposal(
+            &fixture,
+            json!({ "tool": "create_issue", "summary": "Follow up" }),
+        );
+        let stored = fixture.chat.get_message(&id).unwrap().unwrap();
+        let project = &stored.review.as_ref().unwrap().fields[0].after;
+        let jira = FakeJira::default();
+        fixture
+            .service
+            .approve_proposal(&id, "CHANGED", &jira)
+            .unwrap();
+        assert!(jira.calls()[0].starts_with(&format!("create {project} Task Follow up")));
     }
 
     #[test]

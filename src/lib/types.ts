@@ -326,6 +326,25 @@ export type JiraIssueEdit = {
   description?: string;
 };
 
+export type JiraTicketWriting = {
+  editing: boolean;
+  summary: string;
+  description: string;
+  comment: string;
+};
+
+export type JiraWriting = {
+  draft: JiraIssueDraft | null;
+  tickets: Record<string, JiraTicketWriting>;
+};
+
+export type JiraProposalReview = {
+  title: string;
+  capturedAt: string;
+  warning: string | null;
+  fields: { label: string; before: string | null; after: string }[];
+};
+
 export type JiraChatThread = {
   id: string;
   title: string;
@@ -344,5 +363,6 @@ export type JiraChatMessage = {
   content: string;
   status: JiraChatStatus | null;
   result: string | null;
+  review?: JiraProposalReview | null;
   createdAt: string;
 };

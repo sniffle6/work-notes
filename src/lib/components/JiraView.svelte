@@ -1,5 +1,7 @@
 <script lang="ts">
   import Bot from "@lucide/svelte/icons/bot";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
   import Plus from "@lucide/svelte/icons/plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -28,6 +30,9 @@
   let agentOpen = $state(readFlag(AGENT_OPEN_KEY, false));
   let listHidden = $state(readFlag(LIST_HIDDEN_KEY, false));
   let searchQuery = $state("");
+  let workspaceWidth = $state(0);
+  let collapsedStatuses = $state<string[]>([]);
+  let sortOrder = $state("jira");
 
   // The store instance is fixed for the lifetime of the view.
   // svelte-ignore state_referenced_locally
@@ -37,13 +42,19 @@
     agentFilter,
     issues,
     selectedIssue,
+    selectedWriting,
     issueTypes,
     draft,
+    draftVisible,
+    draftBeforeAgent,
     draftAgentOpen,
     loadingIssues,
     loadingIssue,
     savingIssue,
     error,
+    writingError,
+    writingSaving,
+    writingReady,
     attachmentDownload,
     attachmentThumbnails,
     attachmentViewer,
@@ -64,7 +75,14 @@
   }>();
 
   const visibleIssues = $derived(filterIssues($issues, searchQuery));
-  const groups = $derived(groupIssuesByStatus(visibleIssues));
+  const sharedAssignee = $derived(
+    visibleIssues.length > 1 && visibleIssues[0].assignee &&
+    visibleIssues.every((issue) => issue.assignee === visibleIssues[0].assignee)
+      ? visibleIssues[0].assignee : null,
+  );
+  const groups = $derived(groupIssuesByStatus(sortOrder === "title"
+    ? [...visibleIssues].sort((left, right) => left.summary.localeCompare(right.summary))
+    : visibleIssues));
   const countLabel = $derived.by(() => {
     const total = `${$issues.length} ${$issues.length === 1 ? "ticket" : "tickets"}`;
     const project = $status?.projectKey ? ` · ${$status.projectKey}` : "";
@@ -73,6 +91,17 @@
 
   // A draft started from a note brings the agent along, whatever the saved choice.
   const agentVisible = $derived(agentOpen || ($draftAgentOpen && $draft !== null));
+  const listShown = $derived(!listHidden && !(workspaceWidth > 0 && (
+    (workspaceWidth <= 1100 && agentVisible) || (workspaceWidth < 760 && $draftVisible)
+  )));
+
+  $effect(() => {
+    if ($draftVisible && workspaceWidth > 0 && workspaceWidth < 760) {
+      agentOpen = false;
+      jira.closeDraftAgent();
+      listHidden = true;
+    }
+  });
 
   function toggleAgent() {
     agentOpen = !agentVisible;
@@ -83,8 +112,33 @@
   }
 
   function toggleList() {
-    listHidden = !listHidden;
+    const showList = !listShown;
+    if (showList) {
+      if (workspaceWidth > 0 && workspaceWidth <= 1100 && agentVisible) {
+        toggleAgent();
+      }
+      if (workspaceWidth > 0 && workspaceWidth < 760) {
+        jira.hideDraft();
+      }
+    }
+    listHidden = !showList;
     writeFlag(LIST_HIDDEN_KEY, listHidden);
+  }
+
+  function openTicket(key: string) {
+    if (workspaceWidth > 0 && workspaceWidth < 760) {
+      listHidden = true;
+    }
+    void jira.selectIssue(key);
+  }
+
+  function openDraft() {
+    if (workspaceWidth > 0 && workspaceWidth < 760) {
+      listHidden = true;
+      agentOpen = false;
+      jira.closeDraftAgent();
+    }
+    void jira.startDraft();
   }
 
   function handleShortcut(event: KeyboardEvent) {
@@ -110,15 +164,15 @@
 
 <svelte:window onkeydown={handleShortcut} />
 
-<section class="jira-view" aria-label="Jira">
+<section class="jira-view" aria-label="Jira" bind:clientWidth={workspaceWidth}>
   <header class="jira-head">
     {#if $status?.configured}
       <button
         class="icon-button"
-        class:active={!listHidden}
+        class:active={listShown}
         type="button"
-        aria-label={listHidden ? "Show ticket list" : "Hide ticket list"}
-        title={listHidden ? "Show ticket list ( [ )" : "Hide ticket list ( [ )"}
+        aria-label={listShown ? "Hide ticket list" : "Show ticket list"}
+        title={listShown ? "Hide ticket list ( [ )" : "Show ticket list ( [ )"}
         onclick={toggleList}
       >
         <PanelLeft size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -132,6 +186,8 @@
           Loading
         {:else if !$status.configured}
           Not connected
+        {:else if $writingSaving}
+          Saving drafts…
         {:else if $loadingIssues}
           Loading tickets
         {:else}
@@ -182,24 +238,25 @@
       </div>
 
       <div class="head-actions">
-        <button class="quiet-button" type="button" disabled={$loadingIssues} onclick={() => void jira.refreshIssues()}>
+        <button class="quiet-button" type="button" aria-label="Refresh" title="Refresh tickets" disabled={$loadingIssues} onclick={() => void jira.refreshIssues()}>
           <RefreshCw size={14} strokeWidth={1.8} aria-hidden="true" />
-          Refresh
+          <span class="action-label">Refresh</span>
         </button>
-        <button class="quiet-button" type="button" onclick={() => void jira.startDraft()}>
+        <button class="quiet-button" type="button" aria-label={$draft ? "Resume draft" : "New ticket"} title={$draft ? "Resume draft" : "New ticket"} onclick={openDraft}>
           <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
-          New ticket
+          <span class="action-label">{$draft ? "Resume draft" : "New ticket"}</span>
         </button>
         <button
           class="quiet-button"
           class:active={agentVisible}
           type="button"
           aria-pressed={agentVisible}
+          aria-label="Agent"
           title={agentVisible ? "Hide the agent ( ] )" : "Ask the agent ( ] )"}
           onclick={toggleAgent}
         >
           <Bot size={14} strokeWidth={1.8} aria-hidden="true" />
-          Agent
+          <span class="action-label">Agent</span>
         </button>
       </div>
     {/if}
@@ -207,6 +264,12 @@
 
   {#if $error}
     <p class="jira-error" role="alert">{$error}</p>
+  {/if}
+  {#if $writingError}
+    <p class="jira-error" role="alert">
+      {$writingError}
+      <button type="button" disabled={$writingSaving} onclick={() => jira.retryWriting()}>Retry saving drafts</button>
+    </p>
   {/if}
 
   {#if $status && !$status.configured}
@@ -222,10 +285,10 @@
       </p>
       <button class="primary-button" type="button" onclick={() => dispatch("openSettings")}>Open settings</button>
     </div>
-  {:else if $status}
-    <div class="jira-body" class:with-agent={agentVisible} class:without-list={listHidden}>
+  {:else if $status && $writingReady}
+    <div class="jira-body" class:with-agent={agentVisible} class:without-list={listHidden} class:has-draft={$draftVisible}>
       {#if !listHidden}
-        <div class="list-pane">
+        <section class="list-pane" aria-label="Ticket list">
           <label class="list-search">
             <Search size={14} strokeWidth={1.8} aria-hidden="true" />
             <input
@@ -237,6 +300,14 @@
             />
           </label>
 
+          <div class="list-options">
+            <span class="list-owner" title={sharedAssignee ? `All shown tickets are assigned to ${sharedAssignee}` : "Grouped by status"}>{sharedAssignee ?? "By status"}</span>
+            <select bind:value={sortOrder} aria-label="Sort tickets within each status" title="Sort tickets within each status">
+              <option value="jira">Jira order</option>
+              <option value="title">Title A–Z</option>
+            </select>
+          </div>
+
           <div class="issue-list" aria-label="Tickets">
             {#if $issues.length === 0}
               <p class="list-empty">{$loadingIssues ? "Loading tickets" : "No tickets match this filter"}</p>
@@ -244,50 +315,62 @@
               <p class="list-empty">No tickets match the search</p>
             {:else}
               {#each groups as group (group.status)}
+                {@const expanded = Boolean(searchQuery.trim()) || !collapsedStatuses.includes(group.status)}
                 <div class="issue-group" role="group" aria-label={groupLabel(group.status, group.issues.length)}>
-                  <div class="group-head" aria-hidden="true">
+                  <button class="group-head" type="button"
+                    aria-label={`${expanded ? "Collapse" : "Expand"} ${group.status}`}
+                    aria-expanded={expanded}
+                    disabled={Boolean(searchQuery.trim())}
+                    onclick={() => { collapsedStatuses = expanded
+                      ? [...collapsedStatuses, group.status]
+                      : collapsedStatuses.filter((status) => status !== group.status); }}>
+                    {#if expanded}<ChevronDown size={12} aria-hidden="true" />{:else}<ChevronRight size={12} aria-hidden="true" />{/if}
                     <span class={`group-dot ${group.statusCategory}`}></span>
                     <span class="group-name">{group.status}</span>
                     <span class="group-count">{group.issues.length}</span>
-                  </div>
+                  </button>
+                  {#if expanded}
                   {#each group.issues as issue (issue.key)}
                     <button
                       class="issue-row"
-                      class:selected={$selectedIssue?.key === issue.key && !$draft}
+                      class:selected={$selectedIssue?.key === issue.key && !$draftVisible}
                       type="button"
                       aria-label={`${issue.key}: ${issue.summary}`}
-                      aria-current={$selectedIssue?.key === issue.key && !$draft ? "true" : undefined}
-                      onclick={() => {
-                        jira.cancelDraft();
-                        void jira.selectIssue(issue.key);
-                      }}
+                      title={issue.summary}
+                      aria-current={$selectedIssue?.key === issue.key && !$draftVisible ? "true" : undefined}
+                      onclick={() => openTicket(issue.key)}
                     >
-                      <span class="row-key">{issue.key}</span>
                       <span class="row-summary">{issue.summary}</span>
                       <span class="row-meta">
+                        <span class="row-key">{issue.key}</span>
                         <span>{issue.issueType}</span>
-                        <span class:unassigned={!issue.assignee}>{issue.assignee ?? "Unassigned"}</span>
-                        {#if issue.priority}
+                        {#if !sharedAssignee}
+                          <span class="row-assignee" class:unassigned={!issue.assignee}>{issue.assignee ?? "Unassigned"}</span>
+                        {/if}
+                        {#if issue.priority && priorityTone(issue.priority) !== "normal"}
                           <span class={`row-priority ${priorityTone(issue.priority)}`}>{issue.priority}</span>
                         {/if}
                       </span>
                     </button>
                   {/each}
+                  {/if}
                 </div>
               {/each}
             {/if}
           </div>
-        </div>
+        </section>
       {/if}
 
       <div class="issue-pane">
-        {#if $draft}
+        {#if $draft && $draftVisible}
           <JiraIssueForm
             draft={$draft}
             issueTypes={$issueTypes}
             projectKey={$status.projectKey}
             saving={$savingIssue}
             agentBusy={$agentBusy}
+            canUndo={Boolean($draftBeforeAgent)}
+            on:undo={() => jira.undoDraftRewrite()}
             on:edit={(event) => jira.editDraft(event.detail)}
             on:submit={async (event) => {
               const issueKey = await jira.submitDraft(event.detail);
@@ -296,10 +379,13 @@
               }
             }}
             on:cancel={() => jira.cancelDraft()}
+            on:close={() => jira.hideDraft()}
           />
         {:else}
           <JiraIssueDetail
             issue={$selectedIssue}
+            writing={$selectedWriting}
+            on:writing={(event) => jira.rememberWriting(event.detail.key, event.detail.writing)}
             loading={$loadingIssue}
             saving={$savingIssue}
             attachmentDownload={$attachmentDownload}
@@ -340,7 +426,7 @@
           busy={$agentBusy}
           busyProposalId={$busyProposalId}
           error={$chatError}
-          focusIssueKey={$draft ? null : ($selectedIssue?.key ?? null)}
+          focusIssueKey={$draftVisible ? null : ($selectedIssue?.key ?? null)}
           on:send={(event) => void jira.sendChat(event.detail)}
           on:resolve={(event) => void jira.resolveProposal(event.detail.messageId, event.detail.approve)}
           on:openThread={(event) => void jira.openThread(event.detail)}
@@ -355,6 +441,7 @@
 
 <style>
   .jira-view {
+    container: jira / inline-size;
     display: flex;
     height: 100%;
     min-width: 0;
@@ -367,7 +454,8 @@
 
   .jira-head {
     display: flex;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
     align-items: stretch;
     gap: 0 14px;
     min-height: 44px;
@@ -382,6 +470,7 @@
   }
 
   .head-title {
+    flex: 0 0 auto;
     display: flex;
     align-items: baseline;
     align-self: center;
@@ -402,6 +491,7 @@
   }
 
   .head-actions {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -411,7 +501,11 @@
   /* Tabs sit on the header's bottom rule; the active one draws over it. */
   .filter-row {
     display: flex;
-    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    white-space: nowrap;
     align-items: stretch;
     gap: 2px;
   }
@@ -449,6 +543,7 @@
   }
 
   .filter-tab {
+    flex-shrink: 0;
     min-height: 44px;
     margin-bottom: -1px;
     border-bottom: 2px solid transparent;
@@ -556,14 +651,14 @@
   .jira-body {
     display: grid;
     flex: 1 1 auto;
-    grid-template-columns: 340px minmax(0, 1fr);
+    grid-template-columns: 300px minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
 
   .jira-body.with-agent {
-    grid-template-columns: 320px minmax(0, 1fr) 360px;
+    grid-template-columns: 300px minmax(0, 1fr) 340px;
   }
 
   .jira-body.without-list {
@@ -571,7 +666,7 @@
   }
 
   .jira-body.without-list.with-agent {
-    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-columns: minmax(0, 1fr) 340px;
   }
 
   .list-pane {
@@ -580,6 +675,7 @@
     min-height: 0;
     flex-direction: column;
     border-right: 1px solid var(--rule);
+    overflow: hidden;
   }
 
   .list-search {
@@ -623,6 +719,9 @@
   }
 
   .group-head {
+    width: 100%;
+    border-radius: 0;
+    text-align: left;
     position: sticky;
     top: 0;
     z-index: 1;
@@ -634,6 +733,18 @@
     background: var(--color-app-bg-paint, var(--color-app-bg));
     font-size: 11.5px;
     font-weight: var(--weight-medium);
+  }
+
+  .group-head:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  .group-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .group-dot {
@@ -658,15 +769,14 @@
     font-weight: var(--weight-regular);
   }
 
-  /* A log line: the ticket key sits in a fixed gutter beside its text. */
   .issue-row {
     display: grid;
-    grid-template-columns: 74px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    gap: 3px 8px;
+    gap: 5px;
     width: 100%;
     min-height: 0;
-    padding: 8px 14px 9px 12px;
+    padding: 10px 14px 10px 12px;
     border-left: 2px solid transparent;
     border-radius: 0;
     text-align: left;
@@ -682,8 +792,7 @@
   }
 
   .row-key {
-    grid-row: span 2;
-    padding-top: 1px;
+    flex: 0 0 auto;
     color: var(--color-text-muted);
     font-family: var(--font-mono);
     font-size: 11.5px;
@@ -706,11 +815,53 @@
 
   .row-meta {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
     color: var(--color-text-muted);
     font-size: 11.5px;
     white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .row-assignee {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .list-owner {
+    min-width: 0;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .list-options {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .list-options select {
+    max-width: 120px;
+    min-height: 28px;
+    border: 0;
+    border-radius: var(--radius-s);
+    background: var(--color-app-bg);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .list-options select:focus-visible {
+    outline: 2px solid var(--color-accent-hot);
+    outline-offset: 1px;
   }
 
   .row-meta .unassigned {
@@ -718,6 +869,7 @@
   }
 
   .row-priority {
+    flex: 0 0 auto;
     margin-left: auto;
   }
 
@@ -736,24 +888,39 @@
     overflow: hidden;
   }
 
-  @media (max-width: 1180px) {
+  @container jira (max-width: 1100px) {
     .jira-body.with-agent {
-      grid-template-columns: 260px minmax(0, 1fr) 320px;
+      grid-template-columns: minmax(0, 1fr) 320px;
+    }
+
+    .jira-body.with-agent .list-pane {
+      display: none;
+    }
+
+    .head-actions .action-label {
+      display: none;
+    }
+
+    .head-title p {
+      display: none;
     }
   }
 
-  @media (max-width: 920px) {
+  @container jira (max-width: 759px) {
     .jira-body,
     .jira-body.with-agent,
     .jira-body.without-list.with-agent {
       grid-template-columns: 1fr;
-      grid-auto-rows: minmax(260px, 1fr);
-      overflow-y: auto;
     }
 
-    .list-pane {
-      border-right: 0;
-      border-bottom: 1px solid var(--rule);
+    .jira-body:not(.without-list):not(.has-draft) .issue-pane,
+    .jira-body.with-agent .issue-pane,
+    .jira-body.has-draft .list-pane {
+      display: none;
+    }
+
+    .jira-head {
+      gap: 0 6px;
     }
   }
 </style>

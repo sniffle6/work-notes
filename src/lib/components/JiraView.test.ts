@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 
 import { createJiraStore, type JiraApi } from "$lib/stores/jira";
 import type { JiraIssueDetail, JiraIssueSummary, JiraStatus } from "$lib/types";
 import JiraView from "./JiraView.svelte";
+
+// jsdom has no layout observer; real viewport behavior is checked in the browser.
+beforeAll(() => {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -60,6 +69,8 @@ function detail(overrides: Partial<JiraIssueDetail> = {}): JiraIssueDetail {
 
 function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
   return {
+    loadJiraWriting: vi.fn(async () => ({ draft: null, tickets: {} })),
+    saveJiraWriting: vi.fn(async () => undefined),
     getJiraStatus: vi.fn(async () => status()),
     listJiraIssues: vi.fn(async () => [issue(), issue({ key: "AB-8", summary: "Bill acceptor rejects notes" })]),
     getJiraIssue: vi.fn(async (key: string) =>
@@ -99,6 +110,111 @@ async function renderOpened(api: JiraApi, events: Record<string, (event: CustomE
 }
 
 describe("JiraView", () => {
+  it("brings a new draft forward when the agent occupies a narrow workspace", async () => {
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+    try {
+      await renderOpened(fakeApi());
+      await fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+      await fireEvent.click(screen.getByRole("button", { name: "New ticket" }));
+      await screen.findByRole("textbox", { name: "Summary" });
+      expect(screen.queryByRole("textbox", { name: "Message the Jira agent" })).toBeNull();
+    } finally {
+      cleanup();
+      width.mockRestore();
+    }
+  });
+
+  it("shows the list when it replaces the agent in a medium-width workspace", async () => {
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(900);
+    try {
+      await renderOpened(fakeApi());
+      await fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Show ticket list" }));
+      expect(screen.getByRole("button", { name: "Hide ticket list" })).toBeTruthy();
+      expect(screen.queryByRole("textbox", { name: "Message the Jira agent" })).toBeNull();
+    } finally {
+      cleanup();
+      width.mockRestore();
+    }
+  });
+
+  it("sorts titles within each status without changing the Jira filter", async () => {
+    const api = fakeApi();
+    await renderOpened(api);
+    await fireEvent.change(screen.getByRole("combobox", { name: "Sort tickets within each status" }), {
+      target: { value: "title" },
+    });
+    const rows = within(screen.getByRole("region", { name: "Ticket list" })).getAllByRole("button", { name: /^AB-/ });
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "AB-8: Bill acceptor rejects notes", "AB-7: Printer jams on reboot",
+    ]);
+    expect(api.listJiraIssues).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses status groups and reveals matching tickets when filtering", async () => {
+    await renderOpened(fakeApi());
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse To Do" }));
+    expect(screen.queryByRole("button", { name: "AB-7: Printer jams on reboot" })).toBeNull();
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search tickets" }), { target: { value: "printer" } });
+    expect(screen.getByRole("button", { name: "AB-7: Printer jams on reboot" })).toBeTruthy();
+  });
+
+  it("shows a shared assignee once above the list and retains exceptional priorities", async () => {
+    await renderOpened(fakeApi({ listJiraIssues: vi.fn(async () => [
+      issue({ assignee: "Sam Dev", priority: "Medium" }),
+      issue({ key: "AB-8", assignee: "Sam Dev", priority: "High" }),
+    ]) }));
+    const list = within(screen.getByRole("region", { name: "Ticket list" }));
+    expect(list.getAllByText("Sam Dev")).toHaveLength(1);
+    expect(list.queryByText("Medium")).toBeNull();
+    expect(list.getByText("High")).toBeTruthy();
+  });
+
+  it("can undo an agent rewrite back to the user's latest draft", async () => {
+    const jira = await renderOpened(fakeApi());
+    await jira.startDraft({ summary: "Original", description: "Source" });
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Description" }), {
+      target: { value: "My newer investigation" },
+    });
+    await jira.applyViewAction({ kind: "setDraft", summary: "Agent title", description: "Agent body", issueType: null });
+    await fireEvent.click(await screen.findByRole("button", { name: "Undo agent changes" }));
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Summary" }).value).toBe("Original");
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Description" }).value).toBe("My newer investigation");
+  });
+
+  it("restores unfinished comments and edits per ticket after navigating away", async () => {
+    const jira = await renderOpened(fakeApi());
+    await fireEvent.input(screen.getByRole("textbox", { name: "Comment" }), {
+      target: { value: "Still investigating the sensor" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Summary" }), {
+      target: { value: "Printer jams after a cold boot" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "AB-8: Bill acceptor rejects notes" }));
+    await screen.findByRole("heading", { name: "Bill acceptor rejects notes" });
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Comment" }).value).toBe("");
+    cleanup();
+    render(JiraView, { props: { jira } });
+    await fireEvent.click(screen.getByRole("button", { name: "AB-7: Printer jams on reboot" }));
+    expect((await screen.findByRole<HTMLInputElement>("textbox", { name: "Summary" })).value).toBe("Printer jams after a cold boot");
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Comment" }).value).toBe("Still investigating the sensor");
+  });
+
+  it("keeps a new-ticket draft while browsing and resumes it after revisiting Jira", async () => {
+    const jira = await renderOpened(fakeApi());
+    await fireEvent.click(screen.getByRole("button", { name: "New ticket" }));
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Summary" }), {
+      target: { value: "Keep this investigation" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "AB-8: Bill acceptor rejects notes" }));
+    await screen.findByRole("heading", { name: "Bill acceptor rejects notes" });
+    cleanup();
+    render(JiraView, { props: { jira } });
+    await fireEvent.click(screen.getByRole("button", { name: "Resume draft" }));
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Summary" }).value).toBe("Keep this investigation");
+  });
+
   it("lists the missing setup steps and links to settings when Jira is not configured", async () => {
     const openSettings = vi.fn();
     await renderOpened(
@@ -198,7 +314,7 @@ describe("JiraView", () => {
 
     const groups = screen.getAllByRole("group").filter((group) => group.classList.contains("issue-group"));
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["To Do, 2 tickets", "In QA, 1 ticket"]);
-    expect(within(groups[0]).getAllByRole("button").map((row) => row.getAttribute("aria-label"))).toEqual([
+    expect(within(groups[0]).getAllByRole("button", { name: /^AB-/ }).map((row) => row.getAttribute("aria-label"))).toEqual([
       "AB-2: First to do",
       "AB-3: Second to do",
     ]);

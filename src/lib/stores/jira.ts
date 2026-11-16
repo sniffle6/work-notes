@@ -10,6 +10,8 @@ import {
   getJiraAttachmentThumbnail,
   getJiraIssue,
   getJiraStatus,
+  loadJiraWriting,
+  saveJiraWriting,
   listJiraChatMessages,
   listJiraChatThreads,
   listJiraIssues,
@@ -36,9 +38,15 @@ import type {
   JiraIssueSummary,
   JiraStatus,
   JiraViewAction,
+  JiraTicketWriting,
+  JiraWriting,
 } from "$lib/types";
 
+export type { JiraTicketWriting } from "$lib/types";
+
 export type JiraApi = {
+  loadJiraWriting: typeof loadJiraWriting;
+  saveJiraWriting: typeof saveJiraWriting;
   getJiraStatus: typeof getJiraStatus;
   listJiraIssues: typeof listJiraIssues;
   getJiraIssue: typeof getJiraIssue;
@@ -61,6 +69,8 @@ export type JiraApi = {
 };
 
 const defaultApi: JiraApi = {
+  loadJiraWriting,
+  saveJiraWriting,
   getJiraStatus,
   listJiraIssues,
   getJiraIssue,
@@ -103,14 +113,118 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const agentFilter = writable<JiraFilter | null>(null);
   const issues = writable<JiraIssueSummary[]>([]);
   const selectedIssue = writable<JiraIssueDetail | null>(null);
+  const ticketWriting = writable<Record<string, JiraTicketWriting>>({});
+  const selectedWriting = derived([selectedIssue, ticketWriting], ([$issue, $writing]) =>
+    $issue ? $writing[$issue.key] : undefined,
+  );
   const issueTypes = writable<string[]>(FALLBACK_ISSUE_TYPES);
   const draft = writable<JiraIssueDraft | null>(null);
+  const draftVisible = writable(false);
+  const draftBeforeAgent = writable<JiraIssueDraft | null>(null);
   /** The agent panel was opened for the draft, whatever the user's saved panel choice. */
   const draftAgentOpen = writable(false);
   const loadingIssues = writable(false);
   const loadingIssue = writable(false);
   const savingIssue = writable(false);
   const error = writable<string | null>(null);
+  const writingError = writable<string | null>(null);
+  const writingSaving = writable(false);
+  const writingReady = writable(false);
+  let writingScope: string | null = null;
+  let restoringWriting = false;
+  let writingLoad: Promise<boolean> | null = null;
+  let writingSaves = Promise.resolve();
+  let writingRevision = 0;
+
+  function persistWriting(): Promise<void> {
+    if (!writingScope || restoringWriting) {
+      return writingSaves;
+    }
+    const scope = writingScope;
+    const revision = ++writingRevision;
+    const writing: JiraWriting = structuredClone({ draft: get(draft), tickets: get(ticketWriting) });
+    writingSaving.set(true);
+    // Serialize saves: an older disk write must never finish after a newer one.
+    writingSaves = writingSaves.then(async () => {
+      try {
+        await api.saveJiraWriting(scope, writing);
+        if (revision === writingRevision) {
+          writingError.set(null);
+        }
+      } catch (failure) {
+        writingError.set(`Writing is not saved on this device: ${errorMessage(failure, "Storage unavailable.")}`);
+      } finally {
+        if (revision === writingRevision) {
+          writingSaving.set(false);
+        }
+      }
+    });
+    return writingSaves;
+  }
+
+  async function restoreWriting(): Promise<boolean> {
+    if (writingLoad) {
+      return writingLoad;
+    }
+    writingLoad = (async () => {
+      try {
+        const setup = get(status) ?? await api.getJiraStatus();
+        status.set(setup);
+        const scope = JSON.stringify([setup.siteUrl.replace(/\/$/, "").toLowerCase(), setup.projectKey.toUpperCase()]);
+        if (scope === writingScope) {
+          writingReady.set(true);
+          return true;
+        }
+        writingReady.set(false);
+        await writingSaves;
+        if (writingScope && get(writingError)) {
+          throw new Error("Save the current project's writing before switching projects.");
+        }
+        const saved = await api.loadJiraWriting(scope);
+        restoringWriting = true;
+        draftGeneration += 1;
+        draftBeforeAgent.set(null);
+        draftAgentOpen.set(false);
+        if (writingScope !== null) {
+          selectedIssue.set(null);
+          issues.set([]);
+        }
+        draft.set(saved.draft);
+        draftVisible.set(false);
+        // A restored custom issue type must remain selectable before Jira loads its types.
+        if (saved.draft && !get(issueTypes).includes(saved.draft.issueType)) {
+          issueTypes.update((types) => [...types, saved.draft!.issueType]);
+        }
+        ticketWriting.set(saved.tickets);
+        writingScope = scope;
+        writingReady.set(true);
+        writingError.set(null);
+        return true;
+      } catch (failure) {
+        writingError.set(`Saved writing could not be loaded: ${errorMessage(failure, "Storage unavailable.")} Retry before starting a draft.`);
+        return false;
+      } finally {
+        restoringWriting = false;
+      }
+    })();
+    try {
+      return await writingLoad;
+    } finally {
+      writingLoad = null;
+    }
+  }
+
+  async function retryWriting(): Promise<void> {
+    if (writingScope) {
+      await persistWriting();
+    }
+    if (await restoreWriting()) {
+      await open();
+    }
+  }
+
+  draft.subscribe(() => { void persistWriting(); });
+  ticketWriting.subscribe(() => { void persistWriting(); });
 
   // Attachments saved so far for one ticket; a download for another ticket replaces it.
   const savedAttachments = writable<(JiraAttachmentDownload & { issueKey: string }) | null>(null);
@@ -203,6 +317,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
   // Guards against a slow ticket response replacing a newer selection.
   let issueRequestSequence = 0;
+  let draftGeneration = 0;
+  let agentDraftGeneration: number | null = null;
 
   /** Loads setup status, then tickets and conversations when Jira is usable. */
   async function open(): Promise<void> {
@@ -211,6 +327,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     try {
       const nextStatus = await api.getJiraStatus();
       status.set(nextStatus);
+      if (!await restoreWriting()) {
+        return;
+      }
       if (!nextStatus.configured) {
         issues.set([]);
         selectedIssue.set(null);
@@ -279,6 +398,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   async function selectIssue(key: string): Promise<void> {
+    hideDraft();
     const request = ++issueRequestSequence;
     loadingIssue.set(true);
     error.set(null);
@@ -299,8 +419,25 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
   }
 
-  /** Opens the new-ticket form, optionally prefilled (for example from a note). */
-  async function startDraft(prefill: Partial<JiraIssueDraft> = {}): Promise<void> {
+  /**
+   * Opens or resumes the new-ticket form. Returns false when a prefilled draft
+   * cannot replace existing writing; callers must not ask the agent to rewrite it.
+   */
+  async function startDraft(prefill: Partial<JiraIssueDraft> = {}): Promise<boolean> {
+    if (!await restoreWriting()) {
+      return false;
+    }
+    const current = get(draft);
+    if (current) {
+      draftAgentOpen.set(false);
+      draftVisible.set(true);
+      const requestsAnotherDraft = Object.keys(prefill).length > 0;
+      if (requestsAnotherDraft && current.noteId !== prefill.noteId) {
+        error.set("Finish or discard the current draft before creating a ticket from another note.");
+      }
+      return !requestsAnotherDraft;
+    }
+    error.set(null);
     let types = FALLBACK_ISSUE_TYPES;
     try {
       const listed = await api.listJiraIssueTypes();
@@ -313,21 +450,45 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     issueTypes.set(types);
 
     draftAgentOpen.set(false);
+    draftBeforeAgent.set(null);
+    draftGeneration += 1;
     draft.set({
       issueType: prefill.issueType && types.includes(prefill.issueType) ? prefill.issueType : types[0],
       summary: prefill.summary ?? "",
       description: prefill.description ?? "",
       noteId: prefill.noteId ?? null,
     });
+    draftVisible.set(true);
+    return true;
+  }
+
+  /** Hides the saved unfinished ticket while browsing. */
+  function hideDraft(): void {
+    draftVisible.set(false);
+    draftAgentOpen.set(false);
   }
 
   function cancelDraft(): void {
+    draftGeneration += 1;
+    draftBeforeAgent.set(null);
     draft.set(null);
+    hideDraft();
+    error.set(null);
   }
 
   /** Records what the user typed into the new-ticket form. */
   function editDraft(fields: JiraDraftFields): void {
+    draftBeforeAgent.set(null);
     draft.update((current) => (current ? { ...current, ...fields } : current));
+  }
+
+  /** Restores the form as it stood immediately before the last agent rewrite. */
+  function undoDraftRewrite(): void {
+    const previous = get(draftBeforeAgent);
+    if (previous) {
+      draft.set(previous);
+      draftBeforeAgent.set(null);
+    }
   }
 
   /**
@@ -336,7 +497,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
    * when the agent is busy, fails, or Jira is not set up.
    */
   async function draftFromNote(note: JiraDraftSourceNote): Promise<void> {
-    await startDraft({ summary: note.title, description: note.text, noteId: note.id });
+    if (!await startDraft({ summary: note.title, description: note.text, noteId: note.id })) {
+      return;
+    }
     if (!get(status)?.configured || get(agentBusy)) {
       return;
     }
@@ -354,7 +517,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   // The agent is shown the form in place of the ticket behind it.
   function draftContext(): JiraDraftContext | null {
     const current = get(draft);
-    if (!current) {
+    if (!current || !get(draftVisible)) {
       return null;
     }
     return {
@@ -373,7 +536,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
     try {
       const created = await api.createJiraIssue(nextDraft);
+      draftBeforeAgent.set(null);
       draft.set(null);
+      hideDraft();
       issueRequestSequence += 1;
       selectedIssue.set(created);
       // The new ticket stays open even when the filter does not match it or
@@ -419,12 +584,36 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     return changeSelected((key) => api.transitionJiraIssue(key, transitionId), "Could not move the ticket.");
   }
 
-  function commentOnSelected(text: string): Promise<boolean> {
-    return changeSelected((key) => api.addJiraComment(key, text), "Could not add the comment.");
+  function rememberWriting(key: string, writing: JiraTicketWriting): void {
+    ticketWriting.update((current) => {
+      const next = { ...current };
+      if (!writing.editing && !writing.comment) {
+        delete next[key];
+      } else {
+        next[key] = writing;
+      }
+      return next;
+    });
   }
 
-  function saveSelectedEdit(edit: JiraIssueEdit): Promise<boolean> {
-    return changeSelected((key) => api.updateJiraIssue(key, edit), "Could not save the ticket.");
+  async function commentOnSelected(text: string): Promise<boolean> {
+    const key = get(selectedIssue)?.key;
+    const success = await changeSelected((key) => api.addJiraComment(key, text), "Could not add the comment.");
+    const writing = key ? get(ticketWriting)[key] : undefined;
+    if (success && key && writing && writing.comment.trim() === text.trim()) {
+      rememberWriting(key, { ...writing, comment: "" });
+    }
+    return success;
+  }
+
+  async function saveSelectedEdit(edit: JiraIssueEdit): Promise<boolean> {
+    const key = get(selectedIssue)?.key;
+    const success = await changeSelected((key) => api.updateJiraIssue(key, edit), "Could not save the ticket.");
+    const writing = key ? get(ticketWriting)[key] : undefined;
+    if (success && key && writing) {
+      rememberWriting(key, { ...writing, editing: false });
+    }
+    return success;
   }
 
   function assignSelectedToMe(): Promise<boolean> {
@@ -543,6 +732,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
       messages.update((current) => [...current, optimisticUserMessage(threadId as string, trimmed)]);
       const openDraft = draftContext();
+      agentDraftGeneration = openDraft ? draftGeneration : null;
       const focusIssueKey = openDraft ? null : (get(selectedIssue)?.key ?? null);
       const updated = await api.sendJiraChatMessage(threadId, trimmed, focusIssueKey, openDraft);
       if (get(activeThreadId) === threadId) {
@@ -589,7 +779,6 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   /** Applies a change the agent made to what the Jira view shows. */
   async function applyViewAction(action: JiraViewAction): Promise<void> {
     if (action.kind === "openIssue") {
-      draft.set(null);
       await selectIssue(action.issueKey);
       return;
     }
@@ -605,11 +794,15 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
   // A draft closed while the agent worked stays closed.
   function rewriteDraft(rewrite: Extract<JiraViewAction, { kind: "setDraft" }>): void {
+    if (!get(draftVisible) || (get(agentBusy) && agentDraftGeneration !== draftGeneration)) {
+      return;
+    }
     const offered = get(issueTypes);
     draft.update((current) => {
       if (!current) {
         return current;
       }
+      draftBeforeAgent.set(current);
       return {
         ...current,
         issueType: rewrite.issueType && offered.includes(rewrite.issueType) ? rewrite.issueType : current.issueType,
@@ -646,13 +839,22 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   return {
+    writingError,
+    writingSaving,
+    writingReady,
+    retryWriting,
     status,
     activeFilter,
     agentFilter,
     issues,
     selectedIssue,
+    selectedWriting,
+    rememberWriting,
     issueTypes,
     draft,
+    draftVisible,
+    draftBeforeAgent,
+    undoDraftRewrite,
     draftAgentOpen,
     loadingIssues,
     loadingIssue,
@@ -675,6 +877,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     selectIssue,
     startDraft,
     cancelDraft,
+    hideDraft,
     editDraft,
     draftFromNote,
     closeDraftAgent,

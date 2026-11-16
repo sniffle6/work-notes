@@ -866,6 +866,7 @@ mod tests {
             thread_id: "t".to_string(),
             role,
             content: content.to_string(),
+            review: None,
             payload: None,
             status: None,
             result: None,

@@ -34,6 +34,33 @@ function thread(overrides: Partial<JiraChatThread> = {}): JiraChatThread {
 const baseProps = { threads: [thread()], activeThreadId: "thread-1", messages: [] as JiraChatMessage[] };
 
 describe("JiraChat", () => {
+  it("shows stored field comparisons and labels an unfinished approval as applying", () => {
+    render(JiraChat, { props: { ...baseProps, messages: [message({
+      role: "proposal", status: "approved", result: null,
+      review: { title: "Update AB-7", capturedAt: "2026-11-16T12:00:00Z", warning: null,
+        fields: [{ label: "Summary", before: "Old title", after: "New title" }] },
+    })] } });
+    const card = screen.getByRole("group", { name: "Proposed change" });
+    expect(within(card).getByText("Old title")).toBeTruthy();
+    expect(within(card).getByText("New title")).toBeTruthy();
+    expect(within(card).getByText("Applying")).toBeTruthy();
+    expect(within(card).queryByText("Applied")).toBeNull();
+  });
+
+  it("shows unavailable values and empty replacements without hiding the approval warning", () => {
+    render(JiraChat, { props: { ...baseProps, messages: [message({
+      role: "proposal", status: "pending", review: {
+        title: "Clear description on AB-7", capturedAt: "today",
+        warning: "Previous values could not be loaded. Check Jira before approving.",
+        fields: [{ label: "Description", before: null, after: "" }],
+      },
+    })] } });
+    expect(screen.getByText("Empty")).toBeTruthy();
+    expect(screen.getByText(/Previous values could not be loaded/)).toBeTruthy();
+    expect(screen.queryByText("Before")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+
   it("sends the trimmed message on Enter and clears the box", async () => {
     const send = vi.fn();
     render(JiraChat, { props: baseProps, events: { send } });

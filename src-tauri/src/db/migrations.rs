@@ -19,6 +19,11 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           completion_note TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS jira_writing (
+          scope TEXT PRIMARY KEY,
+          content TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS card_notes (
           id TEXT PRIMARY KEY,
           note_id TEXT NOT NULL,

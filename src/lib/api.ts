@@ -27,6 +27,7 @@ import type {
   JiraIssueSummary,
   JiraRelatedIssue,
   JiraStatus,
+  JiraWriting,
   NoteDetail,
   NoteListItem,
   ParseStatus,
@@ -455,6 +456,14 @@ export async function getJiraStatus(): Promise<JiraStatus> {
   };
 }
 
+export async function loadJiraWriting(scope: string): Promise<JiraWriting> {
+  return invokeCommand<JiraWriting>("load_jira_writing", { scope });
+}
+
+export async function saveJiraWriting(scope: string, writing: JiraWriting): Promise<void> {
+  await invokeCommand<void>("save_jira_writing", { scope, writing });
+}
+
 export async function testJiraConnection(): Promise<JiraAccount> {
   const record = asRecord(await invokeCommand<unknown>("test_jira_connection"));
   return {
@@ -790,7 +799,28 @@ function normalizeJiraChatMessage(value: unknown): JiraChatMessage {
     content: getString(record, "content") ?? "",
     status: JIRA_CHAT_STATUSES.find((candidate) => candidate === status) ?? null,
     result: getNullableString(record, "result"),
+    review: normalizeProposalReview(record.review),
     createdAt: getString(record, "createdAt") ?? fallbackNow,
+  };
+}
+
+function normalizeProposalReview(value: unknown): JiraChatMessage["review"] {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const review = asRecord(value);
+  return {
+    title: getString(review, "title") ?? "Proposed change",
+    capturedAt: getString(review, "capturedAt") ?? "",
+    warning: getNullableString(review, "warning"),
+    fields: getArray(review, "fields").map((value) => {
+      const field = asRecord(value);
+      return {
+        label: getString(field, "label") ?? "Field",
+        before: getNullableString(field, "before"),
+        after: getString(field, "after") ?? "",
+      };
+    }),
   };
 }
 
