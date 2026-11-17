@@ -75,7 +75,7 @@ An edit can stay unfinished for days, so saving checks that it will not overwrit
 - After a conflict the edit stays open with the user's text, and Jira's current version is loaded beside it. "Save anyway" keeps the user's changes, gives untouched fields Jira's current text, and saves against Jira's current version.
 - An edit kept from before this check has no recorded start, so its first save reports a conflict for every field it writes, and "Save anyway" keeps all of the user's text.
 - Jira has no conditional update, so a change made in Jira between the check and the write, a fraction of a second, can still be overwritten.
-- Agent proposals do not use this check. Their review shows previous values captured when proposed.
+- Approving an agent proposal runs the same kind of check against the previous values its review captured: summary, description, status, or assignee. If Jira changed a field the proposal writes since then, the proposal fails, nothing is written, and the result asks the user to have the agent propose it again. A status already at the target, an assignee already cleared, or text Jira already holds is not a change. Fields the review could not capture are not checked; the review warned the user to check Jira before approving.
 
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 
@@ -191,7 +191,7 @@ View calls change what the app shows and never change Jira:
 - A proposal reaches Jira only when the user approves it in the chat. Rejecting sends nothing.
 - An approved proposal without a recorded result shows "Applying", not "Applied". A failed proposal shows the error and says it will not retry. A process interrupted after claiming a proposal may leave it in "Applying"; check Jira before requesting another change.
 - A proposal is claimed in one SQL statement before Jira is called, so it can run at most once.
-- A Jira failure on an approved proposal is recorded on the proposal as `failed`. The proposal is not retried.
+- A Jira failure on an approved proposal is recorded on the proposal as `failed`. The proposal is not retried. So is a field Jira changed since the proposal's review captured it (see Edit Conflicts).
 - A tool call the app cannot accept is reported back to the agent as a failed lookup.
 - One user message allows at most 6 agent turns. Then the app stops the run and says so.
 - One conversation has at most one agent run at a time.
