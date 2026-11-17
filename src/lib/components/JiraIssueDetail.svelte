@@ -117,8 +117,8 @@
 
   const summaryChanged = $derived(Boolean(issue) && summaryDraft.trim() !== issue?.summary);
   const descriptionChanged = $derived(Boolean(issue) && descriptionDraft !== issue?.description);
-  // Saving a plain-text description replaces Jira tables, panels, and inline
-  // formatting, so that needs an explicit yes.
+  // Saving replaces formatting the Markdown editor cannot write, such as panels,
+  // mentions, and colours, so that needs an explicit yes.
   const needsFlattenConfirmation = $derived(
     descriptionChanged && issue !== null && !issue.descriptionEditableLosslessly,
   );
@@ -413,14 +413,14 @@
           <label>
             <span>Description</span>
             <textarea bind:value={descriptionDraft} aria-label="Description" rows="14" disabled={saving}></textarea>
-            <small>Blank lines separate paragraphs. Start lines with "- " for bullets or "## " for headings.</small>
+            <small>Markdown: blank lines separate paragraphs, "- " starts a bullet, "## " a heading, plus **bold**, _italic_, `code`, and [links](https://…).</small>
           </label>
           {#if needsFlattenConfirmation}
             <label class="flatten-warning">
               <input type="checkbox" bind:checked={flattenAcknowledged} disabled={saving} />
               <span>
-                Replace the formatted description with this plain text. Tables, panels, and inline formatting
-                from Jira will be lost.
+                Replace the formatted description with this text. Formatting the editor cannot write, such as
+                panels, mentions, colours, and merged table cells, will be lost.
               </span>
             </label>
           {/if}

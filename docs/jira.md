@@ -97,11 +97,13 @@ The ticket detail lists a ticket's attachments. The user downloads one or all of
 
 ## Descriptions And Comments
 
-Jira stores rich text as ADF. The app shows it as Markdown-flavored text and writes plain text back.
+Jira stores rich text as ADF. The app shows it as Markdown and writes Markdown back. `src-tauri/src/jira/adf.rs` converts in both directions, and `src/lib/markdown.ts` renders the same syntax in the ticket view.
 
-Writing supports paragraphs, `#` headings, `-` bullets, numbered lists, fenced code blocks, and `---` rules. Tables, panels, mentions, nested lists, and inline marks such as bold or code cannot be written back.
+Writing supports paragraphs, `#` headings, `-` bullets and numbered lists (nested by indentation, numbering from any start), pipe tables with an optional `| --- |` header row, fenced code blocks, and `---` rules. Inline it supports `**bold**`, `_italic_`, `~~strikethrough~~`, `` `code` ``, and `[label](url)` links to `http`, `https`, and `mailto` targets. A backslash keeps a markup character literal; reading escapes plain-text characters that would otherwise be read as markup, such as the underscores in `_leading`, but leaves ordinary punctuation alone. `\|` is a literal pipe inside a table cell.
 
-`descriptionEditableLosslessly` on a ticket is `false` when its description uses anything the editor cannot write. The edit form then requires an explicit confirmation before saving a changed description, because the save replaces the formatted description with plain text.
+Panels, mentions, emoji, smart links, underline, colours, alignment, merged or sized table cells, blockquotes, and list items with more than one paragraph cannot be written back. Reading still shows their text.
+
+`descriptionEditableLosslessly` on a ticket is `false` when converting its description to Markdown and back would not rebuild it. The check ignores differences Jira does not display: node ids, how text is split into nodes, the order of marks, whitespace at line ends, empty paragraphs, and default table layout attributes. When it is `false`, the edit form requires an explicit confirmation before saving a changed description, because the save replaces formatting the editor cannot write.
 
 ## Agent Contract
 

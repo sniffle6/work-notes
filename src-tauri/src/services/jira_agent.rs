@@ -535,7 +535,7 @@ fn proposal_review(call: &JiraToolCall, jira: &dyn JiraOps) -> ProposalReview {
                     .as_ref()
                     .is_some_and(|i| !i.description_editable_losslessly)
                 {
-                    review.warning = Some("This replaces Jira's rich description with plain text and may remove formatting.".to_string());
+                    review.warning = Some("This replaces the description with Markdown text and removes formatting it cannot hold, such as panels or mentions.".to_string());
                 }
             }
         }
