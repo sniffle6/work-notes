@@ -134,6 +134,17 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   let listRequestSequence = 0;
   // The ticket being opened, so a list arriving meanwhile does not open another.
   let openingIssueKey: string | null = null;
+  // Tickets changed from this view, with the change count when each was made. A list
+  // requested before a change shows that ticket as changed, not as Jira listed it then.
+  let changeCount = 0;
+  const changedTickets = new Map<string, { summary: JiraIssueSummary; change: number }>();
+
+  function withLaterChanges(items: JiraIssueSummary[], changesBefore: number): JiraIssueSummary[] {
+    return items.map((item) => {
+      const changed = changedTickets.get(item.key);
+      return changed && changed.change > changesBefore ? changed.summary : item;
+    });
+  }
 
   function showIssues(items: JiraIssueSummary[], jql: string | null, savedAt: string | null = null): void {
     issues.set(items);
@@ -220,6 +231,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
         if (writingScope !== null) {
           showIssue(null);
           showIssues([], null);
+          changedTickets.clear();
         }
         draft.set(saved.draft);
         draftVisible.set(false);
@@ -415,6 +427,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
 
     const request = ++listRequestSequence;
+    const changesBefore = changeCount;
     loadingIssues.set(true);
     error.set(null);
     const current = trackSettled(api.listJiraIssues(filter.jql));
@@ -429,7 +442,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
 
     try {
-      const items = await current.promise;
+      const items = withLaterChanges(await current.promise, changesBefore);
       if (request !== listRequestSequence) {
         return;
       }
@@ -450,6 +463,10 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   async function keepOrOpenFirst(items: JiraIssueSummary[], pinnedKey: string | null): Promise<void> {
     const selectedKey = openingIssueKey ?? get(selectedIssue)?.key;
     if (selectedKey && (selectedKey === pinnedKey || items.some((item) => item.key === selectedKey))) {
+      // A saved copy left on screen by a failed load is asked for again.
+      if (!openingIssueKey && get(issueSavedAt)) {
+        await loadIssue(selectedKey);
+      }
       return;
     }
     if (items.length === 0) {
@@ -467,6 +484,10 @@ export function createJiraStore(api: JiraApi = defaultApi) {
    */
   async function selectIssue(key: string): Promise<void> {
     hideDraft();
+    await loadIssue(key);
+  }
+
+  async function loadIssue(key: string): Promise<void> {
     const request = ++issueRequestSequence;
     openingIssueKey = key;
     loadingIssue.set(true);
@@ -487,6 +508,10 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       }
     } catch (unknownError) {
       if (request === issueRequestSequence) {
+        // Jira no longer returns the ticket, so no copy of it may stay on screen.
+        if (isJiraNotFound(unknownError) && get(selectedIssue)?.key === key) {
+          showIssue(null);
+        }
         error.set(errorMessage(unknownError, "Could not load the ticket."));
       }
     } finally {
@@ -650,8 +675,16 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
     try {
       const updated = await change(key);
+      changeCount += 1;
+      changedTickets.set(key, { summary: toSummary(updated), change: changeCount });
+      // A load of this ticket that began before the change would show it as it was.
+      if (openingIssueKey === null || openingIssueKey === key) {
+        issueRequestSequence += 1;
+        openingIssueKey = null;
+        loadingIssue.set(false);
+      }
       if (get(selectedIssue)?.key === key) {
-        selectedIssue.set(updated);
+        showIssue(updated);
       }
       issues.update((items) => items.map((item) => (item.key === key ? toSummary(updated) : item)));
       return true;
@@ -1086,6 +1119,11 @@ function toSummary(issue: JiraIssueDetail): JiraIssueSummary {
     labels: issue.labels,
     url: issue.url,
   };
+}
+
+/** True for the error the backend reports when Jira answers 404: the ticket is gone or hidden. */
+function isJiraNotFound(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object" && (error as { code?: unknown }).code === "jira_not_found";
 }
 
 /** Wraps a promise so callers can check whether it has resolved yet. */

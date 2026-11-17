@@ -58,7 +58,10 @@ Every ticket list and ticket Jira returns is saved to local SQLite, so the view 
 - Opening a filter shows its saved list, if any, while Jira is asked for the current one. Opening a ticket does the same. The header says "Refreshing tickets" meanwhile.
 - Jira's answer replaces the saved copy. A saved copy that arrives after Jira's answer is ignored, and refreshing a list or ticket already on screen never swaps it for a saved copy.
 - A saved ticket is labelled "Saved copy". Moving, assigning, editing, and commenting wait until Jira sends the current ticket, so no change is made from out-of-date fields. Typing a comment or an edit still works.
-- If Jira cannot be reached, the saved copies stay on screen with the error, and the list header says "saved copy".
+- If Jira cannot be reached, the saved copies stay on screen with the error, and the list header says "saved copy". Refresh asks Jira again for the open ticket as well as the list.
+- If Jira answers 404 for a ticket (deleted, or the account lost access), its saved copy is removed and leaves the screen. The backend reports this as `jira_not_found`.
+- Each copy records when Jira was asked for it. An answer to an earlier request never replaces a copy from a later one, so requests that finish out of order cannot save an older ticket over a newer one. The site and account are read before Jira is asked, so changing the site during a request cannot file the answer under the new site.
+- A change made in this view wins over loads that began before it: a ticket reload or list that started earlier cannot put the old status, summary, or fields back on screen.
 - Copies belong to the Jira site and account email, so changing either never shows another's tickets. The newest 50 lists and 500 tickets are kept per site and account. A copy that cannot be read is treated as missing.
 - Saved copies hold ticket content only. The API token is never saved.
 

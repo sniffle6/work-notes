@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
@@ -174,7 +175,9 @@ pub async fn test_jira_connection(
 }
 
 /// Saved copies for the configured Jira site and account, or `None` when
-/// settings cannot be read. Then nothing is saved or shown.
+/// settings cannot be read. Then nothing is saved or shown. Callers take this
+/// before asking Jira, so an answer is never filed under a site chosen while
+/// the request was running.
 fn saved_copies(state: &AppState) -> Option<JiraSavedCopies> {
     let settings = state.settings.get().ok()?;
     let scope = saved_copy_scope(&settings, &JiraEnvironment::from_process());
@@ -184,12 +187,28 @@ fn saved_copies(state: &AppState) -> Option<JiraSavedCopies> {
     ))
 }
 
-/// Saves a ticket Jira just returned, then hands it back.
-fn remember_issue(state: &AppState, issue: JiraIssueDetail) -> JiraIssueDetail {
-    if let Some(saved) = saved_copies(state) {
-        saved.remember_issue(&issue);
+/// Asks Jira for a ticket and keeps `saved` in step with the answer: a
+/// returned ticket is saved, and one Jira no longer returns is forgotten.
+fn fetch_issue(
+    client: &impl JiraOps,
+    key: &IssueKey,
+    saved: Option<&JiraSavedCopies>,
+) -> Result<JiraIssueDetail, CommandError> {
+    let fetched_at = Utc::now();
+    match client.get_issue(key) {
+        Ok(issue) => {
+            if let Some(saved) = saved {
+                saved.remember_issue(&issue, fetched_at);
+            }
+            Ok(issue)
+        }
+        Err(error) => {
+            if let (JiraError::NotFound { .. }, Some(saved)) = (&error, saved) {
+                saved.forget_issue(key);
+            }
+            Err(error.into())
+        }
     }
-    issue
 }
 
 #[tauri::command]
@@ -199,9 +218,11 @@ pub async fn list_jira_issues(
 ) -> Result<Vec<JiraIssueSummary>, CommandError> {
     let state = state.inner().clone();
     run_blocking(move || {
+        let saved = saved_copies(&state);
+        let fetched_at = Utc::now();
         let issues = connect(&state.settings)?.search(&jql, DEFAULT_SEARCH_LIMIT)?;
-        if let Some(saved) = saved_copies(&state) {
-            saved.remember_list(&jql, &issues);
+        if let Some(saved) = saved {
+            saved.remember_list(&jql, &issues, fetched_at);
         }
         Ok(issues)
     })
@@ -216,8 +237,8 @@ pub async fn get_jira_issue(
     let key = IssueKey::parse(&key)?;
     let state = state.inner().clone();
     run_blocking(move || {
-        let issue = connect(&state.settings)?.get_issue(&key)?;
-        Ok(remember_issue(&state, issue))
+        let saved = saved_copies(&state);
+        fetch_issue(&connect(&state.settings)?, &key, saved.as_ref())
     })
     .await
 }
@@ -286,6 +307,7 @@ pub async fn create_jira_issue(
             .into());
         }
 
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         let key = client.create_issue(&NewIssue {
             project_key,
@@ -306,7 +328,7 @@ pub async fn create_jira_issue(
                     )
                 })?;
         }
-        Ok(remember_issue(&state, client.get_issue(&key)?))
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -320,6 +342,7 @@ pub async fn update_jira_issue(
     let key = IssueKey::parse(&key)?;
     let state = state.inner().clone();
     run_blocking(move || {
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         client.update_issue(
             &key,
@@ -328,7 +351,7 @@ pub async fn update_jira_issue(
                 description: input.description,
             },
         )?;
-        Ok(remember_issue(&state, client.get_issue(&key)?))
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -342,9 +365,10 @@ pub async fn transition_jira_issue(
     let key = IssueKey::parse(&key)?;
     let state = state.inner().clone();
     run_blocking(move || {
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         client.apply_transition(&key, &transition_id)?;
-        Ok(remember_issue(&state, client.get_issue(&key)?))
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -358,9 +382,10 @@ pub async fn add_jira_comment(
     let key = IssueKey::parse(&key)?;
     let state = state.inner().clone();
     run_blocking(move || {
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         client.add_comment(&key, &text)?;
-        Ok(remember_issue(&state, client.get_issue(&key)?))
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -373,9 +398,10 @@ pub async fn assign_jira_issue_to_me(
     let key = IssueKey::parse(&key)?;
     let state = state.inner().clone();
     run_blocking(move || {
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         client.assign(&key, Assignee::Me)?;
-        Ok(remember_issue(&state, client.get_issue(&key)?))
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }

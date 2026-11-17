@@ -75,6 +75,7 @@ impl From<JiraError> for CommandError {
         let code = match error {
             JiraError::NotConfigured(_) => "jira_not_configured",
             JiraError::InvalidInput(_) => "invalid_input",
+            JiraError::NotFound { .. } => "jira_not_found",
             _ => "jira_error",
         };
         Self::new(code, error.to_string())
@@ -967,5 +968,16 @@ mod tests {
         });
 
         assert_eq!(error.code, "not_found");
+    }
+
+    #[test]
+    fn a_jira_404_has_its_own_code_so_the_view_can_drop_saved_copies() {
+        let missing = CommandError::from(crate::jira::JiraError::NotFound {
+            path: "issue/AB-7".to_string(),
+        });
+        let offline = CommandError::from(crate::jira::JiraError::Network("timed out".to_string()));
+
+        assert_eq!(missing.code, "jira_not_found");
+        assert_eq!(offline.code, "jira_error");
     }
 }

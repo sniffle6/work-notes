@@ -1287,3 +1287,82 @@ describe("searching Jira beyond the loaded list", () => {
     expect(get(store.searchFilter)).toBeNull();
   });
 });
+describe("saved copies never drift from Jira", () => {
+  const SAVED_AT = "2026-11-16T09:30:00.000Z";
+
+  it("drops a saved ticket that Jira no longer returns", async () => {
+    const api = fakeApi({
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.getJiraIssue).mockRejectedValueOnce({ code: "jira_not_found", message: "Jira returned 404 for issue/AB-9" });
+
+    await store.selectIssue("AB-9");
+
+    expect(get(store.selectedIssue)).toBeNull();
+    expect(get(store.issueSavedAt)).toBeNull();
+    expect(get(store.error)).toBe("Jira returned 404 for issue/AB-9");
+  });
+
+  it("keeps a saved ticket on screen when Jira is only unreachable", async () => {
+    const api = fakeApi({
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.getJiraIssue).mockRejectedValueOnce({ code: "jira_error", message: "could not reach Jira" });
+
+    await store.selectIssue("AB-9");
+
+    expect(get(store.selectedIssue)?.key).toBe("AB-9");
+    expect(get(store.issueSavedAt)).toBe(SAVED_AT);
+  });
+
+  it("refreshing asks Jira again for an open ticket that is still a saved copy", async () => {
+    const api = fakeApi({
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key, summary: "Saved" }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+    vi.mocked(api.getJiraIssue).mockRejectedValueOnce(new Error("could not reach Jira"));
+    await store.open();
+    expect(get(store.issueSavedAt)).toBe(SAVED_AT);
+
+    await store.refreshIssues();
+
+    expect(get(store.selectedIssue)?.summary).toBe("Printer jams on reboot");
+    expect(get(store.issueSavedAt)).toBeNull();
+  });
+
+  it("does not let a reload that started before a change replace the changed ticket", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    const reload = deferred<JiraIssueDetail>();
+    vi.mocked(api.getJiraIssue).mockReturnValueOnce(reload.promise);
+
+    const reloading = store.selectIssue("AB-7");
+    expect(await store.transitionSelected("11")).toBe(true);
+    reload.resolve(detail({ status: "To Do" }));
+    await reloading;
+
+    expect(get(store.selectedIssue)?.status).toBe("In Progress");
+    expect(get(store.loadingIssue)).toBe(false);
+  });
+
+  it("does not let a list that started loading before a change undo that change in its row", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    const list = deferred<JiraIssueSummary[]>();
+    vi.mocked(api.listJiraIssues).mockReturnValueOnce(list.promise);
+
+    const refreshing = store.refreshIssues();
+    expect(await store.transitionSelected("11")).toBe(true);
+    list.resolve([issue({ status: "To Do" }), issue({ key: "AB-8", summary: "Second" })]);
+    await refreshing;
+
+    expect(get(store.issues).find((item) => item.key === "AB-7")?.status).toBe("In Progress");
+    expect(get(store.issues).find((item) => item.key === "AB-8")?.summary).toBe("Second");
+  });
+});

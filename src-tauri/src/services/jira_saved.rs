@@ -45,21 +45,31 @@ impl JiraSavedCopies {
         Self { repository, scope }
     }
 
-    /// Saves the tickets Jira listed for `jql`. Best effort: the caller already
-    /// holds Jira's answer, so a failed save is skipped.
-    pub fn remember_list(&self, jql: &str, issues: &[JiraIssueSummary]) {
+    /// Saves the tickets Jira listed for `jql` when asked at `fetched_at`. An
+    /// answer fetched earlier than the saved one is ignored. Best effort: the
+    /// caller already holds Jira's answer, so a failed save is skipped.
+    pub fn remember_list(&self, jql: &str, issues: &[JiraIssueSummary], fetched_at: DateTime<Utc>) {
         if let Ok(content) = serde_json::to_string(issues) {
-            let _ = self.repository.save_list(&self.scope, jql, &content);
+            let _ = self
+                .repository
+                .save_list(&self.scope, jql, &content, fetched_at);
         }
     }
 
-    /// Saves a ticket Jira returned. Best effort, like [`Self::remember_list`].
-    pub fn remember_issue(&self, issue: &JiraIssueDetail) {
+    /// Saves a ticket Jira returned when asked at `fetched_at`. Best effort,
+    /// like [`Self::remember_list`].
+    pub fn remember_issue(&self, issue: &JiraIssueDetail, fetched_at: DateTime<Utc>) {
         if let Ok(content) = serde_json::to_string(issue) {
             let _ = self
                 .repository
-                .save_issue(&self.scope, &issue.summary.key, &content);
+                .save_issue(&self.scope, &issue.summary.key, &content, fetched_at);
         }
+    }
+
+    /// Drops the saved copy of a ticket Jira no longer returns, because it was
+    /// deleted or the account lost access. Best effort.
+    pub fn forget_issue(&self, key: &IssueKey) {
+        let _ = self.repository.forget_issue(&self.scope, key);
     }
 
     /// The tickets last listed for `jql`. A copy that cannot be read is treated
@@ -142,8 +152,8 @@ mod tests {
         let issues = vec![summary("AB-7"), summary("AB-8")];
         let issue = detail("AB-7");
 
-        saved.remember_list("project = AB", &issues);
-        saved.remember_issue(&issue);
+        saved.remember_list("project = AB", &issues, chrono::Utc::now());
+        saved.remember_issue(&issue, chrono::Utc::now());
 
         assert_eq!(
             saved.saved_list("project = AB").unwrap().unwrap().content,
@@ -164,7 +174,7 @@ mod tests {
     fn an_unreadable_copy_is_treated_as_missing() {
         let repository = JiraIssueCacheRepository::new(Database::in_memory().unwrap());
         repository
-            .save_list("scope", "project = AB", "not json")
+            .save_list("scope", "project = AB", "not json", chrono::Utc::now())
             .unwrap();
 
         assert_eq!(
