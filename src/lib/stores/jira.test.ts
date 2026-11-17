@@ -1240,3 +1240,50 @@ describe("saved copies", () => {
     expect(get(store.issueSavedAt)).toBeNull();
   });
 });
+describe("searching Jira beyond the loaded list", () => {
+  it("lists Jira's text matches as a temporary filter and drops it again", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+
+    await store.searchJira("printer jam");
+
+    const search = get(store.searchFilter);
+    expect(search).toEqual({ name: "Search: printer jam", jql: 'project = AB AND text ~ "printer jam" ORDER BY updated DESC' });
+    expect(get(store.activeFilter)).toBe(search);
+    expect(api.listJiraIssues).toHaveBeenLastCalledWith(search?.jql);
+
+    await store.open();
+    expect(get(store.activeFilter)).toBe(search);
+
+    await store.clearSearchFilter();
+    expect(get(store.searchFilter)).toBeNull();
+    expect(get(store.activeFilter)?.name).toBe("My open tickets");
+  });
+
+  it("opens a ticket typed by key without changing the list", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.listJiraIssues).mockClear();
+
+    await store.searchJira(" ab-42 ");
+
+    expect(api.getJiraIssue).toHaveBeenLastCalledWith("AB-42");
+    expect(get(store.selectedIssue)?.key).toBe("AB-42");
+    expect(api.listJiraIssues).not.toHaveBeenCalled();
+    expect(get(store.searchFilter)).toBeNull();
+  });
+
+  it("does nothing for a query with no searchable words", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.listJiraIssues).mockClear();
+
+    await store.searchJira('"" ()');
+
+    expect(api.listJiraIssues).not.toHaveBeenCalled();
+    expect(get(store.searchFilter)).toBeNull();
+  });
+});

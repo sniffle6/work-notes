@@ -26,6 +26,7 @@ import {
   transitionJiraIssue,
   updateJiraIssue,
 } from "$lib/api";
+import { issueKeyInQuery, jiraTextSearch } from "$lib/jira-list";
 import { buildTicketPrompt } from "$lib/jira-prompt";
 import type {
   JiraAttachmentDownload,
@@ -120,6 +121,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const activeFilter = writable<JiraFilter | null>(null);
   // The ticket search the agent last put in the list, offered beside the saved filters.
   const agentFilter = writable<JiraFilter | null>(null);
+  // The user's last search of Jira itself, offered beside the saved filters.
+  const searchFilter = writable<JiraFilter | null>(null);
   const issues = writable<JiraIssueSummary[]>([]);
   const selectedIssue = writable<JiraIssueDetail | null>(null);
   /** When the shown list was saved, while it is a saved copy instead of Jira's current answer. */
@@ -375,7 +378,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       }
 
       const current = get(activeFilter);
-      if (!current || current !== get(agentFilter)) {
+      if (!current || (current !== get(agentFilter) && current !== get(searchFilter))) {
         activeFilter.set(
           nextStatus.filters.find((candidate) => candidate.name === current?.name) ??
             nextStatus.filters[0] ??
@@ -947,6 +950,36 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     await refreshIssues();
   }
 
+  /**
+   * Looks beyond the loaded list: opens the ticket when the query is a key,
+   * otherwise lists Jira's text matches as a temporary filter.
+   */
+  async function searchJira(query: string): Promise<void> {
+    const key = issueKeyInQuery(query);
+    if (key) {
+      await selectIssue(key);
+      return;
+    }
+    const search = jiraTextSearch(query, get(status)?.projectKey ?? "");
+    if (!search) {
+      return;
+    }
+    searchFilter.set(search);
+    await selectFilter(search);
+  }
+
+  /** Drops the Jira search and returns to the first saved filter when it was shown. */
+  async function clearSearchFilter(): Promise<void> {
+    const cleared = get(searchFilter);
+    searchFilter.set(null);
+    if (!cleared || get(activeFilter) !== cleared) {
+      return;
+    }
+
+    activeFilter.set(get(status)?.filters[0] ?? null);
+    await refreshIssues();
+  }
+
   /** Refreshes the open conversation when the backend stored new messages. */
   async function handleThreadUpdated(threadId: string): Promise<void> {
     await refreshPendingProposals();
@@ -976,6 +1009,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     status,
     activeFilter,
     agentFilter,
+    searchFilter,
+    searchJira,
+    clearSearchFilter,
     issues,
     issuesSavedAt,
     selectedIssue,

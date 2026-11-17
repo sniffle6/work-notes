@@ -49,7 +49,7 @@ Searches use `POST search/jql` with page tokens and return at most 200 tickets p
 
 ## Ticket List And Agent Prompt
 
-The list groups tickets by status in workflow order: to do, in progress, done. The search box narrows the loaded tickets only; it does not query Jira.
+The list groups tickets by status in workflow order: to do, in progress, done. The search box narrows the loaded tickets as it is typed in; that never queries Jira. To look beyond them (a filter lists at most 200), press Enter or choose the button under the results. A ticket key such as `AB-12` opens that ticket. Other text searches Jira's ticket text (`text ~`) within the project, newest first, and the results replace the list under a removable "Search:" filter beside the saved ones. The search box is cleared then, because Jira matched descriptions and comments that the box cannot see. Characters Jira's text search reads as operators are dropped from the query.
 
 ### Saved Copies
 
