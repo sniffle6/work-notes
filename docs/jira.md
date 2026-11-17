@@ -29,6 +29,8 @@ The API token is never written to SQLite, never sent to the chat agent, and only
 - `src-tauri/src/services/jira.rs`: setup status, filters, and building a client from settings and environment.
 - `src-tauri/src/services/jira_agent.rs`: the agent loop and proposal approval.
 - `src-tauri/src/services/jira_attachments.rs`: saving a ticket's attachments to disk, including local file naming.
+- `src-tauri/src/services/jira_saved.rs`: saved copies of ticket lists and tickets, and the site-and-account scope they belong to.
+- `src-tauri/src/repositories/jira_cache.rs`: saved copies in SQLite.
 - `src-tauri/src/repositories/jira.rs`: chat threads, chat messages, and note-to-ticket links in SQLite.
 - `src-tauri/src/commands/jira.rs`: Tauri commands and DTOs.
 - `schemas/jira-agent-turn.schema.json`: output schema for one agent turn.
@@ -48,6 +50,17 @@ Searches use `POST search/jql` with page tokens and return at most 200 tickets p
 ## Ticket List And Agent Prompt
 
 The list groups tickets by status in workflow order: to do, in progress, done. The search box narrows the loaded tickets only; it does not query Jira.
+
+### Saved Copies
+
+Every ticket list and ticket Jira returns is saved to local SQLite, so the view can show it at once next time.
+
+- Opening a filter shows its saved list, if any, while Jira is asked for the current one. Opening a ticket does the same. The header says "Refreshing tickets" meanwhile.
+- Jira's answer replaces the saved copy. A saved copy that arrives after Jira's answer is ignored, and refreshing a list or ticket already on screen never swaps it for a saved copy.
+- A saved ticket is labelled "Saved copy". Moving, assigning, editing, and commenting wait until Jira sends the current ticket, so no change is made from out-of-date fields. Typing a comment or an edit still works.
+- If Jira cannot be reached, the saved copies stay on screen with the error, and the list header says "saved copy".
+- Copies belong to the Jira site and account email, so changing either never shows another's tickets. The newest 50 lists and 500 tickets are kept per site and account. A copy that cannot be read is treated as missing.
+- Saved copies hold ticket content only. The API token is never saved.
 
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 

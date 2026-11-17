@@ -116,6 +116,10 @@ export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): 
       return issues;
     case "get_jira_issue":
       return findIssue(args.key);
+    // The preview keeps nothing between runs, so it has no saved copies.
+    case "get_saved_jira_issues":
+    case "get_saved_jira_issue":
+      return null;
     case "list_jira_issue_types":
       return ["Task", "Bug", "Story"];
     case "create_jira_issue": {

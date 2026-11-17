@@ -24,6 +24,22 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
           content TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS jira_saved_lists (
+          scope TEXT NOT NULL,
+          id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          saved_at TEXT NOT NULL,
+          PRIMARY KEY(scope, id)
+        );
+
+        CREATE TABLE IF NOT EXISTS jira_saved_issues (
+          scope TEXT NOT NULL,
+          id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          saved_at TEXT NOT NULL,
+          PRIMARY KEY(scope, id)
+        );
+
         CREATE TABLE IF NOT EXISTS card_notes (
           id TEXT PRIMARY KEY,
           note_id TEXT NOT NULL,

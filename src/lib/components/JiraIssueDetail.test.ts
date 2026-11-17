@@ -422,6 +422,30 @@ describe("JiraIssueDetail", () => {
     expect((screen.getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("labels a saved copy and holds changes until Jira sends the current ticket, while writing stays open", async () => {
+    render(JiraIssueDetail, {
+      props: {
+        issue: issue(),
+        savedAt: "2026-11-16T09:30:00.000Z",
+        loading: true,
+        writing: { editing: false, summary: "", description: "", comment: "Verified" },
+      },
+    });
+
+    expect(screen.getByText("Saved copy · refreshing")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Move to In Progress" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Assign to me" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Add comment" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: "Comment" }) as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("says a saved copy is not current when refreshing has stopped", () => {
+    render(JiraIssueDetail, { props: { issue: issue(), savedAt: "2026-11-16T09:30:00.000Z" } });
+
+    expect(screen.getByText("Saved copy")).toBeTruthy();
+  });
+
   it("dispatches assign to me", async () => {
     const assignToMe = vi.fn();
     render(JiraIssueDetail, { props: { issue: issue() }, events: { assignToMe } });

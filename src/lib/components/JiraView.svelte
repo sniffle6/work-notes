@@ -56,6 +56,8 @@
     draftAgentOpen,
     loadingIssues,
     loadingIssue,
+    issuesSavedAt,
+    issueSavedAt,
     savingIssue,
     error,
     writingError,
@@ -203,9 +205,12 @@
         {:else if $writingSaving}
           Saving drafts…
         {:else if $loadingIssues}
-          Loading tickets
+          {$issues.length > 0 ? "Refreshing tickets" : "Loading tickets"}
         {:else}
           {countLabel}
+          {#if $issuesSavedAt}
+            <span title={`Saved ${new Date($issuesSavedAt).toLocaleString()}. Refresh to ask Jira again.`}>· saved copy</span>
+          {/if}
         {/if}
       </p>
     </div>
@@ -426,6 +431,7 @@
             on:writing={(event) => jira.rememberWriting(event.detail.key, event.detail.writing)}
             loading={$loadingIssue}
             saving={$savingIssue}
+            savedAt={$issueSavedAt}
             attachmentDownload={$attachmentDownload}
             downloadingAttachments={$downloadingAttachments}
             attachmentThumbnails={$attachmentThumbnails}

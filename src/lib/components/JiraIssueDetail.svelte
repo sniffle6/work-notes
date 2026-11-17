@@ -41,6 +41,8 @@
     writing?: JiraTicketWriting;
     loading?: boolean;
     saving?: boolean;
+    /** When the shown ticket was saved, while it is a saved copy. Changes wait for Jira's current ticket. */
+    savedAt?: string | null;
     /** The open ticket's attachments that are already saved to disk. */
     attachmentDownload?: JiraAttachmentDownload | null;
     downloadingAttachments?: boolean;
@@ -59,6 +61,7 @@
     writing,
     loading = false,
     saving = false,
+    savedAt = null,
     attachmentDownload = null,
     downloadingAttachments = false,
     attachmentThumbnails = {},
@@ -122,8 +125,10 @@
   const needsFlattenConfirmation = $derived(
     descriptionChanged && issue !== null && !issue.descriptionEditableLosslessly,
   );
+  // A saved copy may be out of date, so changes wait for Jira's current ticket.
+  const changesLocked = $derived(saving || Boolean(savedAt));
   const canSave = $derived(
-    !saving &&
+    !changesLocked &&
       summaryDraft.trim().length > 0 &&
       (summaryChanged || descriptionChanged) &&
       (!needsFlattenConfirmation || flattenAcknowledged),
@@ -332,7 +337,7 @@
   function addComment(event: SubmitEvent) {
     event.preventDefault();
     const text = commentText.trim();
-    if (!text || saving) {
+    if (!text || changesLocked) {
       return;
     }
     const key = issue?.key;
@@ -376,13 +381,18 @@
           <span class="secondary-meta">{issue.priority}</span>
         {/if}
         <span class="secondary-meta">{issue.assignee ?? "Unassigned"}</span>
+        {#if savedAt}
+          <span class="saved-copy" title={`Saved ${formatDate(savedAt)}. Changes wait until Jira sends the current ticket.`}>
+            {loading ? "Saved copy · refreshing" : "Saved copy"}
+          </span>
+        {/if}
       </div>
       <div class="header-actions">
-        <button class="ghost-button" type="button" aria-label="Assign to me" title="Assign to me" disabled={saving} onclick={() => dispatch("assignToMe")}>
+        <button class="ghost-button" type="button" aria-label="Assign to me" title="Assign to me" disabled={changesLocked} onclick={() => dispatch("assignToMe")}>
           <UserRoundPlus size={14} aria-hidden="true" />
           <span class="action-label">Assign to me</span>
         </button>
-        <button class="ghost-button" type="button" aria-label="Edit" title="Edit ticket" disabled={saving || editing} onclick={startEdit}><Pencil size={14} aria-hidden="true" /><span class="action-label">Edit</span></button>
+        <button class="ghost-button" type="button" aria-label="Edit" title="Edit ticket" disabled={changesLocked || editing} onclick={startEdit}><Pencil size={14} aria-hidden="true" /><span class="action-label">Edit</span></button>
         <button
           class="primary-button copy-button"
           class:failed={copyState === "failed"}
@@ -450,7 +460,7 @@
               <button
                 class="ghost-button"
                 type="button"
-                disabled={saving}
+                disabled={changesLocked}
                 aria-label={`Move to ${transitionLabel(transition)}`}
                 title={transition.name}
                 onclick={() => dispatch("transition", transition.id)}
@@ -581,7 +591,7 @@
             disabled={saving}
           ></textarea>
           <div class="form-actions">
-            <button class="primary-button" type="submit" disabled={saving || !commentText.trim()}>
+            <button class="primary-button" type="submit" disabled={changesLocked || !commentText.trim()}>
               Add comment
             </button>
           </div>
@@ -850,6 +860,11 @@
     min-height: 0;
     padding: 24px 24px 32px;
     overflow: auto;
+  }
+
+  .saved-copy {
+    color: var(--color-text-muted);
+    font-size: 12px;
   }
 
   .detail-scroll.loading {

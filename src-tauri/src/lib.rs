@@ -99,6 +99,8 @@ pub fn run() {
             commands::jira::test_jira_connection,
             commands::jira::list_jira_issues,
             commands::jira::get_jira_issue,
+            commands::jira::get_saved_jira_issues,
+            commands::jira::get_saved_jira_issue,
             commands::jira::list_jira_issue_types,
             commands::jira::create_jira_issue,
             commands::jira::update_jira_issue,

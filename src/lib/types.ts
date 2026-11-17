@@ -214,6 +214,12 @@ export type JiraViewAction =
 
 export type JiraStatusCategory = "new" | "indeterminate" | "done" | "unknown";
 
+/** A copy saved the last time Jira answered, shown until Jira answers again. */
+export type JiraSavedCopy<T> = {
+  value: T;
+  savedAt: string;
+};
+
 export type JiraIssueSummary = {
   key: string;
   summary: string;

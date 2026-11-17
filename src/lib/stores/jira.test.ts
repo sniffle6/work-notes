@@ -101,6 +101,8 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     getJiraStatus: vi.fn(async () => status()),
     listJiraIssues: vi.fn(async () => [issue(), issue({ key: "AB-8", summary: "Second" })]),
     getJiraIssue: vi.fn(async (key: string) => detail({ key })),
+    getSavedJiraIssues: vi.fn(async () => null),
+    getSavedJiraIssue: vi.fn(async () => null),
     listJiraIssueTypes: vi.fn(async () => ["Bug", "Task"]),
     createJiraIssue: vi.fn(async () => detail({ key: "AB-9", summary: "Created" })),
     updateJiraIssue: vi.fn(async (key: string) => detail({ key, summary: "Edited" })),
@@ -1111,5 +1113,130 @@ describe("createJiraStore", () => {
       expect(get(store.draft)).not.toBeNull();
       expect(get(store.selectedIssue)?.key).toBe("AB-8");
     });
+  });
+});
+
+describe("saved copies", () => {
+  const SAVED_AT = "2026-11-16T09:30:00.000Z";
+
+  it("shows the saved ticket list and ticket at once, then Jira's current ones", async () => {
+    const list = deferred<JiraIssueSummary[]>();
+    const ticket = deferred<JiraIssueDetail>();
+    const api = fakeApi({
+      listJiraIssues: vi.fn(() => list.promise),
+      getJiraIssue: vi.fn(() => ticket.promise),
+      getSavedJiraIssues: vi.fn(async () => ({ value: [issue({ key: "AB-5", summary: "Saved" })], savedAt: SAVED_AT })),
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key, summary: "Saved ticket" }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+
+    const opening = store.open();
+    await vi.waitFor(() => expect(get(store.selectedIssue)?.summary).toBe("Saved ticket"));
+    expect(get(store.issues).map((item) => item.key)).toEqual(["AB-5"]);
+    expect(get(store.issuesSavedAt)).toBe(SAVED_AT);
+    expect(get(store.issueSavedAt)).toBe(SAVED_AT);
+    expect(api.getSavedJiraIssues).toHaveBeenCalledWith("assignee = currentUser()");
+
+    list.resolve([issue({ key: "AB-5", summary: "Current" }), issue({ key: "AB-6" })]);
+    ticket.resolve(detail({ key: "AB-5", summary: "Current ticket" }));
+    await opening;
+
+    expect(get(store.issues).map((item) => item.summary)).toEqual(["Current", "Printer jams on reboot"]);
+    expect(get(store.issuesSavedAt)).toBeNull();
+    expect(get(store.selectedIssue)?.summary).toBe("Current ticket");
+    expect(get(store.issueSavedAt)).toBeNull();
+    expect(api.getJiraIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses changes to a saved copy until Jira sends the current ticket", async () => {
+    const ticket = deferred<JiraIssueDetail>();
+    const api = fakeApi({
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.getJiraIssue).mockReturnValueOnce(ticket.promise);
+
+    const selecting = store.selectIssue("AB-8");
+    await vi.waitFor(() => expect(get(store.issueSavedAt)).toBe(SAVED_AT));
+
+    expect(await store.transitionSelected("11")).toBe(false);
+    expect(await store.commentOnSelected("Verified")).toBe(false);
+    expect(api.transitionJiraIssue).not.toHaveBeenCalled();
+    expect(api.addJiraComment).not.toHaveBeenCalled();
+    expect(get(store.error)).toMatch(/saved copy/i);
+
+    ticket.resolve(detail({ key: "AB-8" }));
+    await selecting;
+    expect(await store.transitionSelected("11")).toBe(true);
+    expect(api.transitionJiraIssue).toHaveBeenCalledWith("AB-8", "11");
+  });
+
+  it("keeps the saved copies on screen when Jira cannot be reached", async () => {
+    const api = fakeApi({
+      listJiraIssues: vi.fn(async () => { throw new Error("Jira is offline"); }),
+      getJiraIssue: vi.fn(async () => { throw new Error("Jira is offline"); }),
+      getSavedJiraIssues: vi.fn(async () => ({ value: [issue()], savedAt: SAVED_AT })),
+      getSavedJiraIssue: vi.fn(async (key: string) => ({ value: detail({ key }), savedAt: SAVED_AT })),
+    });
+    const store = createJiraStore(api);
+
+    await store.open();
+    await vi.waitFor(() => expect(get(store.selectedIssue)?.key).toBe("AB-7"));
+
+    expect(get(store.issues).map((item) => item.key)).toEqual(["AB-7"]);
+    expect(get(store.issuesSavedAt)).toBe(SAVED_AT);
+    expect(get(store.issueSavedAt)).toBe(SAVED_AT);
+    expect(get(store.error)).toBe("Jira is offline");
+  });
+
+  it("never replaces what is shown with an older saved copy of the same list or ticket", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.getSavedJiraIssues).mockResolvedValue({ value: [issue({ summary: "Old" })], savedAt: SAVED_AT });
+    vi.mocked(api.getSavedJiraIssue).mockResolvedValue({ value: detail({ summary: "Old" }), savedAt: SAVED_AT });
+    const list = deferred<JiraIssueSummary[]>();
+    const ticket = deferred<JiraIssueDetail>();
+    vi.mocked(api.listJiraIssues).mockReturnValueOnce(list.promise);
+    vi.mocked(api.getJiraIssue).mockReturnValueOnce(ticket.promise);
+
+    const refreshing = store.refreshIssues();
+    const reopening = store.selectIssue("AB-7");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(store.issues)[0].summary).toBe("Printer jams on reboot");
+    expect(get(store.selectedIssue)?.summary).toBe("Printer jams on reboot");
+    expect(get(store.issuesSavedAt)).toBeNull();
+    expect(get(store.issueSavedAt)).toBeNull();
+    list.resolve([issue()]);
+    ticket.resolve(detail());
+    await Promise.all([refreshing, reopening]);
+  });
+
+  it("ignores a saved copy that arrives after Jira's answer", async () => {
+    const savedList = deferred<{ value: JiraIssueSummary[]; savedAt: string } | null>();
+    const savedTicket = deferred<{ value: JiraIssueDetail; savedAt: string } | null>();
+    const api = fakeApi({
+      getSavedJiraIssues: vi.fn(() => savedList.promise),
+      getSavedJiraIssue: vi.fn(() => savedTicket.promise),
+    });
+    const store = createJiraStore(api);
+
+    const opening = store.open();
+    await vi.waitFor(() => expect(api.getSavedJiraIssues).toHaveBeenCalled());
+    await vi.waitFor(() => expect(api.listJiraIssues).toHaveBeenCalled());
+    await Promise.resolve();
+    savedList.resolve({ value: [issue({ key: "AB-1", summary: "Old" })], savedAt: SAVED_AT });
+    await vi.waitFor(() => expect(api.getSavedJiraIssue).toHaveBeenCalled());
+    await Promise.resolve();
+    savedTicket.resolve({ value: detail({ summary: "Old" }), savedAt: SAVED_AT });
+    await opening;
+
+    expect(get(store.issues).map((item) => item.key)).toEqual(["AB-7", "AB-8"]);
+    expect(get(store.issuesSavedAt)).toBeNull();
+    expect(get(store.selectedIssue)?.summary).toBe("Printer jams on reboot");
+    expect(get(store.issueSavedAt)).toBeNull();
   });
 });

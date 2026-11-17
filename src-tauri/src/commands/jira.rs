@@ -22,6 +22,7 @@ use crate::services::jira_attachments::{
     download_attachments, load_thumbnail, read_attachment_media, user_downloads_dir,
     AttachmentDownload, AttachmentThumbnail,
 };
+use crate::services::jira_saved::{saved_copy_scope, JiraSavedCopies, SavedCopy};
 use crate::services::search::SearchService;
 
 /// Emitted with [`JiraChatUpdatedPayload`] each time an agent run stores
@@ -172,13 +173,39 @@ pub async fn test_jira_connection(
     run_blocking(move || Ok(connect(&settings)?.myself()?)).await
 }
 
+/// Saved copies for the configured Jira site and account, or `None` when
+/// settings cannot be read. Then nothing is saved or shown.
+fn saved_copies(state: &AppState) -> Option<JiraSavedCopies> {
+    let settings = state.settings.get().ok()?;
+    let scope = saved_copy_scope(&settings, &JiraEnvironment::from_process());
+    Some(JiraSavedCopies::new(
+        state.repositories.jira_saved.clone(),
+        scope,
+    ))
+}
+
+/// Saves a ticket Jira just returned, then hands it back.
+fn remember_issue(state: &AppState, issue: JiraIssueDetail) -> JiraIssueDetail {
+    if let Some(saved) = saved_copies(state) {
+        saved.remember_issue(&issue);
+    }
+    issue
+}
+
 #[tauri::command]
 pub async fn list_jira_issues(
     state: tauri::State<'_, AppState>,
     jql: String,
 ) -> Result<Vec<JiraIssueSummary>, CommandError> {
-    let settings = state.settings.clone();
-    run_blocking(move || Ok(connect(&settings)?.search(&jql, DEFAULT_SEARCH_LIMIT)?)).await
+    let state = state.inner().clone();
+    run_blocking(move || {
+        let issues = connect(&state.settings)?.search(&jql, DEFAULT_SEARCH_LIMIT)?;
+        if let Some(saved) = saved_copies(&state) {
+            saved.remember_list(&jql, &issues);
+        }
+        Ok(issues)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -187,8 +214,39 @@ pub async fn get_jira_issue(
     key: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
-    run_blocking(move || Ok(connect(&settings)?.get_issue(&key)?)).await
+    let state = state.inner().clone();
+    run_blocking(move || {
+        let issue = connect(&state.settings)?.get_issue(&key)?;
+        Ok(remember_issue(&state, issue))
+    })
+    .await
+}
+
+/// The tickets `list_jira_issues` last returned for `jql`, with when. Reads
+/// local storage only; this command never contacts Jira.
+#[tauri::command]
+pub async fn get_saved_jira_issues(
+    state: tauri::State<'_, AppState>,
+    jql: String,
+) -> Result<Option<SavedCopy>, CommandError> {
+    match saved_copies(&state) {
+        Some(saved) => Ok(saved.saved_list(&jql)?),
+        None => Ok(None),
+    }
+}
+
+/// The ticket as Jira last returned it, with when. Reads local storage only;
+/// this command never contacts Jira.
+#[tauri::command]
+pub async fn get_saved_jira_issue(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<Option<SavedCopy>, CommandError> {
+    let key = IssueKey::parse(&key)?;
+    match saved_copies(&state) {
+        Some(saved) => Ok(saved.saved_issue(&key)?),
+        None => Ok(None),
+    }
 }
 
 /// Lists issue types for the configured project. Returns an empty list when
@@ -248,7 +306,7 @@ pub async fn create_jira_issue(
                     )
                 })?;
         }
-        Ok(client.get_issue(&key)?)
+        Ok(remember_issue(&state, client.get_issue(&key)?))
     })
     .await
 }
@@ -260,9 +318,9 @@ pub async fn update_jira_issue(
     input: UpdateJiraIssueDto,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let client = connect(&state.settings)?;
         client.update_issue(
             &key,
             &IssueUpdate {
@@ -270,7 +328,7 @@ pub async fn update_jira_issue(
                 description: input.description,
             },
         )?;
-        Ok(client.get_issue(&key)?)
+        Ok(remember_issue(&state, client.get_issue(&key)?))
     })
     .await
 }
@@ -282,11 +340,11 @@ pub async fn transition_jira_issue(
     transition_id: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let client = connect(&state.settings)?;
         client.apply_transition(&key, &transition_id)?;
-        Ok(client.get_issue(&key)?)
+        Ok(remember_issue(&state, client.get_issue(&key)?))
     })
     .await
 }
@@ -298,11 +356,11 @@ pub async fn add_jira_comment(
     text: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let client = connect(&state.settings)?;
         client.add_comment(&key, &text)?;
-        Ok(client.get_issue(&key)?)
+        Ok(remember_issue(&state, client.get_issue(&key)?))
     })
     .await
 }
@@ -313,11 +371,11 @@ pub async fn assign_jira_issue_to_me(
     key: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let client = connect(&state.settings)?;
         client.assign(&key, Assignee::Me)?;
-        Ok(client.get_issue(&key)?)
+        Ok(remember_issue(&state, client.get_issue(&key)?))
     })
     .await
 }

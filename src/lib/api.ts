@@ -26,6 +26,7 @@ import type {
   JiraIssueEdit,
   JiraIssueSummary,
   JiraRelatedIssue,
+  JiraSavedCopy,
   JiraStatus,
   JiraWriting,
   NoteDetail,
@@ -481,6 +482,26 @@ export async function getJiraIssue(key: string): Promise<JiraIssueDetail> {
   return normalizeJiraIssueDetail(await invokeCommand<unknown>("get_jira_issue", { key }));
 }
 
+/** The tickets Jira last listed for `jql`, from local storage. Never contacts Jira. */
+export async function getSavedJiraIssues(jql: string): Promise<JiraSavedCopy<JiraIssueSummary[]> | null> {
+  const saved = await invokeCommand<unknown>("get_saved_jira_issues", { jql });
+  if (!saved) {
+    return null;
+  }
+  const record = asRecord(saved);
+  return { value: getArray(record, "content").map(normalizeJiraIssueSummary), savedAt: getString(record, "savedAt") ?? "" };
+}
+
+/** The ticket as Jira last returned it, from local storage. Never contacts Jira. */
+export async function getSavedJiraIssue(key: string): Promise<JiraSavedCopy<JiraIssueDetail> | null> {
+  const saved = await invokeCommand<unknown>("get_saved_jira_issue", { key });
+  if (!saved) {
+    return null;
+  }
+  const record = asRecord(saved);
+  return { value: normalizeJiraIssueDetail(record.content), savedAt: getString(record, "savedAt") ?? "" };
+}
+
 export async function listJiraIssueTypes(): Promise<string[]> {
   return normalizeStringArray(await invokeCommand<unknown[]>("list_jira_issue_types"));
 }
@@ -666,6 +687,8 @@ export const api = {
   testJiraConnection,
   listJiraIssues,
   getJiraIssue,
+  getSavedJiraIssues,
+  getSavedJiraIssue,
   listJiraIssueTypes,
   createJiraIssue,
   updateJiraIssue,

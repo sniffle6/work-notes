@@ -76,6 +76,8 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     getJiraIssue: vi.fn(async (key: string) =>
       detail({ key, summary: key === "AB-8" ? "Bill acceptor rejects notes" : "Printer jams on reboot" }),
     ),
+    getSavedJiraIssues: vi.fn(async () => null),
+    getSavedJiraIssue: vi.fn(async () => null),
     listJiraIssueTypes: vi.fn(async () => ["Bug", "Task"]),
     createJiraIssue: vi.fn(async () => detail({ key: "AB-9", summary: "New ticket" })),
     updateJiraIssue: vi.fn(async (key: string) => detail({ key })),
