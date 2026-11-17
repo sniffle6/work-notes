@@ -65,6 +65,18 @@ Every ticket list and ticket Jira returns is saved to local SQLite, so the view 
 - Copies belong to the Jira site and account email, so changing either never shows another's tickets. The newest 50 lists and 500 tickets are kept per site and account. A copy that cannot be read is treated as missing.
 - Saved copies hold ticket content only. The API token is never saved.
 
+### Edit Conflicts
+
+An edit can stay unfinished for days, so saving checks that it will not overwrite someone else's change.
+
+- Starting an edit records the ticket's summary and description. The record is kept with the unfinished edit.
+- A field counts as edited when it differs from where the edit started. Fields changed in Jira meanwhile but not by the user are not sent.
+- Before writing, `update_jira_issue` reads the ticket from Jira. If a field being written no longer matches where the edit started, nothing is written and it reports `jira_edit_conflict`. Writing text Jira already holds, and differences only in line endings or trailing spaces, are not conflicts.
+- After a conflict the edit stays open with the user's text, and Jira's current version is loaded beside it. "Save anyway" keeps the user's changes, gives untouched fields Jira's current text, and saves against Jira's current version.
+- An edit kept from before this check has no recorded start, so its first save reports a conflict for every field it writes, and "Save anyway" keeps all of the user's text.
+- Jira has no conditional update, so a change made in Jira between the check and the write, a fraction of a second, can still be overwritten.
+- Agent proposals do not use this check. Their review shows previous values captured when proposed.
+
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 
 Ticket titles use the full row width, with the key and metadata underneath. A shared assignee is shown once above the list; high and urgent priorities remain visible in rows. Status groups collapse, and searching temporarily expands matching groups. The sort selector keeps Jira's order or sorts titles within each status.

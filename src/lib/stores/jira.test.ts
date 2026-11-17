@@ -1366,3 +1366,51 @@ describe("saved copies never drift from Jira", () => {
     expect(get(store.issues).find((item) => item.key === "AB-8")?.summary).toBe("Second");
   });
 });
+
+describe("edits Jira changed underneath", () => {
+  const STARTED = { summary: "Printer jams on reboot", description: "Old steps" };
+
+  it("sends where an edit started, flags a conflict, keeps the writing, and reloads Jira's version", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    store.rememberWriting("AB-7", { editing: true, summary: STARTED.summary, description: "Mine", comment: "", base: STARTED });
+    vi.mocked(api.updateJiraIssue).mockRejectedValueOnce({ code: "jira_edit_conflict", message: "The description of AB-7 may have changed" });
+    vi.mocked(api.getJiraIssue).mockResolvedValueOnce(detail({ description: "Maya's steps" }));
+
+    expect(await store.saveSelectedEdit({ description: "Mine", base: STARTED })).toBe(false);
+
+    expect(api.updateJiraIssue).toHaveBeenCalledWith("AB-7", { description: "Mine", base: STARTED });
+    expect(get(store.editConflictKey)).toBe("AB-7");
+    expect(get(store.selectedIssue)?.description).toBe("Maya's steps");
+    expect(get(store.ticketDrafts)["AB-7"].editing).toBe(true);
+    expect(get(store.error)).toBe("The description of AB-7 may have changed");
+  });
+
+  it("clears the conflict and the edit's starting text once the save goes through", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    store.rememberWriting("AB-7", { editing: true, summary: STARTED.summary, description: "Mine", comment: "Note", base: STARTED });
+    vi.mocked(api.updateJiraIssue).mockRejectedValueOnce({ code: "jira_edit_conflict", message: "changed" });
+    await store.saveSelectedEdit({ description: "Mine", base: STARTED });
+
+    expect(await store.saveSelectedEdit({ description: "Mine", base: { ...STARTED, description: "Maya's steps" } })).toBe(true);
+
+    expect(get(store.editConflictKey)).toBeNull();
+    expect(get(store.ticketDrafts)["AB-7"]).toMatchObject({ editing: false, base: null, comment: "Note" });
+  });
+
+  it("drops the conflict when the edit is discarded", async () => {
+    const api = fakeApi();
+    const store = createJiraStore(api);
+    await store.open();
+    store.rememberWriting("AB-7", { editing: true, summary: STARTED.summary, description: "Mine", comment: "", base: STARTED });
+    vi.mocked(api.updateJiraIssue).mockRejectedValueOnce({ code: "jira_edit_conflict", message: "changed" });
+    await store.saveSelectedEdit({ description: "Mine", base: STARTED });
+
+    store.rememberWriting("AB-7", { editing: false, summary: "", description: "", comment: "", base: null });
+
+    expect(get(store.editConflictKey)).toBeNull();
+  });
+});

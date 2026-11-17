@@ -521,7 +521,7 @@ export async function createJiraIssue(draft: JiraIssueDraft): Promise<JiraIssueD
 export async function updateJiraIssue(key: string, edit: JiraIssueEdit): Promise<JiraIssueDetail> {
   const updated = await invokeCommand<unknown>("update_jira_issue", {
     key,
-    input: { summary: edit.summary ?? null, description: edit.description ?? null },
+    input: { summary: edit.summary ?? null, description: edit.description ?? null, base: edit.base ?? null },
   });
   return normalizeJiraIssueDetail(updated);
 }

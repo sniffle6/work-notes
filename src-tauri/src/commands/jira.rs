@@ -17,7 +17,9 @@ use crate::jira::{
     Assignee, IssueKey, IssueUpdate, JiraError, JiraIssueDetail, JiraIssueSummary, JiraOps,
     JiraUser, NewIssue,
 };
-use crate::services::jira::{connect, jira_status, JiraEnvironment, JiraStatus};
+use crate::services::jira::{
+    connect, edit_conflicts, jira_status, EditBase, EditConflict, JiraEnvironment, JiraStatus,
+};
 use crate::services::jira_agent::{AgentProgress, JiraAgentService, NEW_THREAD_TITLE};
 use crate::services::jira_attachments::{
     download_attachments, load_thumbnail, read_attachment_media, user_downloads_dir,
@@ -58,6 +60,26 @@ struct JiraTicketWritingDto {
     summary: String,
     description: String,
     comment: String,
+    /// The ticket text the edit started from. Absent for edits kept from
+    /// before it was recorded.
+    #[serde(default)]
+    base: Option<EditBaseDto>,
+}
+
+/// The ticket's summary and description when an edit started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditBaseDto {
+    summary: String,
+    description: String,
+}
+
+impl From<Option<EditBaseDto>> for EditBase {
+    fn from(base: Option<EditBaseDto>) -> Self {
+        base.map_or_else(EditBase::default, |base| EditBase {
+            summary: Some(base.summary),
+            description: Some(base.description),
+        })
+    }
 }
 
 /// Reads local writing only; this command never contacts Jira.
@@ -132,6 +154,29 @@ pub struct UpdateJiraIssueDto {
     pub summary: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The ticket text the edit started from. Without it, every written
+    /// field is treated as possibly changed in Jira.
+    #[serde(default)]
+    pub base: Option<EditBaseDto>,
+}
+
+/// Reported when saving would overwrite a field changed in Jira since the
+/// edit started. Nothing is written.
+pub const EDIT_CONFLICT_CODE: &str = "jira_edit_conflict";
+
+fn edit_conflict_error(key: &IssueKey, conflicts: &[EditConflict]) -> CommandError {
+    let fields = conflicts
+        .iter()
+        .map(|conflict| conflict.field_name())
+        .collect::<Vec<_>>()
+        .join(" and ");
+    CommandError::new(
+        EDIT_CONFLICT_CODE,
+        format!(
+            "The {fields} of {key} may have changed in Jira since you started editing, so nothing was saved. \
+             Your text is kept. Compare it with Jira's version, then choose Save anyway to replace it."
+        ),
+    )
 }
 
 /// The new-ticket form as it stands when the user messages the agent.
@@ -344,13 +389,17 @@ pub async fn update_jira_issue(
     run_blocking(move || {
         let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
-        client.update_issue(
-            &key,
-            &IssueUpdate {
-                summary: input.summary,
-                description: input.description,
-            },
-        )?;
+        let update = IssueUpdate {
+            summary: input.summary,
+            description: input.description,
+        };
+        // Jira has no conditional update, so read the ticket just before writing.
+        let current = client.get_issue(&key)?;
+        let conflicts = edit_conflicts(&current, &update, &EditBase::from(input.base));
+        if !conflicts.is_empty() {
+            return Err(edit_conflict_error(&key, &conflicts));
+        }
+        client.update_issue(&key, &update)?;
         fetch_issue(&client, &key, saved.as_ref())
     })
     .await
@@ -608,8 +657,9 @@ mod tests {
 
     use super::{
         CreateJiraIssueDto, JiraChatUpdatedPayload, JiraDraftContextDto, JiraViewActionPayload,
-        UpdateJiraIssueDto,
+        JiraWritingDto, UpdateJiraIssueDto,
     };
+    use crate::services::jira::EditBase;
     use crate::jira::agent::ViewAction;
 
     #[test]
@@ -633,6 +683,37 @@ mod tests {
             serde_json::from_value(json!({ "summary": null, "description": "Body" })).unwrap();
         assert_eq!(update.summary, None);
         assert_eq!(update.description.as_deref(), Some("Body"));
+        assert_eq!(EditBase::from(update.base), EditBase::default());
+
+        let based: UpdateJiraIssueDto = serde_json::from_value(json!({
+            "description": "Body",
+            "base": { "summary": "Printer jams", "description": "Old" },
+        }))
+        .unwrap();
+        assert_eq!(
+            EditBase::from(based.base),
+            EditBase {
+                summary: Some("Printer jams".to_string()),
+                description: Some("Old".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn saved_edits_keep_their_starting_text_and_older_ones_still_load() {
+        let saved: JiraWritingDto = serde_json::from_value(json!({
+            "draft": null,
+            "tickets": {
+                "AB-7": { "editing": true, "summary": "S", "description": "D", "comment": "",
+                          "base": { "summary": "S0", "description": "D0" } },
+                "AB-8": { "editing": true, "summary": "S", "description": "D", "comment": "" },
+            },
+        }))
+        .unwrap();
+
+        let round_trip = serde_json::to_value(&saved).unwrap();
+        assert_eq!(round_trip["tickets"]["AB-7"]["base"], json!({ "summary": "S0", "description": "D0" }));
+        assert_eq!(round_trip["tickets"]["AB-8"]["base"], json!(null));
     }
 
     #[test]

@@ -485,7 +485,10 @@ describe("JiraIssueDetail", () => {
     await fireEvent.click(save);
 
     const detail = saveEdit.mock.calls[0][0].detail;
-    expect(detail.edit).toEqual({ summary: "Printer jams after reboot" });
+    expect(detail.edit).toEqual({
+      summary: "Printer jams after reboot",
+      base: { summary: "Printer jams on reboot", description: "## Context\n\nJams after reboot." },
+    });
     detail.done();
     await vi.waitFor(() => expect(screen.queryByRole("textbox", { name: "Summary" })).toBeNull());
   });
@@ -508,7 +511,87 @@ describe("JiraIssueDetail", () => {
     expect(save.disabled).toBe(false);
     await fireEvent.click(save);
 
-    expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({ description: "Rewritten body" });
+    expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({
+      description: "Rewritten body",
+      base: { summary: "Printer jams on reboot", description: "## Context\n\nJams after reboot." },
+    });
+  });
+
+  describe("edits that Jira changed underneath", () => {
+    const STARTED = { summary: "Printer jams on reboot", description: "Old steps" };
+
+    it("sends only the fields changed since the edit began, not ones Jira changed meanwhile", async () => {
+      const saveEdit = vi.fn();
+      const writing = vi.fn();
+      const { rerender } = render(JiraIssueDetail, {
+        props: { issue: issue({ description: "Old steps" }) },
+        events: { saveEdit, writing },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), { target: { value: "My steps" } });
+      expect(writing.mock.lastCall?.[0].detail.writing.base).toEqual(STARTED);
+      await rerender({ issue: issue({ summary: "Renamed by Maya", description: "Old steps" }) });
+      await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({ description: "My steps", base: STARTED });
+    });
+
+    it("saves a restored edit against the text it started from", async () => {
+      const saveEdit = vi.fn();
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ summary: "Renamed by Maya", description: "Maya's steps" }),
+          writing: { editing: true, summary: STARTED.summary, description: "My steps", comment: "", base: STARTED },
+        },
+        events: { saveEdit },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({ description: "My steps", base: STARTED });
+    });
+
+    it("after a conflict, shows Jira's version and saves anyway only the fields the user changed", async () => {
+      const saveEdit = vi.fn();
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ summary: "Renamed by Maya", description: "Maya's steps" }),
+          writing: { editing: true, summary: STARTED.summary, description: "My steps", comment: "", base: STARTED },
+          editConflict: true,
+        },
+        events: { saveEdit },
+      });
+
+      expect(screen.getByText("Maya's steps")).toBeTruthy();
+      await fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+
+      expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({
+        description: "My steps",
+        base: { summary: "Renamed by Maya", description: "Maya's steps" },
+      });
+      expect((screen.getByRole("textbox", { name: "Summary" }) as HTMLInputElement).value).toBe("Renamed by Maya");
+    });
+
+    it("keeps every field of an edit whose start is unknown when saving anyway", async () => {
+      const saveEdit = vi.fn();
+      render(JiraIssueDetail, {
+        props: {
+          issue: issue({ summary: "Renamed by Maya", description: "Maya's steps" }),
+          writing: { editing: true, summary: "My title", description: "My steps", comment: "" },
+          editConflict: true,
+        },
+        events: { saveEdit },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+
+      expect(saveEdit.mock.calls[0][0].detail.edit).toEqual({
+        summary: "My title",
+        description: "My steps",
+        base: { summary: "Renamed by Maya", description: "Maya's steps" },
+      });
+    });
   });
 
   it("cancels an edit without dispatching", async () => {

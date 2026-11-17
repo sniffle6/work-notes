@@ -405,6 +405,35 @@ describe("JiraView", () => {
 
     await vi.waitFor(() => expect(api.getJiraIssue).toHaveBeenLastCalledWith("AB-8"));
   });
+  it("refuses to overwrite a description Jira changed during the edit until the user saves anyway", async () => {
+    const api = fakeApi();
+    vi.mocked(api.updateJiraIssue)
+      .mockRejectedValueOnce({ code: "jira_edit_conflict", message: "The description of AB-7 may have changed in Jira" })
+      .mockResolvedValueOnce(detail({ description: "My steps" }));
+    await renderOpened(api);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), { target: { value: "My steps" } });
+    vi.mocked(api.getJiraIssue).mockResolvedValueOnce(detail({ description: "Maya's steps" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saveAnyway = await screen.findByRole("button", { name: "Save anyway" });
+    expect(screen.getByRole("alert").textContent).toContain("may have changed in Jira");
+    expect((screen.getByRole("textbox", { name: "Description" }) as HTMLTextAreaElement).value).toBe("My steps");
+    await vi.waitFor(() => expect(screen.getByText("Maya's steps")).toBeTruthy());
+    await fireEvent.click(saveAnyway);
+
+    await vi.waitFor(() => expect(api.updateJiraIssue).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.updateJiraIssue).mock.calls[0][1]).toEqual({
+      description: "My steps",
+      base: { summary: "Printer jams on reboot", description: "Jams after reboot." },
+    });
+    expect(vi.mocked(api.updateJiraIssue).mock.calls[1][1]).toEqual({
+      description: "My steps",
+      base: { summary: "Printer jams on reboot", description: "Maya's steps" },
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Save anyway" })).toBeNull());
+  });
   it("hides and restores the ticket list from its toggle and remembers the choice", async () => {
     const api = fakeApi();
     await renderOpened(api);

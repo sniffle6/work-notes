@@ -74,6 +74,7 @@
     messages,
     agentBusy,
     busyProposalId,
+    editConflictKey,
     chatError,
   } = jira;
 
@@ -488,6 +489,7 @@
             loading={$loadingIssue}
             saving={$savingIssue}
             savedAt={$issueSavedAt}
+            editConflict={$editConflictKey !== null && $editConflictKey === $selectedIssue?.key}
             attachmentDownload={$attachmentDownload}
             downloadingAttachments={$downloadingAttachments}
             attachmentThumbnails={$attachmentThumbnails}

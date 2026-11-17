@@ -327,9 +327,20 @@ export type JiraDraftContext = {
   noteId: string | null;
 };
 
+/** The ticket's summary and description when an edit started. */
+export type JiraEditBase = {
+  summary: string;
+  description: string;
+};
+
 export type JiraIssueEdit = {
   summary?: string;
   description?: string;
+  /**
+   * Where the edit started. Saving refuses to overwrite a field Jira changed
+   * since then; without it, every written field is treated as possibly changed.
+   */
+  base?: JiraEditBase | null;
 };
 
 export type JiraTicketWriting = {
@@ -337,6 +348,8 @@ export type JiraTicketWriting = {
   summary: string;
   description: string;
   comment: string;
+  /** Where the edit started. Missing for edits kept from before it was recorded. */
+  base?: JiraEditBase | null;
 };
 
 export type JiraWriting = {

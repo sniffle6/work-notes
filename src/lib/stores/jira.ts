@@ -366,6 +366,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const messages = writable<JiraChatMessage[]>([]);
   const agentBusy = writable(false);
   const busyProposalId = writable<string | null>(null);
+  /** The ticket whose edit was refused because Jira changed it since the edit started. */
+  const editConflictKey = writable<string | null>(null);
   const chatError = writable<string | null>(null);
 
   // Guards against a slow ticket response replacing a newer selection.
@@ -660,6 +662,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   async function changeSelected(
     change: (key: string) => Promise<JiraIssueDetail>,
     fallbackMessage: string,
+    onFailure?: (key: string, failure: unknown) => Promise<void>,
   ): Promise<boolean> {
     const key = get(selectedIssue)?.key;
     if (!key) {
@@ -690,6 +693,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       return true;
     } catch (unknownError) {
       error.set(errorMessage(unknownError, fallbackMessage));
+      await onFailure?.(key, unknownError);
       return false;
     } finally {
       savingIssue.set(false);
@@ -701,6 +705,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   function rememberWriting(key: string, writing: JiraTicketWriting): void {
+    if (!writing.editing && get(editConflictKey) === key) {
+      editConflictKey.set(null);
+    }
     ticketWriting.update((current) => {
       const next = { ...current };
       if (!writing.editing && !writing.comment) {
@@ -724,10 +731,26 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
   async function saveSelectedEdit(edit: JiraIssueEdit): Promise<boolean> {
     const key = get(selectedIssue)?.key;
-    const success = await changeSelected((key) => api.updateJiraIssue(key, edit), "Could not save the ticket.");
+    const success = await changeSelected(
+      (key) => api.updateJiraIssue(key, edit),
+      "Could not save the ticket.",
+      async (key, failure) => {
+        if (!isEditConflict(failure)) {
+          return;
+        }
+        // The writing stays; Jira's current version is loaded so the user can compare.
+        editConflictKey.set(key);
+        const message = get(error);
+        await loadIssue(key);
+        error.set(message);
+      },
+    );
     const writing = key ? get(ticketWriting)[key] : undefined;
     if (success && key && writing) {
-      rememberWriting(key, { ...writing, editing: false });
+      rememberWriting(key, { ...writing, editing: false, base: null });
+    }
+    if (success && get(editConflictKey) === key) {
+      editConflictKey.set(null);
     }
     return success;
   }
@@ -1071,6 +1094,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     messages,
     agentBusy,
     busyProposalId,
+    editConflictKey,
     chatError,
     open,
     selectFilter,
@@ -1119,6 +1143,11 @@ function toSummary(issue: JiraIssueDetail): JiraIssueSummary {
     labels: issue.labels,
     url: issue.url,
   };
+}
+
+/** True when saving was refused because Jira changed the ticket since the edit started. */
+function isEditConflict(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object" && (error as { code?: unknown }).code === "jira_edit_conflict";
 }
 
 /** True for the error the backend reports when Jira answers 404: the ticket is gone or hidden. */
