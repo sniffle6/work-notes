@@ -58,6 +58,16 @@ Testing conventions:
 - Keep Tauri command invocation centralized in `src/lib/api.ts`.
 - Preserve the browser fallback path so `npm run build` and browser smoke checks can run without native Tauri.
 
+For the Jira filter-bar overflow regression, run a real browser against the local dev server:
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=jira-layout open http://localhost:1420
+npx --yes --package @playwright/cli playwright-cli -s=jira-layout run-code --filename scripts/check-jira-filter-layout.js
+npx --yes --package @playwright/cli playwright-cli -s=jira-layout close
+```
+
+The check measures vertical overflow at three widths and verifies that extra filters remain reachable horizontally. It uses preview data and temporary DOM tabs, without changing saved settings or Jira. jsdom does not perform layout, so this check runs separately from `npm test`.
+
 ## Rust Checks
 
 Run this after Rust command, service, repository, parser, database, or windowing changes:

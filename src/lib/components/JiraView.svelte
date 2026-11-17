@@ -579,7 +579,7 @@
     margin-left: auto;
   }
 
-  /* Tabs sit on the header's bottom rule; the active one draws over it. */
+  /* Tabs stretch inside the header rule; extending below it creates vertical overflow. */
   .filter-row {
     display: flex;
     flex: 1 1 auto;
@@ -625,8 +625,6 @@
 
   .filter-tab {
     flex-shrink: 0;
-    min-height: 44px;
-    margin-bottom: -1px;
     border-bottom: 2px solid transparent;
     border-radius: 0;
     color: var(--color-text-muted);
