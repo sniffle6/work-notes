@@ -5,7 +5,30 @@ export type RenderMarkdownOptions = {
 
 const TABLE_ROW = /^\|.*\|$/;
 const TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/;
+// A pipe that is not escaped with a backslash separates table cells.
+const CELL_SEPARATOR = /(?<!\\)\|/;
+const LIST_ITEM = /^([ \t]*)(?:([-*])|(\d+)[.)])\s+(.+)$/;
+// Columns one tab of list indentation counts for. Matches the Jira converter.
+const TAB_INDENT = 4;
+const FIRST_LIST_NUMBER = 1;
 
+type ListTag = "ul" | "ol";
+type OpenList = {
+  tag: ListTag;
+  indent: number;
+  /** The open item holds a nested list, so it closes on its own line. */
+  itemHasChildren: boolean;
+};
+
+/**
+ * Renders Markdown-flavored text as HTML. Raw HTML in the text is escaped.
+ *
+ * Supports headings, paragraphs, nested bullet and numbered lists, pipe tables,
+ * fenced code, rules, and inline `**bold**`, `_italic_`, `~~strikethrough~~`,
+ * `` `code` ``, `[label](url)` links to http, https, and mailto targets, and
+ * backslash escapes. This is the syntax the Jira converter in
+ * `src-tauri/src/jira/adf.rs` writes.
+ */
 export function renderMarkdown(markdown: string, options: RenderMarkdownOptions = {}): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
@@ -13,7 +36,7 @@ export function renderMarkdown(markdown: string, options: RenderMarkdownOptions 
   const codeLines: string[] = [];
   const tableRows: string[][] = [];
   let tableHasHeader = false;
-  let listType: "ul" | "ol" | null = null;
+  const lists: OpenList[] = [];
   let inCodeBlock = false;
 
   function flushParagraph() {
@@ -41,18 +64,49 @@ export function renderMarkdown(markdown: string, options: RenderMarkdownOptions 
     tableHasHeader = false;
   }
 
-  function closeList() {
-    if (!listType) return;
-    output.push(`</${listType}>`);
-    listType = null;
+  function closeItem(list: OpenList) {
+    if (list.itemHasChildren) {
+      output.push("</li>");
+    } else {
+      output[output.length - 1] += "</li>";
+    }
+    list.itemHasChildren = false;
   }
 
-  function openList(nextType: "ul" | "ol") {
-    if (listType === nextType) return;
-    closeList();
-    flushParagraph();
-    output.push(`<${nextType}>`);
-    listType = nextType;
+  function closeInnermostList() {
+    const list = lists.pop();
+    if (!list) return;
+    closeItem(list);
+    output.push(`</${list.tag}>`);
+  }
+
+  function closeList() {
+    while (lists.length > 0) {
+      closeInnermostList();
+    }
+  }
+
+  /** Adds an item, nesting it in the item above when it is indented further. */
+  function addListItem(tag: ListTag, indent: number, number: number, text: string) {
+    let current = lists.at(-1);
+    while (current && (current.indent > indent || (current.indent === indent && current.tag !== tag))) {
+      closeInnermostList();
+      current = lists.at(-1);
+    }
+
+    if (current && current.indent === indent) {
+      closeItem(current);
+    } else {
+      if (current) {
+        current.itemHasChildren = true;
+      } else {
+        flushParagraph();
+      }
+      const start = tag === "ol" && number !== FIRST_LIST_NUMBER ? ` start="${number}"` : "";
+      output.push(`<${tag}${start}>`);
+      lists.push({ tag, indent, itemHasChildren: false });
+    }
+    output.push(`<li>${renderInline(text)}`);
   }
 
   function closeCodeBlock() {
@@ -78,8 +132,8 @@ export function renderMarkdown(markdown: string, options: RenderMarkdownOptions 
       closeList();
       const cells = trimmed
         .slice(1, -1)
-        .split("|")
-        .map((cell) => cell.trim());
+        .split(CELL_SEPARATOR)
+        .map((cell) => cell.replace(/\\\|/g, "|").trim());
       if (cells.every((cell) => TABLE_SEPARATOR_CELL.test(cell))) {
         // A separator directly under the first row marks that row as the header.
         tableHasHeader = tableHasHeader || tableRows.length === 1;
@@ -119,17 +173,11 @@ export function renderMarkdown(markdown: string, options: RenderMarkdownOptions 
       continue;
     }
 
-    const unordered = /^[-*]\s+(.+)$/.exec(trimmed);
-    if (unordered) {
-      openList("ul");
-      output.push(`<li>${renderInline(unordered[1])}</li>`);
-      continue;
-    }
-
-    const ordered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
-    if (ordered) {
-      openList("ol");
-      output.push(`<li>${renderInline(ordered[1])}</li>`);
+    const item = LIST_ITEM.exec(line.trimEnd());
+    if (item) {
+      const [, leading, bullet, number, text] = item;
+      const indent = [...leading].reduce((total, character) => total + (character === "\t" ? TAB_INDENT : 1), 0);
+      addListItem(bullet ? "ul" : "ol", indent, bullet ? FIRST_LIST_NUMBER : Number(number), text.trim());
       continue;
     }
 
@@ -147,17 +195,47 @@ export function renderMarkdown(markdown: string, options: RenderMarkdownOptions 
   return output.join("\n");
 }
 
+// Characters a backslash keeps literal. Matches the Jira converter.
+const ESCAPABLE = new Set(["\\", "`", "*", "_", "~", "["]);
+const HELD = /\u0000(\d+)\u0000/g;
+const LINK = /\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^\s)\u0000]+)\)/g;
+const STRONG = /\*\*(\S(?:[^]*?\S)?)\*\*/g;
+const STRIKE = /~~(\S(?:[^]*?\S)?)~~/g;
+// Underscores inside a word, as in snake_case, are not emphasis.
+const EMPHASIS = /(^|[^\p{L}\p{N}])_(\S(?:[^]*?\S)?)_(?![\p{L}\p{N}])/gu;
+
 function renderInline(value: string): string {
-  const codeSpans: string[] = [];
-  let rendered = escapeHtml(value).replace(/`([^`]+)`/g, (_, code: string) => {
-    const index = codeSpans.push(`<code>${code}</code>`) - 1;
-    return `\u0000CODE${index}\u0000`;
-  });
+  // Escaped characters and code spans are held aside so later markup rules cannot touch them.
+  const held: string[] = [];
+  const hold = (html: string) => `\u0000${held.push(html) - 1}\u0000`;
+  let rendered = "";
 
-  rendered = rendered.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  rendered = rendered.replace(/\u0000CODE(\d+)\u0000/g, (_, index: string) => codeSpans[Number(index)] ?? "");
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    const next = value[index + 1];
+    if (character === "\\" && next !== undefined && ESCAPABLE.has(next)) {
+      rendered += hold(escapeHtml(next));
+      index++;
+      continue;
+    }
+    if (character === "`") {
+      const end = value.indexOf("`", index + 1);
+      if (end > index + 1) {
+        rendered += hold(`<code>${escapeHtml(value.slice(index + 1, end))}</code>`);
+        index = end;
+        continue;
+      }
+    }
+    rendered += escapeHtml(character);
+  }
 
-  return rendered;
+  rendered = rendered
+    .replace(LINK, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(STRONG, "<strong>$1</strong>")
+    .replace(STRIKE, "<del>$1</del>")
+    .replace(EMPHASIS, "$1<em>$2</em>");
+
+  return rendered.replace(HELD, (_, index: string) => held[Number(index)] ?? "");
 }
 
 function escapeHtml(value: string): string {

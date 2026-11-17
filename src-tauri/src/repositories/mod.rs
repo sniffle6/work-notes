@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod card_notes;
 pub mod jira;
+pub mod jira_cache;
 pub mod notes;
 pub mod parse_jobs;
 pub mod tags;
@@ -10,6 +11,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 pub use actions::ActionItemRepository;
 pub use card_notes::CardNoteRepository;
 pub use jira::{JiraChatRepository, NoteJiraLinkRepository};
+pub use jira_cache::JiraIssueCacheRepository;
 pub use notes::NoteRepository;
 pub use parse_jobs::ParseJobRepository;
 pub use tags::TagRepository;

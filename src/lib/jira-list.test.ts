@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { filterIssues, groupIssuesByStatus, priorityTone } from "./jira-list";
+import { filterIssues, groupIssuesByStatus, issueKeyInQuery, jiraTextSearch, priorityTone } from "./jira-list";
 import type { JiraIssueSummary } from "./types";
 
 function issue(overrides: Partial<JiraIssueSummary> = {}): JiraIssueSummary {
@@ -83,5 +83,42 @@ describe("priorityTone", () => {
     expect(priorityTone("Medium")).toBe("normal");
     expect(priorityTone("Low")).toBe("normal");
     expect(priorityTone(null)).toBe("normal");
+  });
+});
+
+describe("jiraTextSearch", () => {
+  it("searches the project's ticket text, newest first", () => {
+    expect(jiraTextSearch(" printer  jam ", "AB")).toEqual({
+      name: "Search: printer jam",
+      jql: 'project = AB AND text ~ "printer jam" ORDER BY updated DESC',
+    });
+  });
+
+  it("searches every project when none is configured", () => {
+    expect(jiraTextSearch("printer", "")?.jql).toBe('text ~ "printer" ORDER BY updated DESC');
+  });
+
+  it("drops characters Jira's text search would read as operators or that could end the JQL string", () => {
+    expect(jiraTextSearch('bill "acceptor" (jam)! -x path\\to: a&&b', "AB")?.jql).toBe(
+      'project = AB AND text ~ "bill acceptor jam x path to a b" ORDER BY updated DESC',
+    );
+  });
+
+  it("offers no search when nothing searchable is left", () => {
+    expect(jiraTextSearch("  ", "AB")).toBeNull();
+    expect(jiraTextSearch('"" ()', "AB")).toBeNull();
+  });
+});
+
+describe("issueKeyInQuery", () => {
+  it("recognises a ticket key typed on its own", () => {
+    expect(issueKeyInQuery(" ab-12 ")).toBe("AB-12");
+    expect(issueKeyInQuery("AB_2-7")).toBe("AB_2-7");
+  });
+
+  it("ignores text that is not just a key", () => {
+    expect(issueKeyInQuery("AB-12 printer")).toBeNull();
+    expect(issueKeyInQuery("12-AB")).toBeNull();
+    expect(issueKeyInQuery("AB-")).toBeNull();
   });
 });

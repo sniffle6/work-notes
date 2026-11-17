@@ -76,6 +76,8 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     getJiraIssue: vi.fn(async (key: string) =>
       detail({ key, summary: key === "AB-8" ? "Bill acceptor rejects notes" : "Printer jams on reboot" }),
     ),
+    getSavedJiraIssues: vi.fn(async () => null),
+    getSavedJiraIssue: vi.fn(async () => null),
     listJiraIssueTypes: vi.fn(async () => ["Bug", "Task"]),
     createJiraIssue: vi.fn(async () => detail({ key: "AB-9", summary: "New ticket" })),
     updateJiraIssue: vi.fn(async (key: string) => detail({ key })),
@@ -370,6 +372,68 @@ describe("JiraView", () => {
     expect(screen.getByRole("button", { name: "My open tickets" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("searches all of Jira from the search box and offers the results as a removable filter", async () => {
+    const api = fakeApi();
+    await renderOpened(api);
+    const box = screen.getByRole("searchbox", { name: "Search tickets" });
+
+    await fireEvent.input(box, { target: { value: "nothing like this" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search Jira for “nothing like this”" }));
+
+    const jql = 'project = AB AND text ~ "nothing like this" ORDER BY updated DESC';
+    await vi.waitFor(() => expect(api.listJiraIssues).toHaveBeenLastCalledWith(jql));
+    const tab = await screen.findByRole("button", { name: "Search: nothing like this" });
+    // Jira matched the whole ticket text, so the box no longer narrows its results by title.
+    expect((box as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "AB-7: Printer jams on reboot" })).toBeTruthy();
+    expect(tab.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "My open tickets" }).getAttribute("aria-pressed")).toBe("false");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Remove Search: nothing like this" }));
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Search: nothing like this" })).toBeNull());
+    expect(screen.getByRole("button", { name: "My open tickets" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("opens a ticket typed by key when Enter is pressed in the search box", async () => {
+    const api = fakeApi();
+    await renderOpened(api);
+    const box = screen.getByRole("searchbox", { name: "Search tickets" });
+
+    await fireEvent.input(box, { target: { value: "ab-8" } });
+    expect(screen.getByRole("button", { name: "Open AB-8" })).toBeTruthy();
+    await fireEvent.keyDown(box, { key: "Enter" });
+
+    await vi.waitFor(() => expect(api.getJiraIssue).toHaveBeenLastCalledWith("AB-8"));
+  });
+  it("refuses to overwrite a description Jira changed during the edit until the user saves anyway", async () => {
+    const api = fakeApi();
+    vi.mocked(api.updateJiraIssue)
+      .mockRejectedValueOnce({ code: "jira_edit_conflict", message: "The description of AB-7 may have changed in Jira" })
+      .mockResolvedValueOnce(detail({ description: "My steps" }));
+    await renderOpened(api);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), { target: { value: "My steps" } });
+    vi.mocked(api.getJiraIssue).mockResolvedValueOnce(detail({ description: "Maya's steps" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saveAnyway = await screen.findByRole("button", { name: "Save anyway" });
+    expect(screen.getByRole("alert").textContent).toContain("may have changed in Jira");
+    expect((screen.getByRole("textbox", { name: "Description" }) as HTMLTextAreaElement).value).toBe("My steps");
+    await vi.waitFor(() => expect(screen.getByText("Maya's steps")).toBeTruthy());
+    await fireEvent.click(saveAnyway);
+
+    await vi.waitFor(() => expect(api.updateJiraIssue).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.updateJiraIssue).mock.calls[0][1]).toEqual({
+      description: "My steps",
+      base: { summary: "Printer jams on reboot", description: "Jams after reboot." },
+    });
+    expect(vi.mocked(api.updateJiraIssue).mock.calls[1][1]).toEqual({
+      description: "My steps",
+      base: { summary: "Printer jams on reboot", description: "Maya's steps" },
+    });
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Save anyway" })).toBeNull());
+  });
   it("hides and restores the ticket list from its toggle and remembers the choice", async () => {
     const api = fakeApi();
     await renderOpened(api);

@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::jira::transport::{resolve_cloud_id, GatewayTransport, JiraCredentials};
-use crate::jira::{JiraClient, JiraError};
+use crate::jira::{IssueUpdate, JiraClient, JiraError, JiraIssueDetail};
 
 use super::settings::{AppSettings, JiraFilter, SettingsService};
 
@@ -118,6 +118,70 @@ pub fn effective_filters(settings: &AppSettings) -> Vec<JiraFilter> {
     ]
 }
 
+/// The ticket text an edit started from. `None` when it is unknown, as for an
+/// edit kept from before the app recorded it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditBase {
+    pub summary: Option<String>,
+    pub description: Option<String>,
+}
+
+/// A field an edit would overwrite although Jira changed it since the edit
+/// started, or although the start is unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditConflict {
+    Summary,
+    Description,
+}
+
+impl EditConflict {
+    pub fn field_name(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Description => "description",
+        }
+    }
+}
+
+/// Lists the fields `update` would overwrite although Jira's `current` value
+/// no longer matches the edit's `base`. Jira has no conditional update, so
+/// callers check this just before writing.
+pub fn edit_conflicts(
+    current: &JiraIssueDetail,
+    update: &IssueUpdate,
+    base: &EditBase,
+) -> Vec<EditConflict> {
+    let fields = [
+        (EditConflict::Summary, &update.summary, &base.summary, &current.summary.summary),
+        (EditConflict::Description, &update.description, &base.description, &current.description),
+    ];
+    fields
+        .into_iter()
+        .filter(|(_, written, started_from, now)| match (written, started_from) {
+            (None, _) => false,
+            // Writing what Jira already holds overwrites nothing.
+            (Some(written), _) if same_text(written, now) => false,
+            (Some(_), Some(started_from)) => !same_text(started_from, now),
+            (Some(_), None) => true,
+        })
+        .map(|(conflict, ..)| conflict)
+        .collect()
+}
+
+// Compares ticket text the way a reader sees it: line endings and whitespace
+// at line ends do not count.
+fn same_text(left: &str, right: &str) -> bool {
+    let lines = |text: &str| {
+        text.replace("\r\n", "\n")
+            .trim_end()
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    lines(left) == lines(right)
+}
+
 #[derive(Clone)]
 pub struct JiraConnection {
     pub credentials: JiraCredentials,
@@ -191,8 +255,112 @@ pub fn connect(settings: &SettingsService) -> Result<JiraClient<GatewayTransport
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_filters, jira_status, resolve_connection, JiraEnvironment};
-    use crate::jira::JiraError;
+    use super::{
+        edit_conflicts, effective_filters, jira_status, resolve_connection, EditBase,
+        EditConflict, JiraEnvironment,
+    };
+    use crate::jira::{IssueKey, IssueUpdate, JiraError, JiraIssueDetail, JiraIssueSummary};
+
+    fn ticket(summary: &str, description: &str) -> JiraIssueDetail {
+        JiraIssueDetail {
+            summary: JiraIssueSummary {
+                key: IssueKey::parse("AB-7").unwrap(),
+                summary: summary.to_string(),
+                status: "To Do".to_string(),
+                status_category: "new".to_string(),
+                issue_type: "Bug".to_string(),
+                priority: None,
+                assignee: None,
+                updated: None,
+                labels: vec![],
+                url: String::new(),
+            },
+            description: description.to_string(),
+            description_editable_losslessly: true,
+            reporter: None,
+            parent_key: None,
+            subtasks: vec![],
+            linked_issues: vec![],
+            attachments: vec![],
+            comments: vec![],
+            transitions: vec![],
+        }
+    }
+
+    fn base(summary: &str, description: &str) -> EditBase {
+        EditBase {
+            summary: Some(summary.to_string()),
+            description: Some(description.to_string()),
+        }
+    }
+
+    fn update(summary: Option<&str>, description: Option<&str>) -> IssueUpdate {
+        IssueUpdate {
+            summary: summary.map(str::to_string),
+            description: description.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn an_edit_of_text_jira_still_holds_has_no_conflict() {
+        let current = ticket("Printer jams", "Jams after reboot.\n");
+
+        assert!(edit_conflicts(
+            &current,
+            &update(Some("Printer jams on reboot"), Some("Mine")),
+            // Line endings and trailing whitespace are not changes.
+            &base("Printer jams", "Jams after reboot.\r\n  ")
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_field_changed_in_jira_since_the_edit_started_is_a_conflict() {
+        let current = ticket("Renamed by Maya", "Maya's new steps");
+
+        assert_eq!(
+            edit_conflicts(
+                &current,
+                &update(Some("Mine"), Some("Mine")),
+                &base("Printer jams", "Old steps")
+            ),
+            vec![EditConflict::Summary, EditConflict::Description]
+        );
+    }
+
+    #[test]
+    fn fields_the_edit_leaves_alone_never_conflict() {
+        let current = ticket("Renamed by Maya", "Old steps");
+
+        assert!(edit_conflicts(
+            &current,
+            &update(None, Some("Mine")),
+            &base("Printer jams", "Old steps")
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn writing_what_jira_already_holds_is_not_a_conflict() {
+        let current = ticket("Printer jams", "Same fix");
+
+        assert!(edit_conflicts(
+            &current,
+            &update(None, Some("Same fix")),
+            &base("Printer jams", "Old steps")
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn an_unknown_start_is_a_conflict_for_the_fields_being_written() {
+        let current = ticket("Printer jams", "Old steps");
+
+        assert_eq!(
+            edit_conflicts(&current, &update(None, Some("Mine")), &EditBase::default()),
+            vec![EditConflict::Description]
+        );
+    }
     use crate::services::settings::{AppSettings, JiraFilter};
 
     fn configured_settings() -> AppSettings {

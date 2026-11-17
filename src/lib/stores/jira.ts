@@ -10,6 +10,8 @@ import {
   getJiraAttachmentThumbnail,
   getJiraIssue,
   getJiraStatus,
+  getSavedJiraIssue,
+  getSavedJiraIssues,
   loadJiraWriting,
   saveJiraWriting,
   listJiraChatMessages,
@@ -24,6 +26,7 @@ import {
   transitionJiraIssue,
   updateJiraIssue,
 } from "$lib/api";
+import { issueKeyInQuery, jiraTextSearch } from "$lib/jira-list";
 import { buildTicketPrompt } from "$lib/jira-prompt";
 import type {
   JiraAttachmentDownload,
@@ -51,6 +54,8 @@ export type JiraApi = {
   getJiraStatus: typeof getJiraStatus;
   listJiraIssues: typeof listJiraIssues;
   getJiraIssue: typeof getJiraIssue;
+  getSavedJiraIssues: typeof getSavedJiraIssues;
+  getSavedJiraIssue: typeof getSavedJiraIssue;
   listJiraIssueTypes: typeof listJiraIssueTypes;
   createJiraIssue: typeof createJiraIssue;
   updateJiraIssue: typeof updateJiraIssue;
@@ -76,6 +81,8 @@ const defaultApi: JiraApi = {
   getJiraStatus,
   listJiraIssues,
   getJiraIssue,
+  getSavedJiraIssues,
+  getSavedJiraIssue,
   listJiraIssueTypes,
   createJiraIssue,
   updateJiraIssue,
@@ -114,8 +121,41 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const activeFilter = writable<JiraFilter | null>(null);
   // The ticket search the agent last put in the list, offered beside the saved filters.
   const agentFilter = writable<JiraFilter | null>(null);
+  // The user's last search of Jira itself, offered beside the saved filters.
+  const searchFilter = writable<JiraFilter | null>(null);
   const issues = writable<JiraIssueSummary[]>([]);
   const selectedIssue = writable<JiraIssueDetail | null>(null);
+  /** When the shown list was saved, while it is a saved copy instead of Jira's current answer. */
+  const issuesSavedAt = writable<string | null>(null);
+  /** When the open ticket was saved, while it is a saved copy. Changes wait for Jira's current ticket. */
+  const issueSavedAt = writable<string | null>(null);
+  // The JQL of the list on screen, so a refresh never swaps it for an older saved copy.
+  let listedJql: string | null = null;
+  let listRequestSequence = 0;
+  // The ticket being opened, so a list arriving meanwhile does not open another.
+  let openingIssueKey: string | null = null;
+  // Tickets changed from this view, with the change count when each was made. A list
+  // requested before a change shows that ticket as changed, not as Jira listed it then.
+  let changeCount = 0;
+  const changedTickets = new Map<string, { summary: JiraIssueSummary; change: number }>();
+
+  function withLaterChanges(items: JiraIssueSummary[], changesBefore: number): JiraIssueSummary[] {
+    return items.map((item) => {
+      const changed = changedTickets.get(item.key);
+      return changed && changed.change > changesBefore ? changed.summary : item;
+    });
+  }
+
+  function showIssues(items: JiraIssueSummary[], jql: string | null, savedAt: string | null = null): void {
+    issues.set(items);
+    listedJql = jql;
+    issuesSavedAt.set(savedAt);
+  }
+
+  function showIssue(issue: JiraIssueDetail | null, savedAt: string | null = null): void {
+    selectedIssue.set(issue);
+    issueSavedAt.set(savedAt);
+  }
   const ticketWriting = writable<Record<string, JiraTicketWriting>>({});
   const selectedWriting = derived([selectedIssue, ticketWriting], ([$issue, $writing]) =>
     $issue ? $writing[$issue.key] : undefined,
@@ -189,8 +229,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
         draftBeforeAgent.set(null);
         draftAgentOpen.set(false);
         if (writingScope !== null) {
-          selectedIssue.set(null);
-          issues.set([]);
+          showIssue(null);
+          showIssues([], null);
+          changedTickets.clear();
         }
         draft.set(saved.draft);
         draftVisible.set(false);
@@ -325,6 +366,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   const messages = writable<JiraChatMessage[]>([]);
   const agentBusy = writable(false);
   const busyProposalId = writable<string | null>(null);
+  /** The ticket whose edit was refused because Jira changed it since the edit started. */
+  const editConflictKey = writable<string | null>(null);
   const chatError = writable<string | null>(null);
 
   // Guards against a slow ticket response replacing a newer selection.
@@ -343,13 +386,13 @@ export function createJiraStore(api: JiraApi = defaultApi) {
         return;
       }
       if (!nextStatus.configured) {
-        issues.set([]);
-        selectedIssue.set(null);
+        showIssues([], null);
+        showIssue(null);
         return;
       }
 
       const current = get(activeFilter);
-      if (!current || current !== get(agentFilter)) {
+      if (!current || (current !== get(agentFilter) && current !== get(searchFilter))) {
         activeFilter.set(
           nextStatus.filters.find((candidate) => candidate.name === current?.name) ??
             nextStatus.filters[0] ??
@@ -381,51 +424,101 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   async function reloadIssues(pinnedKey: string | null): Promise<void> {
     const filter = get(activeFilter);
     if (!filter) {
-      issues.set([]);
+      showIssues([], null);
       return;
     }
 
+    const request = ++listRequestSequence;
+    const changesBefore = changeCount;
     loadingIssues.set(true);
     error.set(null);
+    const current = trackSettled(api.listJiraIssues(filter.jql));
+
+    // A saved copy stands in only for a list that is not on screen yet.
+    if (listedJql !== filter.jql) {
+      const saved = await api.getSavedJiraIssues(filter.jql).catch(() => null);
+      if (saved && request === listRequestSequence && !current.resolved) {
+        showIssues(saved.value, filter.jql, saved.savedAt);
+        void keepOrOpenFirst(saved.value, pinnedKey);
+      }
+    }
 
     try {
-      const items = await api.listJiraIssues(filter.jql);
-      issues.set(items);
-
-      const selectedKey = get(selectedIssue)?.key;
-      if (selectedKey && (selectedKey === pinnedKey || items.some((item) => item.key === selectedKey))) {
+      const items = withLaterChanges(await current.promise, changesBefore);
+      if (request !== listRequestSequence) {
         return;
       }
-      if (items.length === 0) {
-        issueRequestSequence += 1;
-        selectedIssue.set(null);
-        return;
-      }
-      await selectIssue(items[0].key);
+      showIssues(items, filter.jql);
+      await keepOrOpenFirst(items, pinnedKey);
     } catch (unknownError) {
-      error.set(errorMessage(unknownError, "Could not load Jira tickets."));
+      if (request === listRequestSequence) {
+        error.set(errorMessage(unknownError, "Could not load Jira tickets."));
+      }
     } finally {
-      loadingIssues.set(false);
+      if (request === listRequestSequence) {
+        loadingIssues.set(false);
+      }
     }
   }
 
+  /** Keeps the open ticket when it is listed or pinned; otherwise opens the first listed ticket. */
+  async function keepOrOpenFirst(items: JiraIssueSummary[], pinnedKey: string | null): Promise<void> {
+    const selectedKey = openingIssueKey ?? get(selectedIssue)?.key;
+    if (selectedKey && (selectedKey === pinnedKey || items.some((item) => item.key === selectedKey))) {
+      // A saved copy left on screen by a failed load is asked for again.
+      if (!openingIssueKey && get(issueSavedAt)) {
+        await loadIssue(selectedKey);
+      }
+      return;
+    }
+    if (items.length === 0) {
+      issueRequestSequence += 1;
+      openingIssueKey = null;
+      showIssue(null);
+      return;
+    }
+    await selectIssue(items[0].key);
+  }
+
+  /**
+   * Opens a ticket. A saved copy shows at once when another ticket, or none, is
+   * open; Jira's current ticket replaces it when it arrives.
+   */
   async function selectIssue(key: string): Promise<void> {
     hideDraft();
+    await loadIssue(key);
+  }
+
+  async function loadIssue(key: string): Promise<void> {
     const request = ++issueRequestSequence;
+    openingIssueKey = key;
     loadingIssue.set(true);
     error.set(null);
+    const current = trackSettled(api.getJiraIssue(key));
+
+    if (get(selectedIssue)?.key !== key) {
+      const saved = await api.getSavedJiraIssue(key).catch(() => null);
+      if (saved && request === issueRequestSequence && !current.resolved) {
+        showIssue(saved.value, saved.savedAt);
+      }
+    }
 
     try {
-      const issue = await api.getJiraIssue(key);
+      const issue = await current.promise;
       if (request === issueRequestSequence) {
-        selectedIssue.set(issue);
+        showIssue(issue);
       }
     } catch (unknownError) {
       if (request === issueRequestSequence) {
+        // Jira no longer returns the ticket, so no copy of it may stay on screen.
+        if (isJiraNotFound(unknownError) && get(selectedIssue)?.key === key) {
+          showIssue(null);
+        }
         error.set(errorMessage(unknownError, "Could not load the ticket."));
       }
     } finally {
       if (request === issueRequestSequence) {
+        openingIssueKey = null;
         loadingIssue.set(false);
       }
     }
@@ -552,7 +645,8 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       draft.set(null);
       hideDraft();
       issueRequestSequence += 1;
-      selectedIssue.set(created);
+      openingIssueKey = null;
+      showIssue(created);
       // The new ticket stays open even when the filter does not match it or
       // Jira's search has not caught up with it yet.
       await reloadIssues(created.key);
@@ -568,9 +662,14 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   async function changeSelected(
     change: (key: string) => Promise<JiraIssueDetail>,
     fallbackMessage: string,
+    onFailure?: (key: string, failure: unknown) => Promise<void>,
   ): Promise<boolean> {
     const key = get(selectedIssue)?.key;
     if (!key) {
+      return false;
+    }
+    if (get(issueSavedAt)) {
+      error.set("This is a saved copy of the ticket. Wait for Jira to send the current one before changing it.");
       return false;
     }
 
@@ -579,13 +678,22 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
     try {
       const updated = await change(key);
+      changeCount += 1;
+      changedTickets.set(key, { summary: toSummary(updated), change: changeCount });
+      // A load of this ticket that began before the change would show it as it was.
+      if (openingIssueKey === null || openingIssueKey === key) {
+        issueRequestSequence += 1;
+        openingIssueKey = null;
+        loadingIssue.set(false);
+      }
       if (get(selectedIssue)?.key === key) {
-        selectedIssue.set(updated);
+        showIssue(updated);
       }
       issues.update((items) => items.map((item) => (item.key === key ? toSummary(updated) : item)));
       return true;
     } catch (unknownError) {
       error.set(errorMessage(unknownError, fallbackMessage));
+      await onFailure?.(key, unknownError);
       return false;
     } finally {
       savingIssue.set(false);
@@ -597,6 +705,9 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   function rememberWriting(key: string, writing: JiraTicketWriting): void {
+    if (!writing.editing && get(editConflictKey) === key) {
+      editConflictKey.set(null);
+    }
     ticketWriting.update((current) => {
       const next = { ...current };
       if (!writing.editing && !writing.comment) {
@@ -620,10 +731,26 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
   async function saveSelectedEdit(edit: JiraIssueEdit): Promise<boolean> {
     const key = get(selectedIssue)?.key;
-    const success = await changeSelected((key) => api.updateJiraIssue(key, edit), "Could not save the ticket.");
+    const success = await changeSelected(
+      (key) => api.updateJiraIssue(key, edit),
+      "Could not save the ticket.",
+      async (key, failure) => {
+        if (!isEditConflict(failure)) {
+          return;
+        }
+        // The writing stays; Jira's current version is loaded so the user can compare.
+        editConflictKey.set(key);
+        const message = get(error);
+        await loadIssue(key);
+        error.set(message);
+      },
+    );
     const writing = key ? get(ticketWriting)[key] : undefined;
     if (success && key && writing) {
-      rememberWriting(key, { ...writing, editing: false });
+      rememberWriting(key, { ...writing, editing: false, base: null });
+    }
+    if (success && get(editConflictKey) === key) {
+      editConflictKey.set(null);
     }
     return success;
   }
@@ -879,6 +1006,36 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     await refreshIssues();
   }
 
+  /**
+   * Looks beyond the loaded list: opens the ticket when the query is a key,
+   * otherwise lists Jira's text matches as a temporary filter.
+   */
+  async function searchJira(query: string): Promise<void> {
+    const key = issueKeyInQuery(query);
+    if (key) {
+      await selectIssue(key);
+      return;
+    }
+    const search = jiraTextSearch(query, get(status)?.projectKey ?? "");
+    if (!search) {
+      return;
+    }
+    searchFilter.set(search);
+    await selectFilter(search);
+  }
+
+  /** Drops the Jira search and returns to the first saved filter when it was shown. */
+  async function clearSearchFilter(): Promise<void> {
+    const cleared = get(searchFilter);
+    searchFilter.set(null);
+    if (!cleared || get(activeFilter) !== cleared) {
+      return;
+    }
+
+    activeFilter.set(get(status)?.filters[0] ?? null);
+    await refreshIssues();
+  }
+
   /** Refreshes the open conversation when the backend stored new messages. */
   async function handleThreadUpdated(threadId: string): Promise<void> {
     await refreshPendingProposals();
@@ -908,8 +1065,13 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     status,
     activeFilter,
     agentFilter,
+    searchFilter,
+    searchJira,
+    clearSearchFilter,
     issues,
+    issuesSavedAt,
     selectedIssue,
+    issueSavedAt,
     selectedWriting,
     rememberWriting,
     issueTypes,
@@ -932,6 +1094,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     messages,
     agentBusy,
     busyProposalId,
+    editConflictKey,
     chatError,
     open,
     selectFilter,
@@ -979,6 +1142,29 @@ function toSummary(issue: JiraIssueDetail): JiraIssueSummary {
     updated: issue.updated,
     labels: issue.labels,
     url: issue.url,
+  };
+}
+
+/** True when saving was refused because Jira changed the ticket since the edit started. */
+function isEditConflict(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object" && (error as { code?: unknown }).code === "jira_edit_conflict";
+}
+
+/** True for the error the backend reports when Jira answers 404: the ticket is gone or hidden. */
+function isJiraNotFound(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object" && (error as { code?: unknown }).code === "jira_not_found";
+}
+
+/** Wraps a promise so callers can check whether it has resolved yet. */
+function trackSettled<T>(promise: Promise<T>): { promise: Promise<T>; readonly resolved: boolean } {
+  let resolved = false;
+  // Rejections are handled where the promise is awaited.
+  promise.then(() => { resolved = true; }, () => undefined);
+  return {
+    promise,
+    get resolved() {
+      return resolved;
+    },
   };
 }
 

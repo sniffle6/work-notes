@@ -502,7 +502,7 @@ Tools:
 - add_comment: `issueKey`, `comment`.
 - assign_issue: `issueKey`, `assignee` ("me" or "unassigned").
 
-Descriptions and comments are plain text: blank lines separate paragraphs, "- " starts a bullet, "## " starts a heading.
+Descriptions and comments are Markdown: blank lines separate paragraphs, "- " starts a bullet, "1. " a numbered item, indentation nests list items, "## " starts a heading, and pipe rows make a table. Inline, use **bold**, _italic_, ~~strikethrough~~, `code`, and [label](https://...) links. Fenced code blocks are kept as code.
 
 JQL reminders: `assignee = currentUser()`, `statusCategory != Done`, `project = KEY`, `text ~ "words"`, `labels = name`, `ORDER BY updated DESC`.
 Reading the user's words as JQL:

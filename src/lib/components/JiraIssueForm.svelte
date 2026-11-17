@@ -100,7 +100,7 @@
   <label>
     <span>Description</span>
     <textarea bind:value={description} aria-label="Description" rows="14" disabled={saving}></textarea>
-    <small>Blank lines separate paragraphs. Start lines with "- " for bullets or "## " for headings.</small>
+    <small>Markdown: blank lines separate paragraphs, "- " starts a bullet, "## " a heading, plus **bold**, _italic_, `code`, and [links](https://…).</small>
   </label>
 
   <div class="form-actions">

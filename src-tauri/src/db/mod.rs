@@ -75,6 +75,8 @@ mod tests {
             "jira_chat_threads",
             "jira_chat_messages",
             "note_jira_links",
+            "jira_saved_lists",
+            "jira_saved_issues",
         ] {
             let exists: i64 = connection
                 .query_row(

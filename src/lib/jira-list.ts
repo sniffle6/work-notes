@@ -1,4 +1,4 @@
-import type { JiraIssueSummary, JiraStatusCategory } from "./types";
+import type { JiraFilter, JiraIssueSummary, JiraStatusCategory } from "./types";
 
 export type JiraIssueGroup = {
   status: string;
@@ -56,6 +56,35 @@ export function groupIssuesByStatus(issues: JiraIssueSummary[]): JiraIssueGroup[
   return [...groups.values()].sort(
     (left, right) => CATEGORY_ORDER.indexOf(left.statusCategory) - CATEGORY_ORDER.indexOf(right.statusCategory),
   );
+}
+
+// Characters Jira's text search reads as operators, plus the quote and
+// backslash that would end or escape the JQL string.
+// https://support.atlassian.com/jira-software-cloud/docs/search-for-special-characters-and-text/
+const TEXT_SEARCH_RESERVED = /[+\-&|!(){}[\]^~*?\\:"/]/g;
+const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
+
+/**
+ * Builds a Jira search for tickets whose text contains the query's words,
+ * newest first, within the project when one is set. Returns null when no
+ * searchable words remain.
+ */
+export function jiraTextSearch(query: string, projectKey: string): JiraFilter | null {
+  const words = query.replace(TEXT_SEARCH_RESERVED, " ").split(/\s+/).filter(Boolean).join(" ");
+  if (!words) {
+    return null;
+  }
+  const scope = projectKey ? `project = ${projectKey} AND ` : "";
+  return {
+    name: `Search: ${query.trim().replace(/\s+/g, " ")}`,
+    jql: `${scope}text ~ "${words}" ORDER BY updated DESC`,
+  };
+}
+
+/** The ticket key the query consists of, upper-cased, or null. */
+export function issueKeyInQuery(query: string): string | null {
+  const trimmed = query.trim();
+  return ISSUE_KEY.test(trimmed) ? trimmed.toUpperCase() : null;
 }
 
 /** How strongly a Jira priority should stand out in the ticket list. */

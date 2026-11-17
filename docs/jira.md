@@ -29,6 +29,8 @@ The API token is never written to SQLite, never sent to the chat agent, and only
 - `src-tauri/src/services/jira.rs`: setup status, filters, and building a client from settings and environment.
 - `src-tauri/src/services/jira_agent.rs`: the agent loop and proposal approval.
 - `src-tauri/src/services/jira_attachments.rs`: saving a ticket's attachments to disk, including local file naming.
+- `src-tauri/src/services/jira_saved.rs`: saved copies of ticket lists and tickets, and the site-and-account scope they belong to.
+- `src-tauri/src/repositories/jira_cache.rs`: saved copies in SQLite.
 - `src-tauri/src/repositories/jira.rs`: chat threads, chat messages, and note-to-ticket links in SQLite.
 - `src-tauri/src/commands/jira.rs`: Tauri commands and DTOs.
 - `schemas/jira-agent-turn.schema.json`: output schema for one agent turn.
@@ -47,7 +49,33 @@ Searches use `POST search/jql` with page tokens and return at most 200 tickets p
 
 ## Ticket List And Agent Prompt
 
-The list groups tickets by status in workflow order: to do, in progress, done. The search box narrows the loaded tickets only; it does not query Jira.
+The list groups tickets by status in workflow order: to do, in progress, done. The search box narrows the loaded tickets as it is typed in; that never queries Jira. To look beyond them (a filter lists at most 200), press Enter or choose the button under the results. A ticket key such as `AB-12` opens that ticket. Other text searches Jira's ticket text (`text ~`) within the project, newest first, and the results replace the list under a removable "Search:" filter beside the saved ones. The search box is cleared then, because Jira matched descriptions and comments that the box cannot see. Characters Jira's text search reads as operators are dropped from the query.
+
+### Saved Copies
+
+Every ticket list and ticket Jira returns is saved to local SQLite, so the view can show it at once next time.
+
+- Opening a filter shows its saved list, if any, while Jira is asked for the current one. Opening a ticket does the same. The header says "Refreshing tickets" meanwhile.
+- Jira's answer replaces the saved copy. A saved copy that arrives after Jira's answer is ignored, and refreshing a list or ticket already on screen never swaps it for a saved copy.
+- A saved ticket is labelled "Saved copy". Moving, assigning, editing, and commenting wait until Jira sends the current ticket, so no change is made from out-of-date fields. Typing a comment or an edit still works.
+- If Jira cannot be reached, the saved copies stay on screen with the error, and the list header says "saved copy". Refresh asks Jira again for the open ticket as well as the list.
+- If Jira answers 404 for a ticket (deleted, or the account lost access), its saved copy is removed and leaves the screen. The backend reports this as `jira_not_found`.
+- Each copy records when Jira was asked for it. An answer to an earlier request never replaces a copy from a later one, so requests that finish out of order cannot save an older ticket over a newer one. The site and account are read before Jira is asked, so changing the site during a request cannot file the answer under the new site.
+- A change made in this view wins over loads that began before it: a ticket reload or list that started earlier cannot put the old status, summary, or fields back on screen.
+- Copies belong to the Jira site and account email, so changing either never shows another's tickets. The newest 50 lists and 500 tickets are kept per site and account. A copy that cannot be read is treated as missing.
+- Saved copies hold ticket content only. The API token is never saved.
+
+### Edit Conflicts
+
+An edit can stay unfinished for days, so saving checks that it will not overwrite someone else's change.
+
+- Starting an edit records the ticket's summary and description. The record is kept with the unfinished edit.
+- A field counts as edited when it differs from where the edit started. Fields changed in Jira meanwhile but not by the user are not sent.
+- Before writing, `update_jira_issue` reads the ticket from Jira. If a field being written no longer matches where the edit started, nothing is written and it reports `jira_edit_conflict`. Writing text Jira already holds, and differences only in line endings or trailing spaces, are not conflicts.
+- After a conflict the edit stays open with the user's text, and Jira's current version is loaded beside it. "Save anyway" keeps the user's changes, gives untouched fields Jira's current text, and saves against Jira's current version.
+- An edit kept from before this check has no recorded start, so its first save reports a conflict for every field it writes, and "Save anyway" keeps all of the user's text.
+- Jira has no conditional update, so a change made in Jira between the check and the write, a fraction of a second, can still be overwritten.
+- Approving an agent proposal runs the same kind of check against the previous values its review captured: summary, description, status, or assignee. If Jira changed a field the proposal writes since then, the proposal fails, nothing is written, and the result asks the user to have the agent propose it again. A status already at the target, an assignee already cleared, or text Jira already holds is not a change. Fields the review could not capture are not checked; the review warned the user to check Jira before approving.
 
 The ticket list and the agent panel each collapse. `[` toggles the list and `]` toggles the agent when no text field has focus. The choices are kept in browser storage.
 
@@ -97,11 +125,13 @@ The ticket detail lists a ticket's attachments. The user downloads one or all of
 
 ## Descriptions And Comments
 
-Jira stores rich text as ADF. The app shows it as Markdown-flavored text and writes plain text back.
+Jira stores rich text as ADF. The app shows it as Markdown and writes Markdown back. `src-tauri/src/jira/adf.rs` converts in both directions, and `src/lib/markdown.ts` renders the same syntax in the ticket view.
 
-Writing supports paragraphs, `#` headings, `-` bullets, numbered lists, fenced code blocks, and `---` rules. Tables, panels, mentions, nested lists, and inline marks such as bold or code cannot be written back.
+Writing supports paragraphs, `#` headings, `-` bullets and numbered lists (nested by indentation, numbering from any start), pipe tables with an optional `| --- |` header row, fenced code blocks, and `---` rules. Inline it supports `**bold**`, `_italic_`, `~~strikethrough~~`, `` `code` ``, and `[label](url)` links to `http`, `https`, and `mailto` targets. A backslash keeps a markup character literal; reading escapes plain-text characters that would otherwise be read as markup, such as the underscores in `_leading`, but leaves ordinary punctuation alone. `\|` is a literal pipe inside a table cell.
 
-`descriptionEditableLosslessly` on a ticket is `false` when its description uses anything the editor cannot write. The edit form then requires an explicit confirmation before saving a changed description, because the save replaces the formatted description with plain text.
+Panels, mentions, emoji, smart links, underline, colours, alignment, merged or sized table cells, blockquotes, and list items with more than one paragraph cannot be written back. Reading still shows their text.
+
+`descriptionEditableLosslessly` on a ticket is `false` when converting its description to Markdown and back would not rebuild it. The check ignores differences Jira does not display: node ids, how text is split into nodes, the order of marks, whitespace at line ends, empty paragraphs, and default table layout attributes. When it is `false`, the edit form requires an explicit confirmation before saving a changed description, because the save replaces formatting the editor cannot write.
 
 ## Agent Contract
 
@@ -161,7 +191,7 @@ View calls change what the app shows and never change Jira:
 - A proposal reaches Jira only when the user approves it in the chat. Rejecting sends nothing.
 - An approved proposal without a recorded result shows "Applying", not "Applied". A failed proposal shows the error and says it will not retry. A process interrupted after claiming a proposal may leave it in "Applying"; check Jira before requesting another change.
 - A proposal is claimed in one SQL statement before Jira is called, so it can run at most once.
-- A Jira failure on an approved proposal is recorded on the proposal as `failed`. The proposal is not retried.
+- A Jira failure on an approved proposal is recorded on the proposal as `failed`. The proposal is not retried. So is a field Jira changed since the proposal's review captured it (see Edit Conflicts).
 - A tool call the app cannot accept is reported back to the agent as a failed lookup.
 - One user message allows at most 6 agent turns. Then the app stops the run and says so.
 - One conversation has at most one agent run at a time.

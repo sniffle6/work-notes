@@ -14,9 +14,10 @@ use crate::jira::chat::{
 };
 use crate::jira::client::DEFAULT_SEARCH_LIMIT;
 use crate::jira::transitions::describe_transition;
-use crate::jira::{Assignee, IssueUpdate, JiraError, JiraOps, NewIssue};
+use crate::jira::{Assignee, IssueKey, IssueUpdate, JiraError, JiraIssueDetail, JiraOps, NewIssue};
 use crate::repositories::JiraChatRepository;
 
+use super::jira::{edit_conflicts, EditBase, EditConflict};
 use super::{ServiceError, ServiceResult};
 
 /// Agent turns allowed for one user message. Each turn after the first is
@@ -27,6 +28,13 @@ const MAX_THREAD_TITLE_CHARS: usize = 60;
 const MAX_USER_MESSAGE_CHARS: usize = 8_000;
 const AGENT_SEARCH_LIMIT: usize = 50;
 const MAX_COMMENTS_IN_LOOKUP: usize = 10;
+const UNASSIGNED: &str = "Unassigned";
+
+// Proposal review field labels. Approval finds captured values by them.
+const SUMMARY_LABEL: &str = "Summary";
+const DESCRIPTION_LABEL: &str = "Description";
+const STATUS_LABEL: &str = "Status";
+const ASSIGNEE_LABEL: &str = "Assignee";
 
 /// Tracks which conversations have an agent run in progress, so a thread
 /// never has two runs interleaving messages.
@@ -248,7 +256,8 @@ impl JiraAgentService {
     /// Runs an approved proposal against Jira and records the outcome.
     ///
     /// A Jira failure is recorded on the proposal as `Failed` and is not an
-    /// error. Fails with `InvalidInput` when the message is not a pending
+    /// error. So is a field the change would overwrite although Jira changed
+    /// it since the proposal's review captured it; nothing is written then. Fails with `InvalidInput` when the message is not a pending
     /// proposal, so a change can never run twice.
     pub fn approve_proposal(
         &self,
@@ -267,9 +276,14 @@ impl JiraAgentService {
         {
             return Err(ALREADY_RESOLVED);
         }
-        let (status, result) = match apply_change(&call, default_project_key, jira) {
+        let outcome = match changed_since_proposed(&call, message.review.as_ref(), jira) {
+            Ok(None) => apply_change(&call, default_project_key, jira).map_err(|e| e.to_string()),
+            Ok(Some(refusal)) => Err(refusal),
+            Err(error) => Err(error.to_string()),
+        };
+        let (status, result) = match outcome {
             Ok(result) => (ChatMessageStatus::Approved, result),
-            Err(error) => (ChatMessageStatus::Failed, error.to_string()),
+            Err(reason) => (ChatMessageStatus::Failed, reason),
         };
         self.chat.finish_proposal(message_id, status, &result)?;
 
@@ -520,14 +534,14 @@ fn proposal_review(call: &JiraToolCall, jira: &dyn JiraOps) -> ProposalReview {
         } => {
             if let Some(value) = summary {
                 field(
-                    "Summary",
+                    SUMMARY_LABEL,
                     issue.as_ref().map(|i| i.summary.summary.clone()),
                     value,
                 );
             }
             if let Some(value) = description {
                 field(
-                    "Description",
+                    DESCRIPTION_LABEL,
                     issue.as_ref().map(|i| i.description.clone()),
                     value,
                 );
@@ -535,29 +549,24 @@ fn proposal_review(call: &JiraToolCall, jira: &dyn JiraOps) -> ProposalReview {
                     .as_ref()
                     .is_some_and(|i| !i.description_editable_losslessly)
                 {
-                    review.warning = Some("This replaces Jira's rich description with plain text and may remove formatting.".to_string());
+                    review.warning = Some("This replaces the description with Markdown text and removes formatting it cannot hold, such as panels or mentions.".to_string());
                 }
             }
         }
         JiraToolCall::TransitionIssue { status, .. } => {
             field(
-                "Status",
+                STATUS_LABEL,
                 issue.as_ref().map(|i| i.summary.status.clone()),
                 status,
             );
         }
         JiraToolCall::AssignIssue { assignee, .. } => {
             field(
-                "Assignee",
-                issue.as_ref().map(|i| {
-                    i.summary
-                        .assignee
-                        .clone()
-                        .unwrap_or_else(|| "Unassigned".to_string())
-                }),
+                ASSIGNEE_LABEL,
+                issue.as_ref().map(assignee_name),
                 match assignee {
                     Assignee::Me => "Me (approving account)",
-                    Assignee::Unassigned => "Unassigned",
+                    Assignee::Unassigned => UNASSIGNED,
                 },
             );
         }
@@ -580,6 +589,95 @@ fn proposal_review(call: &JiraToolCall, jira: &dyn JiraOps) -> ProposalReview {
         _ => {}
     }
     review
+}
+
+/// Explains why approving `call` now would overwrite a field Jira changed
+/// since `review` captured it, or returns `None` when it would not. Jira has
+/// no conditional update, so this runs just before the change.
+///
+/// Only fields the review captured are compared, and the ticket is read only
+/// when there is one. A review that could not capture them warned the user to
+/// check Jira before approving.
+fn changed_since_proposed(
+    call: &JiraToolCall,
+    review: Option<&ProposalReview>,
+    jira: &dyn JiraOps,
+) -> Result<Option<String>, JiraError> {
+    let before = |label: &str| {
+        review?
+            .fields
+            .iter()
+            .find(|field| field.label == label)?
+            .before
+            .clone()
+    };
+    let (issue_key, changed): (&IssueKey, Vec<&str>) = match call {
+        JiraToolCall::UpdateIssue {
+            issue_key,
+            summary,
+            description,
+        } => {
+            let base = EditBase {
+                summary: summary.as_ref().and(before(SUMMARY_LABEL)),
+                description: description.as_ref().and(before(DESCRIPTION_LABEL)),
+            };
+            if base.summary.is_none() && base.description.is_none() {
+                return Ok(None);
+            }
+            // Fields without a captured value are left out, since
+            // `edit_conflicts` treats an unknown start as changed.
+            let compared = IssueUpdate {
+                summary: base.summary.as_ref().and(summary.clone()),
+                description: base.description.as_ref().and(description.clone()),
+            };
+            let current = jira.get_issue(issue_key)?;
+            let changed = edit_conflicts(&current, &compared, &base)
+                .into_iter()
+                .map(EditConflict::field_name)
+                .collect();
+            (issue_key, changed)
+        }
+        JiraToolCall::TransitionIssue { issue_key, status } => {
+            let Some(before) = before(STATUS_LABEL) else {
+                return Ok(None);
+            };
+            let now = jira.get_issue(issue_key)?.summary.status;
+            let same_status =
+                |left: &str, right: &str| left.trim().eq_ignore_ascii_case(right.trim());
+            // Already at the target status, the transition overwrites nothing.
+            let changed = !same_status(&now, &before) && !same_status(&now, status);
+            (issue_key, if changed { vec!["status"] } else { vec![] })
+        }
+        JiraToolCall::AssignIssue {
+            issue_key,
+            assignee,
+        } => {
+            let Some(before) = before(ASSIGNEE_LABEL) else {
+                return Ok(None);
+            };
+            let now = assignee_name(&jira.get_issue(issue_key)?);
+            let already_unassigned = *assignee == Assignee::Unassigned && now == UNASSIGNED;
+            let changed = now != before && !already_unassigned;
+            (issue_key, if changed { vec!["assignee"] } else { vec![] })
+        }
+        _ => return Ok(None),
+    };
+    if changed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "The {} of {issue_key} changed in Jira since this was proposed, so nothing was changed. \
+         Ask the agent again to propose it against the current ticket.",
+        changed.join(" and ")
+    )))
+}
+
+fn assignee_name(issue: &JiraIssueDetail) -> String {
+    issue
+        .summary
+        .assignee
+        .clone()
+        .unwrap_or_else(|| UNASSIGNED.to_string())
 }
 
 /// Applies a write tool call to Jira and describes what changed.
@@ -706,13 +804,22 @@ mod tests {
     struct FakeJira {
         calls: RefCell<Vec<String>>,
         fail_with: RefCell<Option<JiraError>>,
+        /// Changes someone else made to every ticket after it was proposed.
+        changed_since: Option<fn(&mut JiraIssueDetail)>,
     }
 
     impl FakeJira {
         fn failing(error: JiraError) -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
                 fail_with: RefCell::new(Some(error)),
+                ..Self::default()
+            }
+        }
+
+        fn changed(change: fn(&mut JiraIssueDetail)) -> Self {
+            Self {
+                changed_since: Some(change),
+                ..Self::default()
             }
         }
 
@@ -774,7 +881,7 @@ mod tests {
 
         fn get_issue(&self, issue_key: &IssueKey) -> Result<JiraIssueDetail, JiraError> {
             self.record(format!("get {issue_key}"))?;
-            Ok(JiraIssueDetail {
+            let mut issue = JiraIssueDetail {
                 summary: summary(issue_key.as_str(), "Printer jams"),
                 description: "Jams after reboot.".to_string(),
                 description_editable_losslessly: true,
@@ -796,7 +903,11 @@ mod tests {
                     name: "Dev Complete".to_string(),
                     to_status: "Dev Complete".to_string(),
                 }],
-            })
+            };
+            if let Some(change) = self.changed_since {
+                change(&mut issue);
+            }
+            Ok(issue)
         }
 
         fn create_issue(&self, issue: &NewIssue) -> Result<IssueKey, JiraError> {
@@ -1869,6 +1980,125 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("rejected the credentials"));
+    }
+
+    fn approve(fixture: &Fixture, proposal_id: &str, jira: &FakeJira) -> ChatMessage {
+        fixture
+            .service
+            .approve_proposal(proposal_id, "AB", jira)
+            .unwrap()
+            .into_iter()
+            .find(|message| message.id == proposal_id)
+            .unwrap()
+    }
+
+    #[test]
+    fn approval_refuses_a_change_to_a_field_jira_changed_since_the_proposal() {
+        let cases: [(serde_json::Value, fn(&mut JiraIssueDetail), &str); 4] = [
+            (
+                json!({ "tool": "update_issue", "issueKey": "AB-7", "summary": "Printer jams on boot" }),
+                |issue| issue.summary.summary = "Printer jams (Maya's title)".to_string(),
+                "summary",
+            ),
+            (
+                json!({ "tool": "update_issue", "issueKey": "AB-7", "description": "Mine." }),
+                |issue| issue.description = "Maya's notes.".to_string(),
+                "description",
+            ),
+            (
+                json!({ "tool": "transition_issue", "issueKey": "AB-7", "status": "Dev Complete" }),
+                |issue| issue.summary.status = "Blocked".to_string(),
+                "status",
+            ),
+            (
+                json!({ "tool": "assign_issue", "issueKey": "AB-7", "assignee": "me" }),
+                |issue| issue.summary.assignee = Some("Maya Lopez".to_string()),
+                "assignee",
+            ),
+        ];
+        for (call, change, field) in cases {
+            let fixture = fixture();
+            let proposal_id = pending_proposal(&fixture, call.clone());
+            let jira = FakeJira::changed(change);
+
+            let proposal = approve(&fixture, &proposal_id, &jira);
+
+            assert_eq!(proposal.status, Some(ChatMessageStatus::Failed), "{call}");
+            let result = proposal.result.unwrap();
+            assert!(
+                result.contains(&format!("The {field} of AB-7 changed in Jira")),
+                "{result}"
+            );
+            assert_eq!(jira.calls(), vec!["get AB-7"], "{call}");
+        }
+    }
+
+    #[test]
+    fn approval_applies_a_change_when_the_fields_it_writes_are_unchanged() {
+        let fixture = fixture();
+        let proposal_id = pending_proposal(
+            &fixture,
+            json!({ "tool": "update_issue", "issueKey": "AB-7", "summary": "Printer jams on boot" }),
+        );
+        // Another field changing does not block the summary.
+        let jira = FakeJira::changed(|issue| issue.description = "Maya's notes.".to_string());
+
+        let proposal = approve(&fixture, &proposal_id, &jira);
+
+        assert_eq!(proposal.status, Some(ChatMessageStatus::Approved));
+        assert_eq!(
+            jira.calls(),
+            vec![
+                "get AB-7".to_string(),
+                "update AB-7 summary=Some(\"Printer jams on boot\") description=None".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn approval_applies_a_change_jira_already_matches() {
+        let fixture = fixture();
+        let proposal_id = pending_proposal(
+            &fixture,
+            json!({ "tool": "transition_issue", "issueKey": "AB-7", "status": "Dev Complete" }),
+        );
+        let jira = FakeJira::changed(|issue| issue.summary.status = "dev complete".to_string());
+
+        let proposal = approve(&fixture, &proposal_id, &jira);
+
+        assert_eq!(proposal.status, Some(ChatMessageStatus::Approved));
+        assert_eq!(jira.calls()[0], "get AB-7");
+    }
+
+    #[test]
+    fn approval_with_unknown_previous_values_relies_on_the_review_warning() {
+        let fixture = fixture();
+        let runner = FakeRunner::new(vec![turn(
+            "",
+            vec![raw_call(json!({
+                "tool": "assign_issue", "issueKey": "AB-7", "assignee": "unassigned"
+            }))],
+        )]);
+        let messages = fixture
+            .send(
+                "Unassign it",
+                &runner,
+                &FakeJira::failing(JiraError::InvalidInput("Offline".to_string())),
+            )
+            .unwrap();
+        let proposal_id = messages
+            .iter()
+            .find(|m| m.role == ChatRole::Proposal)
+            .unwrap()
+            .id
+            .clone();
+        let jira =
+            FakeJira::changed(|issue| issue.summary.assignee = Some("Maya Lopez".to_string()));
+
+        let proposal = approve(&fixture, &proposal_id, &jira);
+
+        assert_eq!(proposal.status, Some(ChatMessageStatus::Approved));
+        assert_eq!(jira.calls(), vec!["assign AB-7 Unassigned"]);
     }
 
     #[test]

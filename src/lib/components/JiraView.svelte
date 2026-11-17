@@ -8,7 +8,7 @@
   import Search from "@lucide/svelte/icons/search";
   import X from "@lucide/svelte/icons/x";
   import { createEventDispatcher } from "svelte";
-  import { filterIssues, groupIssuesByStatus, priorityTone } from "$lib/jira-list";
+  import { filterIssues, groupIssuesByStatus, issueKeyInQuery, jiraTextSearch, priorityTone } from "$lib/jira-list";
   import type { JiraStore } from "$lib/stores/jira";
   import { isTypingTarget, readFlag, writeFlag } from "$lib/ui-prefs";
 
@@ -41,6 +41,7 @@
     status,
     activeFilter,
     agentFilter,
+    searchFilter,
     issues,
     selectedIssue,
     selectedWriting,
@@ -56,6 +57,8 @@
     draftAgentOpen,
     loadingIssues,
     loadingIssue,
+    issuesSavedAt,
+    issueSavedAt,
     savingIssue,
     error,
     writingError,
@@ -71,6 +74,7 @@
     messages,
     agentBusy,
     busyProposalId,
+    editConflictKey,
     chatError,
   } = jira;
 
@@ -102,6 +106,29 @@
     }
     return searchQuery.trim() ? `${visibleIssues.length} of ${total}${project}` : `${total}${project}`;
   });
+
+  // Looking beyond the loaded tickets: a typed key opens that ticket, other text searches Jira.
+  const typedKey = $derived(issueKeyInQuery(searchQuery));
+  const jiraSearchLabel = $derived(
+    typedKey ? `Open ${typedKey}` :
+      jiraTextSearch(searchQuery, $status?.projectKey ?? "") ? `Search Jira for “${searchQuery.trim()}”` : null,
+  );
+
+  function searchJira() {
+    const query = searchQuery;
+    // Jira matched the whole ticket text, so the box must not narrow its results by title.
+    if (!typedKey) {
+      searchQuery = "";
+    }
+    void jira.searchJira(query);
+  }
+
+  function searchJiraOnEnter(event: KeyboardEvent) {
+    if (event.key === "Enter" && jiraSearchLabel) {
+      event.preventDefault();
+      searchJira();
+    }
+  }
 
   // A draft started from a note brings the agent along, whatever the saved choice.
   const agentVisible = $derived(agentOpen || ($draftAgentOpen && $draft !== null));
@@ -203,9 +230,12 @@
         {:else if $writingSaving}
           Saving drafts…
         {:else if $loadingIssues}
-          Loading tickets
+          {$issues.length > 0 ? "Refreshing tickets" : "Loading tickets"}
         {:else}
           {countLabel}
+          {#if $issuesSavedAt}
+            <span title={`Saved ${new Date($issuesSavedAt).toLocaleString()}. Refresh to ask Jira again.`}>· saved copy</span>
+          {/if}
         {/if}
       </p>
     </div>
@@ -215,9 +245,9 @@
         {#each $status.filters as filter (filter.name)}
           <button
             class="filter-tab"
-            class:active={$activeFilter?.name === filter.name && $activeFilter !== $agentFilter}
+            class:active={$activeFilter?.name === filter.name && $activeFilter !== $agentFilter && $activeFilter !== $searchFilter}
             type="button"
-            aria-pressed={$activeFilter?.name === filter.name && $activeFilter !== $agentFilter}
+            aria-pressed={$activeFilter?.name === filter.name && $activeFilter !== $agentFilter && $activeFilter !== $searchFilter}
             title={filter.jql}
             onclick={() => void jira.selectFilter(filter)}
           >
@@ -244,6 +274,31 @@
               aria-label={`Remove ${agentSearch.name}`}
               title="Remove this search"
               onclick={() => void jira.clearAgentFilter()}
+            >
+              <X size={12} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </span>
+        {/if}
+        {#if $searchFilter}
+          {@const jiraSearch = $searchFilter}
+          <span class="agent-tab" class:active={$activeFilter === jiraSearch}>
+            <button
+              class="filter-tab"
+              class:active={$activeFilter === jiraSearch}
+              type="button"
+              aria-pressed={$activeFilter === jiraSearch}
+              title={`Jira search: ${jiraSearch.jql}`}
+              onclick={() => void jira.selectFilter(jiraSearch)}
+            >
+              <Search size={13} strokeWidth={1.8} aria-hidden="true" />
+              {jiraSearch.name}
+            </button>
+            <button
+              class="tab-remove"
+              type="button"
+              aria-label={`Remove ${jiraSearch.name}`}
+              title="Remove this search"
+              onclick={() => void jira.clearSearchFilter()}
             >
               <X size={12} strokeWidth={2} aria-hidden="true" />
             </button>
@@ -311,6 +366,7 @@
             <input
               type="search"
               bind:value={searchQuery}
+              onkeydown={searchJiraOnEnter}
               aria-label="Search tickets"
               placeholder="Search tickets"
               spellcheck="false"
@@ -382,6 +438,12 @@
                 </div>
               {/each}
             {/if}
+            {#if jiraSearchLabel && !draftsOnly}
+              <button class="search-jira" type="button" title="Look beyond the loaded tickets (Enter)" onclick={searchJira}>
+                <Search size={13} strokeWidth={1.8} aria-hidden="true" />
+                {jiraSearchLabel}
+              </button>
+            {/if}
             {#if draftsOnly && outsideDrafts.length > 0}
               <div class="issue-group" role="group" aria-label="Drafts outside this ticket list">
                 <p class="outside-label">Outside this ticket list</p>
@@ -426,6 +488,8 @@
             on:writing={(event) => jira.rememberWriting(event.detail.key, event.detail.writing)}
             loading={$loadingIssue}
             saving={$savingIssue}
+            savedAt={$issueSavedAt}
+            editConflict={$editConflictKey !== null && $editConflictKey === $selectedIssue?.key}
             attachmentDownload={$attachmentDownload}
             downloadingAttachments={$downloadingAttachments}
             attachmentThumbnails={$attachmentThumbnails}
@@ -484,6 +548,26 @@
 </section>
 
 <style>
+  .search-jira {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 0;
+    border-top: 1px solid var(--rule);
+    border-radius: 0;
+    background: transparent;
+    color: var(--color-accent-hot);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .search-jira:hover {
+    background: var(--color-surface-2);
+  }
+
   .draft-filter {
     display: flex;
     align-items: center;

@@ -118,6 +118,8 @@ save_jira_writing
 test_jira_connection
 list_jira_issues
 get_jira_issue
+get_saved_jira_issues
+get_saved_jira_issue
 list_jira_issue_types
 create_jira_issue
 update_jira_issue
@@ -136,6 +138,7 @@ resolve_jira_chat_proposal
 ```
 
 `send_jira_chat_message` runs the agent and returns the whole thread when it stops. It takes the open new-ticket draft, if any, which the agent may rewrite. While it runs, the backend emits `jira-chat:updated` with the thread ID after each stored step.
+`get_saved_jira_issues` and `get_saved_jira_issue` read the last list or ticket Jira returned from SQLite and never contact Jira.
 `resolve_jira_chat_proposal` is the only path by which an agent-requested change reaches Jira.
 Note detail DTOs include `jiraIssueKeys`, the tickets created from that note.
 

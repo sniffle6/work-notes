@@ -20,6 +20,7 @@
     JiraAttachmentDownload,
     JiraAttachmentView,
     JiraIssueDetail,
+    JiraEditBase,
     JiraIssueEdit,
     JiraTransition,
   } from "$lib/types";
@@ -41,6 +42,10 @@
     writing?: JiraTicketWriting;
     loading?: boolean;
     saving?: boolean;
+    /** When the shown ticket was saved, while it is a saved copy. Changes wait for Jira's current ticket. */
+    savedAt?: string | null;
+    /** Saving the open edit was refused because Jira changed the ticket since the edit started. */
+    editConflict?: boolean;
     /** The open ticket's attachments that are already saved to disk. */
     attachmentDownload?: JiraAttachmentDownload | null;
     downloadingAttachments?: boolean;
@@ -59,6 +64,8 @@
     writing,
     loading = false,
     saving = false,
+    savedAt = null,
+    editConflict = false,
     attachmentDownload = null,
     downloadingAttachments = false,
     attachmentThumbnails = {},
@@ -70,6 +77,8 @@
   let editing = $state(false);
   let summaryDraft = $state("");
   let descriptionDraft = $state("");
+  // The ticket text the edit started from; saving refuses to overwrite fields Jira changed since.
+  let editBase = $state<JiraEditBase | null>(null);
   let flattenAcknowledged = $state(false);
   let commentText = $state("");
   let currentKey = $state<string | null>(null);
@@ -115,15 +124,21 @@
 
   const savedPathById = $derived(new Map((attachmentDownload?.files ?? []).map((file) => [file.id, file.path])));
 
-  const summaryChanged = $derived(Boolean(issue) && summaryDraft.trim() !== issue?.summary);
-  const descriptionChanged = $derived(Boolean(issue) && descriptionDraft !== issue?.description);
-  // Saving a plain-text description replaces Jira tables, panels, and inline
-  // formatting, so that needs an explicit yes.
+  // A field counts as edited when it differs from where the edit started, so a field
+  // Jira changed meanwhile is not sent back with its old text.
+  const summaryChanged = $derived(Boolean(issue) && summaryDraft.trim() !== (editBase?.summary ?? issue?.summary));
+  const descriptionChanged = $derived(
+    Boolean(issue) && descriptionDraft !== (editBase?.description ?? issue?.description),
+  );
+  // Saving replaces formatting the Markdown editor cannot write, such as panels,
+  // mentions, and colours, so that needs an explicit yes.
   const needsFlattenConfirmation = $derived(
     descriptionChanged && issue !== null && !issue.descriptionEditableLosslessly,
   );
+  // A saved copy may be out of date, so changes wait for Jira's current ticket.
+  const changesLocked = $derived(saving || Boolean(savedAt));
   const canSave = $derived(
-    !saving &&
+    !changesLocked &&
       summaryDraft.trim().length > 0 &&
       (summaryChanged || descriptionChanged) &&
       (!needsFlattenConfirmation || flattenAcknowledged),
@@ -136,6 +151,7 @@
       editing = writing?.editing ?? false;
       summaryDraft = writing?.summary ?? issue?.summary ?? "";
       descriptionDraft = writing?.description ?? issue?.description ?? "";
+      editBase = writing?.editing ? (writing.base ?? null) : null;
       commentText = writing?.comment ?? "";
       flattenAcknowledged = false;
       showCopyState("idle");
@@ -284,6 +300,7 @@
     }
     summaryDraft = issue.summary;
     descriptionDraft = issue.description;
+    editBase = { summary: issue.summary, description: issue.description };
     flattenAcknowledged = false;
     editing = true;
     rememberWriting();
@@ -293,13 +310,21 @@
     if (issue) {
       dispatch("writing", {
         key: issue.key,
-        writing: { editing, summary: summaryDraft, description: descriptionDraft, comment: commentText },
+        writing: {
+          editing,
+          summary: summaryDraft,
+          description: descriptionDraft,
+          comment: commentText,
+          // A plain copy: the store clones writing to save it, and state proxies cannot be cloned.
+          base: $state.snapshot(editBase),
+        },
       });
     }
   }
 
   function discardEdit() {
     editing = false;
+    editBase = null;
     summaryDraft = issue?.summary ?? "";
     descriptionDraft = issue?.description ?? "";
     rememberWriting();
@@ -307,11 +332,39 @@
 
   function saveEdit(event: SubmitEvent) {
     event.preventDefault();
+    submitEdit();
+  }
+
+  /**
+   * Replaces Jira's current text with the user's. Fields the user did not change
+   * take Jira's current text, so only their own changes are written. When the
+   * start of the edit is unknown, every field keeps the user's text.
+   */
+  function saveAnyway() {
+    if (!issue) {
+      return;
+    }
+    if (editBase && summaryDraft.trim() === editBase.summary.trim()) {
+      summaryDraft = issue.summary;
+    }
+    if (editBase && descriptionDraft === editBase.description) {
+      descriptionDraft = issue.description;
+    }
+    editBase = { summary: issue.summary, description: issue.description };
+    rememberWriting();
+    if (!summaryChanged && !descriptionChanged) {
+      discardEdit();
+      return;
+    }
+    submitEdit();
+  }
+
+  function submitEdit() {
     if (!canSave) {
       return;
     }
 
-    const edit: JiraIssueEdit = {};
+    const edit: JiraIssueEdit = { base: $state.snapshot(editBase) };
     if (summaryChanged) {
       edit.summary = summaryDraft.trim();
     }
@@ -332,7 +385,7 @@
   function addComment(event: SubmitEvent) {
     event.preventDefault();
     const text = commentText.trim();
-    if (!text || saving) {
+    if (!text || changesLocked) {
       return;
     }
     const key = issue?.key;
@@ -376,13 +429,18 @@
           <span class="secondary-meta">{issue.priority}</span>
         {/if}
         <span class="secondary-meta">{issue.assignee ?? "Unassigned"}</span>
+        {#if savedAt}
+          <span class="saved-copy" title={`Saved ${formatDate(savedAt)}. Changes wait until Jira sends the current ticket.`}>
+            {loading ? "Saved copy · refreshing" : "Saved copy"}
+          </span>
+        {/if}
       </div>
       <div class="header-actions">
-        <button class="ghost-button" type="button" aria-label="Assign to me" title="Assign to me" disabled={saving} onclick={() => dispatch("assignToMe")}>
+        <button class="ghost-button" type="button" aria-label="Assign to me" title="Assign to me" disabled={changesLocked} onclick={() => dispatch("assignToMe")}>
           <UserRoundPlus size={14} aria-hidden="true" />
           <span class="action-label">Assign to me</span>
         </button>
-        <button class="ghost-button" type="button" aria-label="Edit" title="Edit ticket" disabled={saving || editing} onclick={startEdit}><Pencil size={14} aria-hidden="true" /><span class="action-label">Edit</span></button>
+        <button class="ghost-button" type="button" aria-label="Edit" title="Edit ticket" disabled={changesLocked || editing} onclick={startEdit}><Pencil size={14} aria-hidden="true" /><span class="action-label">Edit</span></button>
         <button
           class="primary-button copy-button"
           class:failed={copyState === "failed"}
@@ -413,14 +471,30 @@
           <label>
             <span>Description</span>
             <textarea bind:value={descriptionDraft} aria-label="Description" rows="14" disabled={saving}></textarea>
-            <small>Blank lines separate paragraphs. Start lines with "- " for bullets or "## " for headings.</small>
+            <small>Markdown: blank lines separate paragraphs, "- " starts a bullet, "## " a heading, plus **bold**, _italic_, `code`, and [links](https://…).</small>
           </label>
+          {#if editConflict}
+            <div class="edit-conflict" role="group" aria-label="Jira changed this ticket">
+              <p>
+                Jira's version changed since you started editing, so nothing was saved. Your text is kept. Fields you
+                did not change take Jira's current text.
+              </p>
+              <details>
+                <summary>Jira's current summary and description</summary>
+                <p class="conflict-summary">{issue.summary}</p>
+                <MarkdownView markdown={issue.description} preserveLineBreaks />
+              </details>
+              <button class="ghost-button" type="button" disabled={changesLocked || loading} onclick={saveAnyway}>
+                Save anyway
+              </button>
+            </div>
+          {/if}
           {#if needsFlattenConfirmation}
             <label class="flatten-warning">
               <input type="checkbox" bind:checked={flattenAcknowledged} disabled={saving} />
               <span>
-                Replace the formatted description with this plain text. Tables, panels, and inline formatting
-                from Jira will be lost.
+                Replace the formatted description with this text. Formatting the editor cannot write, such as
+                panels, mentions, colours, and merged table cells, will be lost.
               </span>
             </label>
           {/if}
@@ -450,7 +524,7 @@
               <button
                 class="ghost-button"
                 type="button"
-                disabled={saving}
+                disabled={changesLocked}
                 aria-label={`Move to ${transitionLabel(transition)}`}
                 title={transition.name}
                 onclick={() => dispatch("transition", transition.id)}
@@ -581,7 +655,7 @@
             disabled={saving}
           ></textarea>
           <div class="form-actions">
-            <button class="primary-button" type="submit" disabled={saving || !commentText.trim()}>
+            <button class="primary-button" type="submit" disabled={changesLocked || !commentText.trim()}>
               Add comment
             </button>
           </div>
@@ -850,6 +924,37 @@
     min-height: 0;
     padding: 24px 24px 32px;
     overflow: auto;
+  }
+
+  .edit-conflict {
+    display: grid;
+    gap: 8px;
+    padding: 10px 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    color: var(--color-text-secondary);
+    font-size: 13px;
+  }
+
+  .edit-conflict p {
+    margin: 0;
+  }
+
+  .edit-conflict summary {
+    cursor: pointer;
+  }
+
+  .conflict-summary {
+    color: var(--color-text-primary);
+  }
+
+  .edit-conflict button {
+    justify-self: start;
+  }
+
+  .saved-copy {
+    color: var(--color-text-muted);
+    font-size: 12px;
   }
 
   .detail-scroll.loading {

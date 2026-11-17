@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
@@ -16,12 +17,15 @@ use crate::jira::{
     Assignee, IssueKey, IssueUpdate, JiraError, JiraIssueDetail, JiraIssueSummary, JiraOps,
     JiraUser, NewIssue,
 };
-use crate::services::jira::{connect, jira_status, JiraEnvironment, JiraStatus};
+use crate::services::jira::{
+    connect, edit_conflicts, jira_status, EditBase, EditConflict, JiraEnvironment, JiraStatus,
+};
 use crate::services::jira_agent::{AgentProgress, JiraAgentService, NEW_THREAD_TITLE};
 use crate::services::jira_attachments::{
     download_attachments, load_thumbnail, read_attachment_media, user_downloads_dir,
     AttachmentDownload, AttachmentThumbnail,
 };
+use crate::services::jira_saved::{saved_copy_scope, JiraSavedCopies, SavedCopy};
 use crate::services::search::SearchService;
 
 /// Emitted with [`JiraChatUpdatedPayload`] each time an agent run stores
@@ -56,6 +60,26 @@ struct JiraTicketWritingDto {
     summary: String,
     description: String,
     comment: String,
+    /// The ticket text the edit started from. Absent for edits kept from
+    /// before it was recorded.
+    #[serde(default)]
+    base: Option<EditBaseDto>,
+}
+
+/// The ticket's summary and description when an edit started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditBaseDto {
+    summary: String,
+    description: String,
+}
+
+impl From<Option<EditBaseDto>> for EditBase {
+    fn from(base: Option<EditBaseDto>) -> Self {
+        base.map_or_else(EditBase::default, |base| EditBase {
+            summary: Some(base.summary),
+            description: Some(base.description),
+        })
+    }
 }
 
 /// Reads local writing only; this command never contacts Jira.
@@ -130,6 +154,29 @@ pub struct UpdateJiraIssueDto {
     pub summary: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// The ticket text the edit started from. Without it, every written
+    /// field is treated as possibly changed in Jira.
+    #[serde(default)]
+    pub base: Option<EditBaseDto>,
+}
+
+/// Reported when saving would overwrite a field changed in Jira since the
+/// edit started. Nothing is written.
+pub const EDIT_CONFLICT_CODE: &str = "jira_edit_conflict";
+
+fn edit_conflict_error(key: &IssueKey, conflicts: &[EditConflict]) -> CommandError {
+    let fields = conflicts
+        .iter()
+        .map(|conflict| conflict.field_name())
+        .collect::<Vec<_>>()
+        .join(" and ");
+    CommandError::new(
+        EDIT_CONFLICT_CODE,
+        format!(
+            "The {fields} of {key} may have changed in Jira since you started editing, so nothing was saved. \
+             Your text is kept. Compare it with Jira's version, then choose Save anyway to replace it."
+        ),
+    )
 }
 
 /// The new-ticket form as it stands when the user messages the agent.
@@ -172,13 +219,59 @@ pub async fn test_jira_connection(
     run_blocking(move || Ok(connect(&settings)?.myself()?)).await
 }
 
+/// Saved copies for the configured Jira site and account, or `None` when
+/// settings cannot be read. Then nothing is saved or shown. Callers take this
+/// before asking Jira, so an answer is never filed under a site chosen while
+/// the request was running.
+fn saved_copies(state: &AppState) -> Option<JiraSavedCopies> {
+    let settings = state.settings.get().ok()?;
+    let scope = saved_copy_scope(&settings, &JiraEnvironment::from_process());
+    Some(JiraSavedCopies::new(
+        state.repositories.jira_saved.clone(),
+        scope,
+    ))
+}
+
+/// Asks Jira for a ticket and keeps `saved` in step with the answer: a
+/// returned ticket is saved, and one Jira no longer returns is forgotten.
+fn fetch_issue(
+    client: &impl JiraOps,
+    key: &IssueKey,
+    saved: Option<&JiraSavedCopies>,
+) -> Result<JiraIssueDetail, CommandError> {
+    let fetched_at = Utc::now();
+    match client.get_issue(key) {
+        Ok(issue) => {
+            if let Some(saved) = saved {
+                saved.remember_issue(&issue, fetched_at);
+            }
+            Ok(issue)
+        }
+        Err(error) => {
+            if let (JiraError::NotFound { .. }, Some(saved)) = (&error, saved) {
+                saved.forget_issue(key);
+            }
+            Err(error.into())
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn list_jira_issues(
     state: tauri::State<'_, AppState>,
     jql: String,
 ) -> Result<Vec<JiraIssueSummary>, CommandError> {
-    let settings = state.settings.clone();
-    run_blocking(move || Ok(connect(&settings)?.search(&jql, DEFAULT_SEARCH_LIMIT)?)).await
+    let state = state.inner().clone();
+    run_blocking(move || {
+        let saved = saved_copies(&state);
+        let fetched_at = Utc::now();
+        let issues = connect(&state.settings)?.search(&jql, DEFAULT_SEARCH_LIMIT)?;
+        if let Some(saved) = saved {
+            saved.remember_list(&jql, &issues, fetched_at);
+        }
+        Ok(issues)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -187,8 +280,39 @@ pub async fn get_jira_issue(
     key: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
-    run_blocking(move || Ok(connect(&settings)?.get_issue(&key)?)).await
+    let state = state.inner().clone();
+    run_blocking(move || {
+        let saved = saved_copies(&state);
+        fetch_issue(&connect(&state.settings)?, &key, saved.as_ref())
+    })
+    .await
+}
+
+/// The tickets `list_jira_issues` last returned for `jql`, with when. Reads
+/// local storage only; this command never contacts Jira.
+#[tauri::command]
+pub async fn get_saved_jira_issues(
+    state: tauri::State<'_, AppState>,
+    jql: String,
+) -> Result<Option<SavedCopy>, CommandError> {
+    match saved_copies(&state) {
+        Some(saved) => Ok(saved.saved_list(&jql)?),
+        None => Ok(None),
+    }
+}
+
+/// The ticket as Jira last returned it, with when. Reads local storage only;
+/// this command never contacts Jira.
+#[tauri::command]
+pub async fn get_saved_jira_issue(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<Option<SavedCopy>, CommandError> {
+    let key = IssueKey::parse(&key)?;
+    match saved_copies(&state) {
+        Some(saved) => Ok(saved.saved_issue(&key)?),
+        None => Ok(None),
+    }
 }
 
 /// Lists issue types for the configured project. Returns an empty list when
@@ -228,6 +352,7 @@ pub async fn create_jira_issue(
             .into());
         }
 
+        let saved = saved_copies(&state);
         let client = connect(&state.settings)?;
         let key = client.create_issue(&NewIssue {
             project_key,
@@ -248,7 +373,7 @@ pub async fn create_jira_issue(
                     )
                 })?;
         }
-        Ok(client.get_issue(&key)?)
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -260,17 +385,22 @@ pub async fn update_jira_issue(
     input: UpdateJiraIssueDto,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
-        client.update_issue(
-            &key,
-            &IssueUpdate {
-                summary: input.summary,
-                description: input.description,
-            },
-        )?;
-        Ok(client.get_issue(&key)?)
+        let saved = saved_copies(&state);
+        let client = connect(&state.settings)?;
+        let update = IssueUpdate {
+            summary: input.summary,
+            description: input.description,
+        };
+        // Jira has no conditional update, so read the ticket just before writing.
+        let current = client.get_issue(&key)?;
+        let conflicts = edit_conflicts(&current, &update, &EditBase::from(input.base));
+        if !conflicts.is_empty() {
+            return Err(edit_conflict_error(&key, &conflicts));
+        }
+        client.update_issue(&key, &update)?;
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -282,11 +412,12 @@ pub async fn transition_jira_issue(
     transition_id: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let saved = saved_copies(&state);
+        let client = connect(&state.settings)?;
         client.apply_transition(&key, &transition_id)?;
-        Ok(client.get_issue(&key)?)
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -298,11 +429,12 @@ pub async fn add_jira_comment(
     text: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let saved = saved_copies(&state);
+        let client = connect(&state.settings)?;
         client.add_comment(&key, &text)?;
-        Ok(client.get_issue(&key)?)
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -313,11 +445,12 @@ pub async fn assign_jira_issue_to_me(
     key: String,
 ) -> Result<JiraIssueDetail, CommandError> {
     let key = IssueKey::parse(&key)?;
-    let settings = state.settings.clone();
+    let state = state.inner().clone();
     run_blocking(move || {
-        let client = connect(&settings)?;
+        let saved = saved_copies(&state);
+        let client = connect(&state.settings)?;
         client.assign(&key, Assignee::Me)?;
-        Ok(client.get_issue(&key)?)
+        fetch_issue(&client, &key, saved.as_ref())
     })
     .await
 }
@@ -524,8 +657,9 @@ mod tests {
 
     use super::{
         CreateJiraIssueDto, JiraChatUpdatedPayload, JiraDraftContextDto, JiraViewActionPayload,
-        UpdateJiraIssueDto,
+        JiraWritingDto, UpdateJiraIssueDto,
     };
+    use crate::services::jira::EditBase;
     use crate::jira::agent::ViewAction;
 
     #[test]
@@ -549,6 +683,37 @@ mod tests {
             serde_json::from_value(json!({ "summary": null, "description": "Body" })).unwrap();
         assert_eq!(update.summary, None);
         assert_eq!(update.description.as_deref(), Some("Body"));
+        assert_eq!(EditBase::from(update.base), EditBase::default());
+
+        let based: UpdateJiraIssueDto = serde_json::from_value(json!({
+            "description": "Body",
+            "base": { "summary": "Printer jams", "description": "Old" },
+        }))
+        .unwrap();
+        assert_eq!(
+            EditBase::from(based.base),
+            EditBase {
+                summary: Some("Printer jams".to_string()),
+                description: Some("Old".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn saved_edits_keep_their_starting_text_and_older_ones_still_load() {
+        let saved: JiraWritingDto = serde_json::from_value(json!({
+            "draft": null,
+            "tickets": {
+                "AB-7": { "editing": true, "summary": "S", "description": "D", "comment": "",
+                          "base": { "summary": "S0", "description": "D0" } },
+                "AB-8": { "editing": true, "summary": "S", "description": "D", "comment": "" },
+            },
+        }))
+        .unwrap();
+
+        let round_trip = serde_json::to_value(&saved).unwrap();
+        assert_eq!(round_trip["tickets"]["AB-7"]["base"], json!({ "summary": "S0", "description": "D0" }));
+        assert_eq!(round_trip["tickets"]["AB-8"]["base"], json!(null));
     }
 
     #[test]
