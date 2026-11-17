@@ -34,6 +34,27 @@ function thread(overrides: Partial<JiraChatThread> = {}): JiraChatThread {
 const baseProps = { threads: [thread()], activeThreadId: "thread-1", messages: [] as JiraChatMessage[] };
 
 describe("JiraChat", () => {
+  it("opens a queued review without approving and focuses the requested proposal", async () => {
+    const openProposal = vi.fn();
+    const resolve = vi.fn();
+    const proposal = message({ id: "pending-2", role: "proposal", status: "pending", content: "Update AB-7" });
+    const view = render(JiraChat, { props: { ...baseProps, pendingProposals: [proposal] },
+      events: { openProposal, resolve } });
+    await fireEvent.click(screen.getByRole("button", { name: /Update AB-7 Printer tickets/ }));
+    expect(openProposal.mock.calls[0][0].detail).toBe("pending-2");
+    expect(resolve).not.toHaveBeenCalled();
+    await view.rerender({ ...baseProps, messages: [proposal, message()], pendingProposals: [proposal], focusedProposalId: "pending-2" });
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Proposed change" }));
+  });
+
+  it("offers retry without presenting a failed queue as empty", async () => {
+    const retryPending = vi.fn();
+    render(JiraChat, { props: { ...baseProps, pendingError: "Could not load approvals" }, events: { retryPending } });
+    expect(screen.getByRole("alert").textContent).toContain("out of date");
+    expect(screen.queryByText("No changes waiting for approval")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retryPending).toHaveBeenCalledOnce();
+  });
   it("shows stored field comparisons and labels an unfinished approval as applying", () => {
     render(JiraChat, { props: { ...baseProps, messages: [message({
       role: "proposal", status: "approved", result: null,

@@ -57,6 +57,10 @@ The layout responds to the Jira workspace's available width, including space tak
 
 Unsubmitted comments, summary/description edits, and the new-ticket draft save to local SQLite after each revision. They survive navigation and app restarts, separated by Jira site and project. Successful submission clears the corresponding writing; failed submission retains it. Saves run in order. Storage failures remain visible with a retry action; failed loading blocks the workspace instead of overwriting saved writing. The browser preview uses browser storage for its sample drafts.
 
+Ticket rows mark "Unsent comment" and "Edit in progress". "Has drafts" shows tickets with nonblank comments or an open edit, including saved writing outside the current Jira results. Those extra rows use the saved title and fetch the ticket only when opened. Search also narrows these saved titles and keys. The new-ticket draft remains available separately through "Resume draft".
+
+The Agent button counts pending approvals across all stored conversations. The agent pane lists them oldest first, with their conversation titles. Selecting one opens its conversation and focuses the exact proposal; approval still happens on the review itself. Refresh failures keep the last known queue visible with a warning and retry. Resolved proposals leave the queue but remain in conversation history.
+
 "Copy agent prompt" copies a self-contained prompt for the open ticket: key, summary, facts, description, subtasks, linked issues, attachments, and comments. It downloads the ticket's attachments first and lists each one by local path. If the download fails, the error is shown and the prompt names the attachments as not downloaded. Subtasks and linked issues are listed by key, status, and summary; their own descriptions are not fetched. It is meant for a coding agent in another tool, which needs no Jira access to start. The prompt tells that agent to restate the ticket, question the user on anything unclear, and implement only once both agree on the work. It is separate from the Jira chat agent and changes nothing in Jira.
 
 ## Ticket Drafts

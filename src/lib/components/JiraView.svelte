@@ -33,6 +33,7 @@
   let workspaceWidth = $state(0);
   let collapsedStatuses = $state<string[]>([]);
   let sortOrder = $state("jira");
+  let draftsOnly = $state(false);
 
   // The store instance is fixed for the lifetime of the view.
   // svelte-ignore state_referenced_locally
@@ -43,6 +44,11 @@
     issues,
     selectedIssue,
     selectedWriting,
+    ticketDrafts,
+    pendingProposals,
+    pendingProposalsError,
+    pendingProposalsLoading,
+    focusedProposalId,
     issueTypes,
     draft,
     draftVisible,
@@ -74,7 +80,11 @@
     ticketCreated: { issueKey: string; noteId: string | null };
   }>();
 
-  const visibleIssues = $derived(filterIssues($issues, searchQuery));
+  const visibleIssues = $derived(filterIssues($issues, searchQuery).filter((issue) => !draftsOnly || $ticketDrafts[issue.key]));
+  const outsideDrafts = $derived(Object.entries($ticketDrafts).filter(([key, writing]) =>
+    !$issues.some((issue) => issue.key === key) &&
+    `${key} ${writing.summary}`.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+  ));
   const sharedAssignee = $derived(
     visibleIssues.length > 1 && visibleIssues[0].assignee &&
     visibleIssues.every((issue) => issue.assignee === visibleIssues[0].assignee)
@@ -86,6 +96,10 @@
   const countLabel = $derived.by(() => {
     const total = `${$issues.length} ${$issues.length === 1 ? "ticket" : "tickets"}`;
     const project = $status?.projectKey ? ` · ${$status.projectKey}` : "";
+    if (draftsOnly) {
+      const count = visibleIssues.length + outsideDrafts.length;
+      return `${count} ${count === 1 ? "ticket" : "tickets"} with drafts${project}`;
+    }
     return searchQuery.trim() ? `${visibleIssues.length} of ${total}${project}` : `${total}${project}`;
   });
 
@@ -252,11 +266,14 @@
           type="button"
           aria-pressed={agentVisible}
           aria-label="Agent"
+          aria-describedby="jira-pending-count"
           title={agentVisible ? "Hide the agent ( ] )" : "Ask the agent ( ] )"}
           onclick={toggleAgent}
         >
           <Bot size={14} strokeWidth={1.8} aria-hidden="true" />
           <span class="action-label">Agent</span>
+          {#if $pendingProposals.length > 0}<span id="jira-pending-count" class="pending-count" aria-label={`${$pendingProposals.length} pending approvals`}>{$pendingProposals.length}</span>{/if}
+          {#if $pendingProposalsError}<span title="Pending approvals could not be refreshed" aria-label="Pending approvals unavailable">!</span>{/if}
         </button>
       </div>
     {/if}
@@ -301,7 +318,8 @@
           </label>
 
           <div class="list-options">
-            <span class="list-owner" title={sharedAssignee ? `All shown tickets are assigned to ${sharedAssignee}` : "Grouped by status"}>{sharedAssignee ?? "By status"}</span>
+            <button class="draft-filter" class:active={draftsOnly} type="button" aria-pressed={draftsOnly}
+              onclick={() => { draftsOnly = !draftsOnly; }}>Has drafts <span>{Object.keys($ticketDrafts).length}</span></button>
             <select bind:value={sortOrder} aria-label="Sort tickets within each status" title="Sort tickets within each status">
               <option value="jira">Jira order</option>
               <option value="title">Title A–Z</option>
@@ -309,18 +327,21 @@
           </div>
 
           <div class="issue-list" aria-label="Tickets">
-            {#if $issues.length === 0}
+            {#if sharedAssignee}<p class="outside-label" title="All shown tickets are assigned to this person">{sharedAssignee}</p>{/if}
+            {#if draftsOnly && visibleIssues.length === 0 && outsideDrafts.length === 0}
+              <p class="list-empty">{searchQuery.trim() ? "No drafts match the search" : "No ticket drafts"}</p>
+            {:else if $issues.length === 0 && !draftsOnly}
               <p class="list-empty">{$loadingIssues ? "Loading tickets" : "No tickets match this filter"}</p>
-            {:else if visibleIssues.length === 0}
+            {:else if visibleIssues.length === 0 && !draftsOnly}
               <p class="list-empty">No tickets match the search</p>
             {:else}
               {#each groups as group (group.status)}
-                {@const expanded = Boolean(searchQuery.trim()) || !collapsedStatuses.includes(group.status)}
+                {@const expanded = draftsOnly || Boolean(searchQuery.trim()) || !collapsedStatuses.includes(group.status)}
                 <div class="issue-group" role="group" aria-label={groupLabel(group.status, group.issues.length)}>
                   <button class="group-head" type="button"
                     aria-label={`${expanded ? "Collapse" : "Expand"} ${group.status}`}
                     aria-expanded={expanded}
-                    disabled={Boolean(searchQuery.trim())}
+                    disabled={draftsOnly || Boolean(searchQuery.trim())}
                     onclick={() => { collapsedStatuses = expanded
                       ? [...collapsedStatuses, group.status]
                       : collapsedStatuses.filter((status) => status !== group.status); }}>
@@ -336,6 +357,7 @@
                       class:selected={$selectedIssue?.key === issue.key && !$draftVisible}
                       type="button"
                       aria-label={`${issue.key}: ${issue.summary}`}
+                      aria-describedby={$ticketDrafts[issue.key] ? `draft-${issue.key}` : undefined}
                       title={issue.summary}
                       aria-current={$selectedIssue?.key === issue.key && !$draftVisible ? "true" : undefined}
                       onclick={() => openTicket(issue.key)}
@@ -351,11 +373,27 @@
                           <span class={`row-priority ${priorityTone(issue.priority)}`}>{issue.priority}</span>
                         {/if}
                       </span>
+                      {#if $ticketDrafts[issue.key]}
+                        <span class="row-draft" id={`draft-${issue.key}`}>{[$ticketDrafts[issue.key].comment.trim() ? "Unsent comment" : "", $ticketDrafts[issue.key].editing ? "Edit in progress" : ""].filter(Boolean).join(" · ")}</span>
+                      {/if}
                     </button>
                   {/each}
                   {/if}
                 </div>
               {/each}
+            {/if}
+            {#if draftsOnly && outsideDrafts.length > 0}
+              <div class="issue-group" role="group" aria-label="Drafts outside this ticket list">
+                <p class="outside-label">Outside this ticket list</p>
+                {#each outsideDrafts as [key, writing] (key)}
+                  <button class="issue-row" class:selected={$selectedIssue?.key === key && !$draftVisible}
+                    type="button" aria-label={`${key}: ${writing.summary || "Saved draft"}`} aria-describedby={`draft-${key}`} onclick={() => openTicket(key)}>
+                    <span class="row-summary">{writing.summary || key}</span>
+                    <span class="row-key">{key}</span>
+                    <span class="row-draft" id={`draft-${key}`}>{[writing.comment.trim() ? "Unsent comment" : "", writing.editing ? "Edit in progress" : ""].filter(Boolean).join(" · ")}</span>
+                  </button>
+                {/each}
+              </div>
             {/if}
           </div>
         </section>
@@ -423,6 +461,12 @@
           threads={$threads}
           activeThreadId={$activeThreadId}
           messages={$messages}
+          pendingProposals={$pendingProposals}
+          pendingError={$pendingProposalsError}
+          pendingLoading={$pendingProposalsLoading}
+          focusedProposalId={$focusedProposalId}
+          on:openProposal={(event) => void jira.openProposal(event.detail)}
+          on:retryPending={() => void jira.refreshPendingProposals()}
           busy={$agentBusy}
           busyProposalId={$busyProposalId}
           error={$chatError}
@@ -440,6 +484,43 @@
 </section>
 
 <style>
+  .draft-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .draft-filter.active, .row-draft, .pending-count {
+    color: var(--color-accent-hot);
+  }
+
+  .draft-filter:focus-visible {
+    outline: 1px solid var(--color-accent-hot);
+    outline-offset: 3px;
+  }
+
+  .draft-filter.active {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .row-draft {
+    font-size: 11px;
+  }
+
+  .outside-label {
+    margin: 10px 12px 4px;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+
   .jira-view {
     container: jira / inline-size;
     display: flex;
@@ -498,7 +579,7 @@
     margin-left: auto;
   }
 
-  /* Tabs sit on the header's bottom rule; the active one draws over it. */
+  /* Tabs stretch inside the header rule; extending below it creates vertical overflow. */
   .filter-row {
     display: flex;
     flex: 1 1 auto;
@@ -544,8 +625,6 @@
 
   .filter-tab {
     flex-shrink: 0;
-    min-height: 44px;
-    margin-bottom: -1px;
     border-bottom: 2px solid transparent;
     border-radius: 0;
     color: var(--color-text-muted);
@@ -718,6 +797,11 @@
     padding: 24px 14px;
   }
 
+  .issue-group + .issue-group {
+    margin-top: 8px;
+    border-top: 1px solid var(--color-border-default);
+  }
+
   .group-head {
     width: 100%;
     border-radius: 0;
@@ -728,7 +812,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 14px 6px;
+    padding: 12px 14px 8px;
     color: var(--color-text-muted);
     background: var(--color-app-bg-paint, var(--color-app-bg));
     font-size: 11.5px;
@@ -776,7 +860,7 @@
     gap: 5px;
     width: 100%;
     min-height: 0;
-    padding: 10px 14px 10px 12px;
+    padding: 12px 14px 12px 12px;
     border-left: 2px solid transparent;
     border-radius: 0;
     text-align: left;
@@ -784,6 +868,10 @@
 
   .issue-row:hover {
     background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  }
+
+  .issue-row + .issue-row {
+    border-top: 1px solid var(--rule);
   }
 
   .issue-row.selected {

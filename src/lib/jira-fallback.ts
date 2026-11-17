@@ -186,6 +186,8 @@ export function jiraFallbackCommand(command: string, args: UnknownRecord = {}): 
       threads = threads.filter((thread) => thread.id !== args.threadId);
       messages = messages.filter((message) => message.threadId !== args.threadId);
       return undefined;
+    case "list_jira_pending_proposals":
+      return messages.filter((message) => message.role === "proposal" && message.status === "pending");
     case "list_jira_chat_messages":
       return messages.filter((message) => message.threadId === args.threadId);
     case "send_jira_chat_message":

@@ -595,6 +595,11 @@ export async function deleteJiraChatThread(threadId: string): Promise<void> {
   await invokeCommand<void>("delete_jira_chat_thread", { threadId });
 }
 
+export async function listJiraPendingProposals(): Promise<JiraChatMessage[]> {
+  const messages = await invokeCommand<unknown[]>("list_jira_pending_proposals");
+  return messages.map(normalizeJiraChatMessage);
+}
+
 export async function listJiraChatMessages(threadId: string): Promise<JiraChatMessage[]> {
   const messages = await invokeCommand<unknown[]>("list_jira_chat_messages", { threadId });
   return messages.map(normalizeJiraChatMessage);
@@ -675,6 +680,7 @@ export const api = {
   createJiraChatThread,
   deleteJiraChatThread,
   listJiraChatMessages,
+  listJiraPendingProposals,
   sendJiraChatMessage,
   resolveJiraChatProposal,
 };

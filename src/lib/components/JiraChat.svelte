@@ -10,6 +10,10 @@
     threads: JiraChatThread[];
     activeThreadId: string | null;
     messages: JiraChatMessage[];
+    pendingProposals?: JiraChatMessage[];
+    pendingError?: string | null;
+    pendingLoading?: boolean;
+    focusedProposalId?: string | null;
     busy?: boolean;
     busyProposalId?: string | null;
     error?: string | null;
@@ -27,6 +31,10 @@
     threads,
     activeThreadId,
     messages,
+    pendingProposals = [],
+    pendingError = null,
+    pendingLoading = false,
+    focusedProposalId = null,
     busy = false,
     busyProposalId = null,
     error = null,
@@ -43,13 +51,23 @@
     newThread: void;
     deleteThread: string;
     close: void;
+    openProposal: string;
+    retryPending: void;
   }>();
 
   $effect(() => {
     // Keep the newest message in view as the conversation grows.
     void messages.length;
     void busy;
+    const targetId = focusedProposalId;
     void tick().then(() => {
+      const target = targetId ? Array.from(log?.querySelectorAll<HTMLElement>("[data-proposal-id]") ?? [])
+        .find((element) => element.dataset.proposalId === targetId) : null;
+      if (target) {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView?.({ block: "start" });
+        return;
+      }
       if (log) {
         log.scrollTop = log.scrollHeight;
       }
@@ -144,6 +162,27 @@
     </button>
   </header>
 
+  <details class="pending-queue" open={pendingProposals.length > 0 || Boolean(pendingError)}>
+    <summary>Pending approvals <span>{pendingProposals.length}</span>{#if pendingLoading}<span> · Refreshing</span>{/if}</summary>
+    {#if pendingError}
+      <p class="queue-error" role="alert">{pendingError} The list may be out of date.
+        <button type="button" disabled={pendingLoading} onclick={() => dispatch("retryPending")}>Retry</button>
+      </p>
+    {/if}
+    <div class="queue-items">
+      {#each pendingProposals as proposal (proposal.id)}
+        <button class="queue-item" type="button" disabled={busy || Boolean(busyProposalId)}
+          aria-current={focusedProposalId === proposal.id ? "true" : undefined}
+          onclick={() => dispatch("openProposal", proposal.id)}>
+          <span>{proposal.review?.title ?? proposal.content.split("\n")[0]}</span>
+          <small>{threads.find((thread) => thread.id === proposal.threadId)?.title ?? "Conversation"}</small>
+        </button>
+      {:else}
+        {#if !pendingError && !pendingLoading}<p class="queue-empty">No changes waiting for approval</p>{/if}
+      {/each}
+    </div>
+  </details>
+
   <div class="chat-log" role="log" aria-live="polite" bind:this={log}>
     {#if messages.length === 0 && !busy}
       <div class="chat-hint">
@@ -172,6 +211,8 @@
           class={`proposal ${message.status === "approved" && !message.result ? "applying" : message.status ?? "pending"}`}
           role="group"
           aria-label="Proposed change"
+          data-proposal-id={message.id}
+          tabindex="-1"
         >
           <div class="proposal-head">
             <strong>Proposed change</strong>
@@ -275,6 +316,77 @@
 </section>
 
 <style>
+  .pending-queue {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--rule);
+    font-size: 12px;
+  }
+
+  .pending-queue summary {
+    padding: 9px 12px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+  }
+
+  .queue-items {
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .queue-item {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 0;
+    border-top: 1px solid var(--rule);
+    background: transparent;
+    color: var(--color-text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .queue-item > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .queue-item small, .queue-empty {
+    color: var(--color-text-secondary);
+  }
+
+  .queue-item:hover, .queue-item[aria-current="true"] {
+    background: var(--color-surface-2);
+  }
+
+  .queue-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .queue-empty, .queue-error {
+    margin: 8px 12px;
+  }
+
+  .queue-error button {
+    color: inherit;
+    background: transparent;
+    border: 0;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .proposal:focus {
+    outline: 1px solid var(--color-accent-hot);
+    outline-offset: -1px;
+  }
+
   .change-title {
     font-size: 13px;
     overflow-wrap: anywhere;

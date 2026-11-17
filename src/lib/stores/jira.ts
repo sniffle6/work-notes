@@ -13,6 +13,7 @@ import {
   loadJiraWriting,
   saveJiraWriting,
   listJiraChatMessages,
+  listJiraPendingProposals,
   listJiraChatThreads,
   listJiraIssues,
   listJiraIssueTypes,
@@ -64,6 +65,7 @@ export type JiraApi = {
   createJiraChatThread: typeof createJiraChatThread;
   deleteJiraChatThread: typeof deleteJiraChatThread;
   listJiraChatMessages: typeof listJiraChatMessages;
+  listJiraPendingProposals: typeof listJiraPendingProposals;
   sendJiraChatMessage: typeof sendJiraChatMessage;
   resolveJiraChatProposal: typeof resolveJiraChatProposal;
 };
@@ -88,6 +90,7 @@ const defaultApi: JiraApi = {
   createJiraChatThread,
   deleteJiraChatThread,
   listJiraChatMessages,
+  listJiraPendingProposals,
   sendJiraChatMessage,
   resolveJiraChatProposal,
 };
@@ -308,6 +311,15 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
   }
 
+  const pendingProposals = writable<JiraChatMessage[]>([]);
+  const pendingProposalsError = writable<string | null>(null);
+  const pendingProposalsLoading = writable(false);
+  const focusedProposalId = writable<string | null>(null);
+  let pendingRequest = 0;
+  let threadNavigation = 0;
+  const ticketDrafts = derived(ticketWriting, (writing) => Object.fromEntries(
+    Object.entries(writing).filter(([, value]) => value.editing || value.comment.trim()),
+  ));
   const threads = writable<JiraChatThread[]>([]);
   const activeThreadId = writable<string | null>(null);
   const messages = writable<JiraChatMessage[]>([]);
@@ -665,22 +677,58 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     return buildTicketPrompt(issue, files ?? []);
   }
 
+  async function refreshPendingProposals(): Promise<void> {
+    const request = ++pendingRequest;
+    pendingProposalsLoading.set(true);
+    try {
+      const pending = await api.listJiraPendingProposals();
+      if (request === pendingRequest) {
+        pendingProposals.set(pending);
+        pendingProposalsError.set(null);
+      }
+    } catch (unknownError) {
+      if (request === pendingRequest) {
+        pendingProposalsError.set(errorMessage(unknownError, "Could not load pending approvals."));
+      }
+    } finally {
+      if (request === pendingRequest) {
+        pendingProposalsLoading.set(false);
+      }
+    }
+  }
+
+  async function openProposal(messageId: string): Promise<void> {
+    const proposal = get(pendingProposals).find((message) => message.id === messageId);
+    if (!proposal || get(agentBusy) || get(busyProposalId)) {
+      return;
+    }
+    const navigation = threadNavigation + 1;
+    await openThread(proposal.threadId);
+    if (navigation === threadNavigation && get(activeThreadId) === proposal.threadId && get(messages).some((message) => message.id === messageId)) {
+      focusedProposalId.set(messageId);
+    }
+  }
+
   async function loadThreads(): Promise<void> {
     try {
       threads.set(await api.listJiraChatThreads());
     } catch (unknownError) {
       chatError.set(errorMessage(unknownError, "Could not load conversations."));
     }
+    await refreshPendingProposals();
   }
 
   async function loadMessages(threadId: string): Promise<void> {
+    const navigation = threadNavigation;
     const loaded = await api.listJiraChatMessages(threadId);
-    if (get(activeThreadId) === threadId) {
+    if (navigation === threadNavigation && get(activeThreadId) === threadId) {
       messages.set(loaded);
     }
   }
 
   async function openThread(threadId: string): Promise<void> {
+    const navigation = ++threadNavigation;
+    focusedProposalId.set(null);
     activeThreadId.set(threadId);
     messages.set([]);
     chatError.set(null);
@@ -688,12 +736,16 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     try {
       await loadMessages(threadId);
     } catch (unknownError) {
-      chatError.set(errorMessage(unknownError, "Could not load the conversation."));
+      if (navigation === threadNavigation) {
+        chatError.set(errorMessage(unknownError, "Could not load the conversation."));
+      }
     }
   }
 
   /** Shows an empty conversation. The thread is created with its first message. */
   function newThread(): void {
+    threadNavigation++;
+    focusedProposalId.set(null);
     activeThreadId.set(null);
     messages.set([]);
     chatError.set(null);
@@ -721,6 +773,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
     }
 
     agentBusy.set(true);
+    focusedProposalId.set(null);
     chatError.set(null);
     let threadId = get(activeThreadId);
 
@@ -773,6 +826,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
       chatError.set(errorMessage(unknownError, "Could not apply the change."));
     } finally {
       busyProposalId.set(null);
+      await refreshPendingProposals();
     }
   }
 
@@ -827,6 +881,7 @@ export function createJiraStore(api: JiraApi = defaultApi) {
 
   /** Refreshes the open conversation when the backend stored new messages. */
   async function handleThreadUpdated(threadId: string): Promise<void> {
+    await refreshPendingProposals();
     if (get(activeThreadId) !== threadId) {
       return;
     }
@@ -839,6 +894,13 @@ export function createJiraStore(api: JiraApi = defaultApi) {
   }
 
   return {
+    ticketDrafts,
+    pendingProposals,
+    pendingProposalsError,
+    pendingProposalsLoading,
+    focusedProposalId,
+    refreshPendingProposals,
+    openProposal,
     writingError,
     writingSaving,
     writingReady,

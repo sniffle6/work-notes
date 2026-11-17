@@ -128,6 +128,7 @@ function fakeApi(overrides: Partial<JiraApi> = {}): JiraApi {
     listJiraChatThreads: vi.fn(async () => [thread()]),
     createJiraChatThread: vi.fn(async () => thread({ id: "thread-new" })),
     deleteJiraChatThread: vi.fn(async () => undefined),
+    listJiraPendingProposals: vi.fn(async () => []),
     listJiraChatMessages: vi.fn(async () => [message()]),
     sendJiraChatMessage: vi.fn(async () => [message({ role: "user", content: "hi" }), message()]),
     resolveJiraChatProposal: vi.fn(async () => [message({ role: "proposal", status: "approved" })]),
@@ -146,6 +147,58 @@ function deferred<T>() {
 }
 
 describe("createJiraStore", () => {
+  it("loads pending proposals across threads and opens the exact review", async () => {
+    const proposal = message({ id: "p2", threadId: "thread-2", role: "proposal", status: "pending" });
+    const api = fakeApi({ listJiraPendingProposals: vi.fn(async () => [proposal]),
+      listJiraChatMessages: vi.fn(async () => [proposal]) });
+    const store = createJiraStore(api);
+    await store.open();
+    expect(get(store.pendingProposals)).toEqual([proposal]);
+    await store.openProposal("p2");
+    expect(get(store.activeThreadId)).toBe("thread-2");
+    expect(get(store.focusedProposalId)).toBe("p2");
+    expect(api.resolveJiraChatProposal).not.toHaveBeenCalled();
+    vi.mocked(api.listJiraPendingProposals).mockResolvedValue([]);
+    await store.handleThreadUpdated("another-thread");
+    expect(get(store.pendingProposals)).toEqual([]);
+  });
+
+  it("retains the last queue on failure and ignores an older refresh", async () => {
+    const proposal = message({ role: "proposal", status: "pending" });
+    const api = fakeApi({ listJiraPendingProposals: vi.fn(async () => [proposal]) });
+    const store = createJiraStore(api);
+    await store.open();
+    vi.mocked(api.listJiraPendingProposals).mockRejectedValueOnce(new Error("Queue unavailable"));
+    await store.refreshPendingProposals();
+    expect(get(store.pendingProposals)).toEqual([proposal]);
+    expect(get(store.pendingProposalsError)).toBe("Queue unavailable");
+    const older = deferred<JiraChatMessage[]>();
+    vi.mocked(api.listJiraPendingProposals).mockReturnValueOnce(older.promise).mockResolvedValueOnce([]);
+    const first = store.refreshPendingProposals();
+    await store.refreshPendingProposals();
+    older.resolve([proposal]);
+    await first;
+    expect(get(store.pendingProposals)).toEqual([]);
+    expect(get(store.pendingProposalsError)).toBeNull();
+  });
+
+  it("keeps the latest queue selection when conversation loads finish out of order", async () => {
+    const a = message({ id: "a", role: "proposal", status: "pending" });
+    const b = message({ id: "b", role: "proposal", status: "pending" });
+    const older = deferred<JiraChatMessage[]>();
+    const api = fakeApi({ listJiraPendingProposals: vi.fn(async () => [a, b]),
+      listJiraChatMessages: vi.fn().mockReturnValueOnce(older.promise).mockResolvedValue([a, b]) });
+    const store = createJiraStore(api);
+    await store.open();
+    const first = store.openProposal("a");
+    await store.openProposal("b");
+    older.resolve([a]);
+    await first;
+    expect(get(store.focusedProposalId)).toBe("b");
+    expect(get(store.messages)).toEqual([a, b]);
+    await store.sendChat("Continue");
+    expect(get(store.focusedProposalId)).toBeNull();
+  });
   it("drops undo history when restoring a different Jira workspace", async () => {
     let setup = status();
     const store = createJiraStore(fakeApi({ getJiraStatus: vi.fn(async () => setup) }));

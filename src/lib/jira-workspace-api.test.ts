@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { listJiraChatMessages, listJiraChatThreads, loadJiraWriting, saveJiraWriting, resolveJiraChatProposal } from "./api";
+import { listJiraChatMessages, listJiraChatThreads, listJiraPendingProposals, loadJiraWriting, saveJiraWriting, resolveJiraChatProposal } from "./api";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -19,8 +19,10 @@ describe("Jira workspace API", () => {
     const pending = await listJiraChatMessages(example.id);
     const proposal = pending.find((message) => message.role === "proposal")!;
     expect(proposal.status).toBe("pending");
+    expect(await listJiraPendingProposals()).toContainEqual(proposal);
     const resolved = await resolveJiraChatProposal(proposal.id, true);
     expect(resolved.find((message) => message.id === proposal.id)?.result).toContain("Preview only");
+    expect(await listJiraPendingProposals()).not.toContainEqual(proposal);
   });
   it("passes saved comparisons through the native API without exposing payloads", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
@@ -31,6 +33,10 @@ describe("Jira workspace API", () => {
     const [message] = await listJiraChatMessages("t1");
     expect(message.review).toEqual(review);
     expect(message).not.toHaveProperty("payload");
+    const [queued] = await listJiraPendingProposals();
+    expect(invoke).toHaveBeenLastCalledWith("list_jira_pending_proposals", undefined);
+    expect(queued.review).toEqual(review);
+    expect(queued).not.toHaveProperty("payload");
   });
 
   it("keeps browser preview writing across loads and isolates projects", async () => {

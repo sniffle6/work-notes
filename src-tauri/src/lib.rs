@@ -112,6 +112,7 @@ pub fn run() {
             commands::jira::create_jira_chat_thread,
             commands::jira::delete_jira_chat_thread,
             commands::jira::list_jira_chat_messages,
+            commands::jira::list_jira_pending_proposals,
             commands::jira::send_jira_chat_message,
             commands::jira::resolve_jira_chat_proposal,
             commands::theme::generate_theme
