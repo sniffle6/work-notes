@@ -3,6 +3,7 @@ use rusqlite::{params, OptionalExtension, Row};
 use crate::db::Database;
 use crate::domain::{
     ActionItem, ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState, NoteId,
+    TagAssignment,
 };
 
 use super::tags::TagRepository;
@@ -217,10 +218,18 @@ impl ActionItemRepository {
             records
         };
 
-        let tags = TagRepository::new(self.db.clone());
+        let note_ids = records
+            .iter()
+            .map(|record| NoteId::parse(&record.note_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let tags_by_note = TagRepository::new(self.db.clone()).list_for_notes(&note_ids)?;
         records
             .into_iter()
-            .map(|record| record.into_followup_item(&tags))
+            .zip(note_ids)
+            .map(|(record, note_id)| {
+                let tags = tags_by_note.get(&note_id).cloned().unwrap_or_default();
+                record.into_followup_item(note_id, tags)
+            })
             .collect()
     }
 
@@ -357,8 +366,11 @@ impl FollowupItemRecord {
         })
     }
 
-    fn into_followup_item(self, tags: &TagRepository) -> RepositoryResult<FollowupItem> {
-        let note_id = NoteId::parse(&self.note_id)?;
+    fn into_followup_item(
+        self,
+        note_id: NoteId,
+        tags: Vec<TagAssignment>,
+    ) -> RepositoryResult<FollowupItem> {
         let followup_state = self
             .followup_state
             .as_deref()
@@ -377,7 +389,7 @@ impl FollowupItemRecord {
             confidence: self.confidence,
             followup_state,
             followup_lane: self.followup_lane,
-            tags: tags.list_for_note(note_id)?,
+            tags,
             created_at: parse_db_datetime("created_at", self.created_at)?,
             completed_at: optional_db_datetime("completed_at", self.completed_at)?,
         })

@@ -68,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::save_capture_note,
             commands::list_inbox,
+            commands::get_nav_summary,
             commands::get_note,
             commands::retry_parse,
             commands::retry_parse_with_feedback,

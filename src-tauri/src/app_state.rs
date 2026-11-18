@@ -1,8 +1,8 @@
 use crate::db::{Database, DatabaseError};
 use crate::repositories::{
     ActionItemRepository, CardNoteRepository, JiraChatRepository, JiraIssueCacheRepository,
-    NoteJiraLinkRepository,
-    NoteRepository, ParseJobRepository, TagRepository,
+    NavSummaryRepository, NoteJiraLinkRepository, NoteRepository, ParseJobRepository,
+    TagRepository,
 };
 use crate::services::draft::DraftService;
 use crate::services::jira_agent::AgentBusyThreads;
@@ -59,6 +59,7 @@ pub struct AppRepositories {
     pub jira_chat: JiraChatRepository,
     pub jira_links: NoteJiraLinkRepository,
     pub jira_saved: JiraIssueCacheRepository,
+    pub nav_summary: NavSummaryRepository,
 }
 
 impl AppRepositories {
@@ -72,6 +73,7 @@ impl AppRepositories {
             jira_chat: JiraChatRepository::new(database.clone()),
             jira_links: NoteJiraLinkRepository::new(database.clone()),
             jira_saved: JiraIssueCacheRepository::new(database.clone()),
+            nav_summary: NavSummaryRepository::new(database.clone()),
             parse_jobs: ParseJobRepository::new(database),
         }
     }

@@ -263,6 +263,24 @@ pub struct CardNote {
     pub created_at: DateTime<Utc>,
 }
 
+/// Workspace-wide counts and tag names for the navigation chrome. They do not
+/// depend on the view on screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavSummary {
+    /// Active notes: not archived and not completed.
+    pub inbox: u32,
+    /// Suggested actions on notes that are not archived.
+    pub needs_review: u32,
+    /// Open follow-ups on notes that are not archived.
+    pub followups: u32,
+    /// Active notes whose last parse failed.
+    pub parse_failed: u32,
+    /// Active notes queued for parsing or being parsed.
+    pub parse_queue: u32,
+    /// Distinct names of tags on active notes.
+    pub tags: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteListItem {
     pub id: NoteId,

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::app_state::AppState;
 use crate::domain::{
     ActionItem, ActionItemId, ActionReviewItem, ActionStatus, CardNote, FollowupItem,
-    FollowupState, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus, Tag,
-    TagAssignment, TagId, TagKind,
+    FollowupState, InboxFilters, NavSummary, Note, NoteId, NoteListItem, ParseStatus, ReviewStatus,
+    Tag, TagAssignment, TagId, TagKind,
 };
 use crate::jira::JiraError;
 use crate::repositories::RepositoryError;
@@ -91,6 +91,30 @@ impl From<RepositoryError> for CommandError {
             RepositoryError::InvalidDatabaseValue { .. } => {
                 Self::new("storage_error", "stored data is invalid")
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavSummaryDto {
+    pub inbox: u32,
+    pub needs_review: u32,
+    pub followups: u32,
+    pub parse_failed: u32,
+    pub parse_queue: u32,
+    pub tags: Vec<String>,
+}
+
+impl From<NavSummary> for NavSummaryDto {
+    fn from(summary: NavSummary) -> Self {
+        Self {
+            inbox: summary.inbox,
+            needs_review: summary.needs_review,
+            followups: summary.followups,
+            parse_failed: summary.parse_failed,
+            parse_queue: summary.parse_queue,
+            tags: summary.tags,
         }
     }
 }
@@ -453,13 +477,25 @@ pub async fn list_inbox(
 ) -> Result<Vec<NoteListItemDto>, CommandError> {
     let filters = InboxFilters::try_from(filters)?;
     let items = SearchService::new(state.repositories.clone()).list_inbox(filters)?;
-    items
+    let note_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
+    let mut tags = state.repositories.tags.list_for_notes(&note_ids)?;
+    Ok(items
         .into_iter()
         .map(|item| {
-            let tags = state.repositories.tags.list_for_note(item.id)?;
-            Ok(NoteListItemDto::from_item(item, tags))
+            let item_tags = tags.remove(&item.id).unwrap_or_default();
+            NoteListItemDto::from_item(item, item_tags)
         })
-        .collect()
+        .collect())
+}
+
+/// Counts for the navigation badges across the whole workspace, independent
+/// of the view on screen.
+#[tauri::command]
+pub async fn get_nav_summary(
+    state: tauri::State<'_, AppState>,
+) -> Result<NavSummaryDto, CommandError> {
+    let summary = SearchService::new(state.repositories.clone()).nav_summary()?;
+    Ok(summary.into())
 }
 
 #[tauri::command]
@@ -815,7 +851,7 @@ fn optional_user_note(value: Option<String>) -> Result<Option<String>, CommandEr
 mod tests {
     use crate::commands::{
         optional_user_note, required_user_note, ActionReviewItemDto, AppSettingsDto, CommandError,
-        FollowupItemDto, NoteListItemDto,
+        FollowupItemDto, NavSummaryDto, NoteListItemDto,
     };
     use crate::domain::{
         ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState, NoteId,
@@ -870,6 +906,30 @@ mod tests {
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());
         assert!(serialized.get("suggestedActionItemCount").is_some());
+    }
+
+    #[test]
+    fn nav_summary_dto_serializes_the_fields_the_sidebar_reads() {
+        let summary = crate::domain::NavSummary {
+            inbox: 4,
+            needs_review: 3,
+            followups: 2,
+            parse_failed: 1,
+            parse_queue: 5,
+            tags: vec!["Finance".to_string()],
+        };
+
+        assert_eq!(
+            serde_json::to_value(NavSummaryDto::from(summary)).unwrap(),
+            json!({
+                "inbox": 4,
+                "needsReview": 3,
+                "followups": 2,
+                "parseFailed": 1,
+                "parseQueue": 5,
+                "tags": ["Finance"],
+            })
+        );
     }
 
     #[test]

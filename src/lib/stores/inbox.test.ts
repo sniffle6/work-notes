@@ -12,6 +12,7 @@ import type {
   NoteDetail,
   NoteListItem,
 } from "$lib/types";
+import { EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 import { createWorkNotesStore } from "./inbox";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
@@ -896,7 +897,8 @@ describe("createWorkNotesStore", () => {
     await store.dropFollowups(["stale-1", "stale-2"]);
 
     expect(vi.mocked(api.dropFollowup).mock.calls).toEqual([["stale-1"], ["stale-2"]]);
-    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(api.listFollowups).toHaveBeenCalledTimes(1);
+    expect(api.getNavSummary).toHaveBeenCalledTimes(1);
     expect(get(store.followups)).toEqual([kept]);
     expect(get(store.error)).toBeNull();
   });
@@ -933,36 +935,40 @@ describe("createWorkNotesStore", () => {
 });
 
 describe("nav summary", () => {
-  it("builds view-independent counts from canonical, high-limit data", async () => {
-    const api = testApi({
-      listInbox: vi.fn().mockResolvedValue([
-        note({ id: "a", isArchived: false, parseStatus: "failed" }),
-        note({ id: "b", isArchived: false, parseStatus: "queued" }),
-        note({ id: "c", isArchived: true }),
-      ]),
-      listSuggestedActions: vi
-        .fn()
-        .mockResolvedValue([reviewItem({ id: "r1" }), reviewItem({ id: "r2" })]),
-      listFollowups: vi.fn().mockResolvedValue([
-        followup({ id: "f1", status: "accepted" }),
-        followup({ id: "f2", status: "done" }),
-      ]),
-    });
-    const store = createWorkNotesStore(api);
-
-    await store.refreshNavSummary();
-
-    expect(get(store.navSummary)).toEqual({
+  it("loads view-independent counts from the backend summary without listing rows", async () => {
+    const summary = {
       inbox: 2,
       needsReview: 2,
       followups: 1,
       parseFailed: 1,
       parseQueue: 1,
       tags: ["Finance"],
+    };
+    const api = testApi({ getNavSummary: vi.fn().mockResolvedValue(summary) });
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+
+    expect(get(store.navSummary)).toEqual(summary);
+    expect(api.listInbox).not.toHaveBeenCalled();
+    expect(api.listSuggestedActions).not.toHaveBeenCalled();
+    expect(api.listFollowups).not.toHaveBeenCalled();
+  });
+
+  it("keeps the last counts when the summary cannot be loaded", async () => {
+    const api = testApi({
+      getNavSummary: vi
+        .fn()
+        .mockResolvedValueOnce(navSummary({ inbox: 3 }))
+        .mockRejectedValueOnce(new Error("database is locked")),
     });
-    expect(api.listInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ includeArchived: false, limit: 1000 }),
-    );
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+    await store.refreshNavSummary();
+
+    expect(get(store.navSummary).inbox).toBe(3);
+    expect(get(store.error)).toBeNull();
   });
 
   it("keeps nav counts stable when navigating to the archive", async () => {
@@ -976,6 +982,7 @@ describe("nav summary", () => {
       listInbox: vi.fn(async (filters: InboxFilters) =>
         filters.includeArchived ? [active, ...archived] : [active],
       ),
+      getNavSummary: vi.fn().mockResolvedValue(navSummary({ inbox: 1 })),
     });
     const store = createWorkNotesStore(api);
 
@@ -988,6 +995,7 @@ describe("nav summary", () => {
     expect(get(store.inbox).map((item) => item.id)).toEqual(["arch-1", "arch-2", "arch-3"]);
     // ...but the sidebar's Inbox count must not follow it.
     expect(get(store.navSummary).inbox).toBe(1);
+    expect(api.getNavSummary).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes nav counts after archiving the selected note", async () => {
@@ -1000,6 +1008,7 @@ describe("nav summary", () => {
         archivedOne = true;
       }),
       getNote: vi.fn(async (id: string) => ({ ...note({ id }), actionItems: [] })),
+      getNavSummary: vi.fn(async () => navSummary({ inbox: archivedOne ? 1 : 2 })),
     });
     const store = createWorkNotesStore(api);
 
@@ -1013,6 +1022,10 @@ describe("nav summary", () => {
     expect(get(store.navSummary).inbox).toBe(1);
   });
 });
+
+function navSummary(overrides: Partial<NavSummary> = {}): NavSummary {
+  return { ...EMPTY_NAV_SUMMARY, ...overrides };
+}
 
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
 
@@ -1054,6 +1067,7 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
       .fn<(actionItemId: string, lane?: string | null) => Promise<void>>()
       .mockResolvedValue(undefined),
     listSuggestedActions: vi.fn<(limit?: number) => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
+    getNavSummary: vi.fn<() => Promise<NavSummary>>().mockResolvedValue(EMPTY_NAV_SUMMARY),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
     saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
     ...overrides,

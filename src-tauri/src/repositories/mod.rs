@@ -2,6 +2,7 @@ pub mod actions;
 pub mod card_notes;
 pub mod jira;
 pub mod jira_cache;
+pub mod nav_summary;
 pub mod notes;
 pub mod parse_jobs;
 pub mod tags;
@@ -12,6 +13,7 @@ pub use actions::ActionItemRepository;
 pub use card_notes::CardNoteRepository;
 pub use jira::{JiraChatRepository, NoteJiraLinkRepository};
 pub use jira_cache::JiraIssueCacheRepository;
+pub use nav_summary::NavSummaryRepository;
 pub use notes::NoteRepository;
 pub use parse_jobs::ParseJobRepository;
 pub use tags::TagRepository;
@@ -230,6 +232,50 @@ mod tests {
         assert_eq!(note_actions.len(), 1);
         assert_eq!(note_actions[0].status, ActionStatus::Accepted);
         assert_eq!(note_actions[0].followup_state, Some(FollowupState::Open));
+    }
+
+    #[test]
+    fn tag_repository_lists_tags_for_many_notes_in_one_call() {
+        let db = test_db();
+        let notes = NoteRepository::new(db.clone());
+        let tags = TagRepository::new(db);
+
+        let tagged = notes
+            .create_raw_note("Alice owns the zeta rollout")
+            .unwrap();
+        let shared = notes.create_raw_note("Alice again").unwrap();
+        let untagged = notes.create_raw_note("No tags here").unwrap();
+        let zeta = tags.upsert("Zeta", TagKind::Topic).unwrap();
+        let alice = tags.upsert("Alice", TagKind::Person).unwrap();
+        tags.apply_to_note(tagged.id, zeta.id, "parser", Some(0.7))
+            .unwrap();
+        tags.apply_to_note(tagged.id, alice.id, "parser", Some(0.9))
+            .unwrap();
+        tags.apply_to_note(shared.id, alice.id, "user", None)
+            .unwrap();
+
+        let by_note = tags
+            .list_for_notes(&[tagged.id, shared.id, untagged.id])
+            .unwrap();
+
+        assert_eq!(
+            by_note.get(&tagged.id),
+            Some(&tags.list_for_note(tagged.id).unwrap())
+        );
+        assert_eq!(
+            by_note.get(&shared.id),
+            Some(&tags.list_for_note(shared.id).unwrap())
+        );
+        assert_eq!(
+            by_note[&tagged.id]
+                .iter()
+                .map(|assignment| assignment.tag.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alice", "Zeta"]
+        );
+        assert_eq!(by_note[&shared.id][0].source, "user");
+        assert!(!by_note.contains_key(&untagged.id));
+        assert!(tags.list_for_notes(&[]).unwrap().is_empty());
     }
 
     #[test]

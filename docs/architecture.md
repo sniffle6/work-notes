@@ -92,6 +92,7 @@ Frontend command names currently used from `src/lib/api.ts`:
 ```text
 save_capture_note
 list_inbox
+get_nav_summary
 get_note
 retry_parse
 retry_parse_with_feedback
@@ -146,6 +147,7 @@ Note detail DTOs include `jiraIssueKeys`, the tickets created from that note.
 `complete_note` records `completed_at` plus an optional completion resolution and removes the note from the active inbox without archiving or deleting it.
 `add_card_note` appends timestamped user context to an existing note without changing its parser-derived fields.
 `reopen_note` clears `completed_at` and returns a completed note to the active inbox.
+`get_nav_summary` returns the sidebar badge counts and tag names for the whole workspace. It uses aggregate queries and never returns note rows. The store refreshes it after data changes, not on navigation.
 
 ## Native Runtime
 

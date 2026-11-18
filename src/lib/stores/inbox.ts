@@ -8,6 +8,7 @@ import {
   createManualFollowup,
   dismissActionItem,
   dropFollowup,
+  getNavSummary,
   getNote,
   getSettings,
   listFollowups,
@@ -42,7 +43,7 @@ import type {
 } from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
-import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
+import { EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 
 export type InboxViewMode =
   | "inbox"
@@ -61,10 +62,6 @@ export type ParserNotification = {
   title: string;
   message: string;
 };
-
-// Upper bound for the canonical count queries. Matches the backend clamp for
-// the inbox list; suggested actions and follow-ups clamp lower server-side.
-const NAV_SUMMARY_LIMIT = 1000;
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -91,6 +88,7 @@ type WorkNotesApi = {
   updateFollowupState: typeof updateFollowupStateApi;
   updateFollowupLane: typeof updateFollowupLaneApi;
   listSuggestedActions: typeof listSuggestedActions;
+  getNavSummary: typeof getNavSummary;
   getSettings: typeof getSettings;
   saveSettings: typeof saveSettings;
 };
@@ -120,6 +118,7 @@ const defaultApi: WorkNotesApi = {
   updateFollowupState: updateFollowupStateApi,
   updateFollowupLane: updateFollowupLaneApi,
   listSuggestedActions,
+  getNavSummary,
   getSettings,
   saveSettings,
 };
@@ -261,12 +260,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function refreshNavSummary(): Promise<void> {
     try {
-      const [notes, actions, followupItems] = await Promise.all([
-        api.listInbox(createInboxFilters({ includeArchived: false, includeCompleted: false, limit: NAV_SUMMARY_LIMIT })),
-        api.listSuggestedActions(NAV_SUMMARY_LIMIT),
-        api.listFollowups(NAV_SUMMARY_LIMIT),
-      ]);
-      navSummary.set(buildNavSummary(notes ?? [], actions ?? [], followupItems ?? []));
+      navSummary.set(await api.getNavSummary());
     } catch {
       // Nav counts are ancillary chrome. On a refresh failure keep the
       // last-known summary rather than surfacing an error banner or masking a
