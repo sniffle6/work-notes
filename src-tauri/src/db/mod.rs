@@ -103,6 +103,7 @@ mod tests {
             "note_jira_links",
             "jira_saved_lists",
             "jira_saved_issues",
+            "note_search_rows",
         ] {
             let exists: i64 = connection
                 .query_row(

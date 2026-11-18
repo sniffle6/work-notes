@@ -8,6 +8,7 @@ use crate::parser::{
     ActionItemApplication, CodexParserProvider, ParserOutput, ParserProvider, ParserResultApplier,
     ParserResultSink, TagApplication, TagKind as ParserTagKind, DEFAULT_CODEX_PROGRAM,
 };
+use crate::repositories::search_index;
 use crate::services::settings::{AppSettings, SettingsService, DEFAULT_PARSER_TIMEOUT_SECONDS};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension, Transaction};
@@ -421,9 +422,9 @@ impl ParserResultSink for RepositoryParserResultSink<'_> {
                 self.updated_at
             ],
         )?;
-        replace_fts(
+        search_index::replace_note_text(
             self.transaction,
-            note_id,
+            &note_id_text,
             &raw_text,
             Some(cleaned_text),
             Some(summary),
@@ -548,25 +549,6 @@ fn delete_replaceable_parser_suggestions(
         "DELETE FROM action_items
          WHERE note_id = ?1 AND source = ?2 AND status = ?3",
         params![note_id.to_string(), "parser", "suggested"],
-    )?;
-    Ok(())
-}
-
-fn replace_fts(
-    transaction: &Transaction<'_>,
-    note_id: NoteId,
-    raw_text: &str,
-    cleaned_text: Option<&str>,
-    summary: Option<&str>,
-) -> ServiceResult<()> {
-    transaction.execute(
-        "DELETE FROM notes_fts WHERE note_id = ?1",
-        [note_id.to_string()],
-    )?;
-    transaction.execute(
-        "INSERT INTO notes_fts (note_id, raw_text, cleaned_text, summary)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![note_id.to_string(), raw_text, cleaned_text, summary],
     )?;
     Ok(())
 }

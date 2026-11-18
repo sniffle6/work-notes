@@ -79,6 +79,7 @@ Core tables:
 - `notes`: title, raw and derived note fields, parse status, review status, archive flag, and note completion timestamp.
 - `card_notes`: timestamped user-added context attached to a note.
 - `notes_fts`: FTS5 index over raw text, cleaned text, and summary.
+- `note_search_rows`: the `notes_fts` rowid of each note. Its `note_id` column is not indexed, so edits find a note's search row through this table. Startup adopts search rows that an older app version wrote.
 - `tags` and `note_tags`: normalized tags and note assignments.
 - `action_items`: parser-suggested or user-managed actions, including open/done lifecycle state and the timestamp recorded when work is completed.
 - `parse_jobs`: queued, parsing, parsed, and failed parse work.
