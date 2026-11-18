@@ -52,6 +52,8 @@ On this Windows setup that resolves under:
 
 The database owns notes, tags, action items, parse jobs, parse runs, settings, Jira agent conversations, note-to-ticket links, and the FTS5 index.
 
+The database uses a write-ahead log. Recent commits can sit in `work-notes.sqlite3-wal` until SQLite copies them into the main file. To back up the database, close Work Notes and copy every `work-notes.sqlite3*` file.
+
 ## Jira
 
 The Jira view needs these before it can load tickets:

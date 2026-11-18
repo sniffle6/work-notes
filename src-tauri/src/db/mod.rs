@@ -44,6 +44,14 @@ impl Database {
 
 fn configure(connection: &Connection) -> Result<(), DatabaseError> {
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    // A write-ahead log commits with one append and flush instead of
+    // rewriting a rollback journal. FULL still flushes on every commit, so
+    // a saved raw note survives a power cut; NORMAL could lose it. The log
+    // lives beside the database as -wal and -shm files. An in-memory
+    // database stays in memory mode.
+    connection
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))?;
+    connection.pragma_update(None, "synchronous", "FULL")?;
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -56,6 +64,24 @@ fn configure(connection: &Connection) -> Result<(), DatabaseError> {
 #[cfg(test)]
 mod tests {
     use super::Database;
+
+    #[test]
+    fn a_database_file_logs_writes_ahead_and_syncs_every_commit() {
+        let folder = tempfile::tempdir().unwrap();
+        let db = Database::open(folder.path().join("notes.sqlite3")).unwrap();
+        let connection = db.connection().unwrap();
+
+        let journal_mode: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        let synchronous: i64 = connection
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(journal_mode, "wal");
+        // 2 is FULL. A saved raw note must survive a power cut.
+        assert_eq!(synchronous, 2);
+    }
 
     #[test]
     fn db_migration_creates_required_tables() {

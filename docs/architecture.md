@@ -72,6 +72,8 @@ SQLite is opened from the app data directory described in `docs/development.md`:
 %APPDATA%\aweber\Work Notes\data\work-notes.sqlite3
 ```
 
+The database uses a write-ahead log with `synchronous = FULL`, so every commit is flushed to disk. While the app runs, `work-notes.sqlite3-wal` and `work-notes.sqlite3-shm` sit beside the database file.
+
 Core tables:
 
 - `notes`: title, raw and derived note fields, parse status, review status, archive flag, and note completion timestamp.
