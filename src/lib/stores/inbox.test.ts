@@ -127,6 +127,91 @@ describe("createWorkNotesStore", () => {
     expect(api.listInbox).not.toHaveBeenCalled();
   });
 
+  it("keeps the newest inbox results when an older request answers last", async () => {
+    const older = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValueOnce([note({ id: "deploy-note" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    store.filters.set(createInboxFilters({ search: "de" }));
+    const slow = store.loadInbox();
+    store.filters.set(createInboxFilters({ search: "deploy" }));
+    await store.loadInbox();
+    older.resolve([note({ id: "older-note" })]);
+    await slow;
+
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["deploy-note"]);
+    expect(get(store.loadingInbox)).toBe(false);
+  });
+
+  it("ignores a failure from an inbox request that a newer one replaced", async () => {
+    const older = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValueOnce([note({ id: "newer-note" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    const slow = store.loadInbox();
+    await store.loadInbox();
+    older.reject(new Error("database is locked"));
+    await slow;
+
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["newer-note"]);
+    expect(get(store.error)).toBeNull();
+  });
+
+  it("searches the backend once typing pauses, filtering on screen meanwhile", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = testApi();
+      const store = createWorkNotesStore(api);
+
+      const typed = [
+        store.updateFilters({ search: "d" }),
+        store.updateFilters({ search: "de" }),
+        store.updateFilters({ search: "deploy" }),
+      ];
+
+      expect(get(store.filters).search).toBe("deploy");
+      expect(api.listInbox).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.all(typed);
+
+      expect(api.listInbox).toHaveBeenCalledTimes(1);
+      expect(api.listInbox).toHaveBeenCalledWith(expect.objectContaining({ search: "deploy" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies other filter changes at once and drops a pending search load", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = testApi();
+      const store = createWorkNotesStore(api);
+
+      const typing = store.updateFilters({ search: "de" });
+      await store.updateFilters({ parseStatuses: ["failed"] });
+      await vi.advanceTimersByTimeAsync(1000);
+      await typing;
+
+      expect(api.listInbox).toHaveBeenCalledTimes(1);
+      expect(api.listInbox).toHaveBeenCalledWith(
+        expect.objectContaining({ search: "de", parseStatuses: ["failed"] }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reloads the inbox from the API when filters change", async () => {
     const api = testApi({
       listInbox: vi
@@ -226,6 +311,32 @@ describe("createWorkNotesStore", () => {
 
     expect(get(store.inbox)[0].parseStatus).toBe("parsed");
     expect(get(store.selectedNote)?.parseStatus).toBe("parsed");
+  });
+
+  it("merges parser refreshes that arrive while one runs into one follow-up", async () => {
+    const inFlight = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([note({ parseStatus: "parsing" })])
+        .mockReturnValueOnce(inFlight.promise)
+        .mockResolvedValue([note({ parseStatus: "parsed" })]),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadInbox();
+
+    const refreshes = [
+      store.refreshParserActivity(),
+      store.refreshParserActivity(),
+      store.refreshParserActivity(),
+    ];
+    expect(api.listInbox).toHaveBeenCalledTimes(2);
+
+    inFlight.resolve([note({ parseStatus: "parsing" })]);
+    await Promise.all(refreshes);
+
+    expect(api.listInbox).toHaveBeenCalledTimes(3);
+    expect(get(store.inbox)[0].parseStatus).toBe("parsed");
   });
 
   it("notifies when active parser work completes", async () => {
@@ -1140,4 +1251,14 @@ function settings(): AppSettings {
     linkedWorkspacePaths: [],
     selectedTheme: "dark-compact",
   };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
 }

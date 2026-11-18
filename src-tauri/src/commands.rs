@@ -95,6 +95,25 @@ impl From<RepositoryError> for CommandError {
     }
 }
 
+/// Emitted to the windows each time the parse worker starts or finishes a
+/// job, so the UI refreshes without polling. Matches `PARSE_ACTIVITY_EVENT`
+/// in `src/lib/events.ts`.
+pub const PARSE_ACTIVITY_EVENT: &str = "work-notes:parse-activity";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParseActivityPayload {
+    pub note_id: String,
+}
+
+impl From<NoteId> for ParseActivityPayload {
+    fn from(note_id: NoteId) -> Self {
+        Self {
+            note_id: note_id.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NavSummaryDto {
@@ -851,7 +870,7 @@ fn optional_user_note(value: Option<String>) -> Result<Option<String>, CommandEr
 mod tests {
     use crate::commands::{
         optional_user_note, required_user_note, ActionReviewItemDto, AppSettingsDto, CommandError,
-        FollowupItemDto, NavSummaryDto, NoteListItemDto,
+        FollowupItemDto, NavSummaryDto, NoteListItemDto, ParseActivityPayload,
     };
     use crate::domain::{
         ActionItemId, ActionReviewItem, ActionStatus, FollowupItem, FollowupState, NoteId,
@@ -906,6 +925,16 @@ mod tests {
         assert!(serialized.get("tagCount").is_some());
         assert!(serialized.get("actionItemCount").is_some());
         assert!(serialized.get("suggestedActionItemCount").is_some());
+    }
+
+    #[test]
+    fn parse_activity_payload_names_the_note_in_camel_case() {
+        let note_id = NoteId::new();
+
+        assert_eq!(
+            serde_json::to_value(ParseActivityPayload::from(note_id)).unwrap(),
+            json!({ "noteId": note_id.to_string() })
+        );
     }
 
     #[test]

@@ -7,6 +7,13 @@ export type NoteCapturedPayload = {
   noteId: string;
 };
 
+/** Emitted by the backend each time the parse worker starts or finishes a job. */
+export const PARSE_ACTIVITY_EVENT = "work-notes:parse-activity";
+
+export type ParseActivityPayload = {
+  noteId: string;
+};
+
 /** Emitted by the backend each time a Jira agent run stores new messages. */
 export const JIRA_CHAT_UPDATED_EVENT = "jira-chat:updated";
 

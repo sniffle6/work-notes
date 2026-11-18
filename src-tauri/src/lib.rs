@@ -13,7 +13,7 @@ use std::io::{Error as IoError, ErrorKind};
 
 use app_state::AppState;
 use db::Database;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,12 +45,20 @@ pub fn run() {
             )
             .unwrap_or_else(|_| windowing::hotkey::DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
             let settings_service = state.settings.clone();
+            let activity_handle = app.handle().clone();
             let parse_worker = services::parse_queue::ParseQueue::with_runtime_settings(
                 state.repositories.clone(),
                 state.settings.clone(),
                 state.parse_queue_config.clone(),
                 state.parser_provider_config.clone(),
-            );
+            )
+            .on_activity(move |note_id| {
+                // A lost event only delays the UI until its fallback refresh.
+                let _ = activity_handle.emit(
+                    commands::PARSE_ACTIVITY_EVENT,
+                    commands::ParseActivityPayload::from(note_id),
+                );
+            });
             parse_worker.requeue_interrupted_jobs()?;
             let _ = windowing::startup::apply_launch_at_startup_setting(
                 app.handle(),

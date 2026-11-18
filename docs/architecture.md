@@ -13,6 +13,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 7. Capture creates a raw note and queued parse job in one persistence path.
 8. The native quick-capture window saves through `captureRawNote`, emits `work-notes:note-captured`, and lets the main window refresh and select the saved note separately.
 9. The parser worker claims one queued job at a time and applies validated parser output as derived data.
+10. The worker emits `work-notes:parse-activity` with the note ID when it starts or finishes a job. The main window refreshes parser-affected data on that event. A 30-second poll covers an event missed before the listener was registered.
 
 ## Frontend Ownership
 
@@ -20,7 +21,7 @@ Work Notes is an inbox-first Windows desktop app for fast note capture and backg
 - `src/routes/+page.svelte`: top-level route, window-label branching, quick-capture focus event subscription, note-captured event emission.
 - `src/lib/api.ts`: the only frontend module that invokes Tauri commands. It also normalizes DTOs and provides browser fallback data.
 - `src/lib/types.ts`: frontend note, tag, action item, filter, and settings types.
-- `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, card notes, parse retry, note completion and resolution, delete/archive, action status changes, filters, and settings.
+- `src/lib/stores/inbox.ts`: central workflow store for inbox loading, note selection, capture save, card notes, parse retry, note completion and resolution, delete/archive, action status changes, filters, and settings. Only the newest inbox load may update the list. A search-text change loads after typing pauses. Parser refreshes that arrive during one in flight merge into one follow-up.
 - `src/lib/stores/jira.ts`: workflow store for the Jira view: setup status, ticket filters and list, the open ticket, ticket changes, the new-ticket draft, and agent conversations with proposal approval.
 - `src/lib/jira-fallback.ts`: sample Jira data for browser smoke checks without the Tauri backend.
 - `src/lib/stores/filters.ts`: filter creation and client-side matching helpers used by tests and fallback paths.
