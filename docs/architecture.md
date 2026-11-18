@@ -72,11 +72,14 @@ SQLite is opened from the app data directory described in `docs/development.md`:
 %APPDATA%\aweber\Work Notes\data\work-notes.sqlite3
 ```
 
+The database uses a write-ahead log with `synchronous = FULL`, so every commit is flushed to disk. While the app runs, `work-notes.sqlite3-wal` and `work-notes.sqlite3-shm` sit beside the database file.
+
 Core tables:
 
 - `notes`: title, raw and derived note fields, parse status, review status, archive flag, and note completion timestamp.
 - `card_notes`: timestamped user-added context attached to a note.
 - `notes_fts`: FTS5 index over raw text, cleaned text, and summary.
+- `note_search_rows`: the `notes_fts` rowid of each note. Its `note_id` column is not indexed, so edits find a note's search row through this table. Startup adopts search rows that an older app version wrote.
 - `tags` and `note_tags`: normalized tags and note assignments.
 - `action_items`: parser-suggested or user-managed actions, including open/done lifecycle state and the timestamp recorded when work is completed.
 - `parse_jobs`: queued, parsing, parsed, and failed parse work.

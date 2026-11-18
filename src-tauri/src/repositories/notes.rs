@@ -1,10 +1,11 @@
-use rusqlite::{params, params_from_iter, OptionalExtension, Row, Transaction};
+use rusqlite::{params, params_from_iter, OptionalExtension, Row};
 
 use crate::db::Database;
 use crate::domain::{
     InboxFilters, Note, NoteId, NoteListItem, ParseJobId, ParseStatus, ReviewStatus,
 };
 
+use super::search_index;
 use super::{
     now_db_string, optional_db_datetime, parse_db_datetime, u32_from_i64, RepositoryError,
     RepositoryResult,
@@ -46,7 +47,7 @@ impl NoteRepository {
                 review_status.as_str()
             ],
         )?;
-        replace_fts(&transaction, &id_text, raw_text, None, None)?;
+        search_index::replace_note_text(&transaction, &id_text, raw_text, None, None)?;
         transaction.execute(
             "INSERT INTO parse_jobs (
                 id, note_id, status, attempt_count, last_error, created_at, started_at, finished_at
@@ -172,10 +173,7 @@ impl NoteRepository {
             "DELETE FROM parse_runs WHERE note_id = ?1",
             params![&id_text],
         )?;
-        transaction.execute(
-            "DELETE FROM notes_fts WHERE note_id = ?1",
-            params![&id_text],
-        )?;
+        search_index::remove_note(&transaction, &id_text)?;
         let changed = transaction.execute("DELETE FROM notes WHERE id = ?1", params![&id_text])?;
 
         if changed == 0 {
@@ -301,7 +299,7 @@ impl NoteRepository {
              WHERE id = ?1",
             params![id_text, normalize_title(title), cleaned_text, summary, now],
         )?;
-        replace_fts(
+        search_index::replace_note_text(
             &transaction,
             &id_text,
             &raw_text,
@@ -342,7 +340,7 @@ impl NoteRepository {
              WHERE id = ?1",
             params![id_text, normalize_title(title), cleaned_text, summary, now],
         )?;
-        replace_fts(
+        search_index::replace_note_text(
             &transaction,
             &id_text,
             &raw_text,
@@ -382,7 +380,7 @@ impl NoteRepository {
              WHERE id = ?1",
             params![id_text, make_title(raw_text), raw_text, now],
         )?;
-        replace_fts(&transaction, &id_text, raw_text, None, None)?;
+        search_index::replace_note_text(&transaction, &id_text, raw_text, None, None)?;
         transaction.commit()?;
         Ok(())
     }
@@ -437,22 +435,6 @@ impl NoteRepository {
 
         Ok(())
     }
-}
-
-fn replace_fts(
-    transaction: &Transaction<'_>,
-    id: &str,
-    raw_text: &str,
-    cleaned_text: Option<&str>,
-    summary: Option<&str>,
-) -> rusqlite::Result<()> {
-    transaction.execute("DELETE FROM notes_fts WHERE note_id = ?1", [id])?;
-    transaction.execute(
-        "INSERT INTO notes_fts (note_id, raw_text, cleaned_text, summary)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![id, raw_text, cleaned_text, summary],
-    )?;
-    Ok(())
 }
 
 fn list_item_select() -> String {
@@ -640,7 +622,7 @@ mod tests {
     use rusqlite::params;
 
     use crate::db::Database;
-    use crate::domain::{InboxFilters, TagKind};
+    use crate::domain::{InboxFilters, NoteId, TagKind};
     use crate::repositories::{
         ActionItemRepository, NoteRepository, ParseJobRepository, TagRepository,
     };
@@ -649,6 +631,103 @@ mod tests {
         let db = Database::in_memory().unwrap();
         let notes = NoteRepository::new(db.clone());
         (db, notes)
+    }
+
+    #[test]
+    fn search_rows_written_before_the_rowid_map_are_replaced_on_edit() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("notes.sqlite3");
+        let (kept, duplicated) = {
+            let notes = NoteRepository::new(Database::open(&path).unwrap());
+            (
+                notes.create_raw_note("alpha kept").unwrap(),
+                notes.create_raw_note("bravo duplicated").unwrap(),
+            )
+        };
+        {
+            // Earlier versions keyed search rows by note ID alone. Rebuild
+            // that state, with a stray duplicate and a row whose note is gone.
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch("DROP TABLE note_search_rows; DELETE FROM notes_fts;")
+                .unwrap();
+            for (note_id, text) in [
+                (kept.id, "alpha kept"),
+                (duplicated.id, "bravo duplicated"),
+                (duplicated.id, "bravo duplicated"),
+                (NoteId::new(), "charlie orphan"),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO notes_fts (note_id, raw_text) VALUES (?1, ?2)",
+                        params![note_id.to_string(), text],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let db = Database::open(&path).unwrap();
+        let notes = NoteRepository::new(db.clone());
+        assert_eq!(notes.search("alpha").unwrap()[0].id, kept.id);
+        notes.update_raw_text_by_user(kept.id, "delta edited").unwrap();
+        notes
+            .update_raw_text_by_user(duplicated.id, "echo edited")
+            .unwrap();
+
+        assert!(notes.search("alpha").unwrap().is_empty());
+        assert!(notes.search("bravo").unwrap().is_empty());
+        assert_eq!(notes.search("delta").unwrap()[0].id, kept.id);
+        assert_eq!(notes.search("echo").unwrap()[0].id, duplicated.id);
+        let search_rows: i64 = db
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM notes_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(search_rows, 2, "one search row per note, none for the orphan");
+    }
+
+    #[test]
+    fn search_rows_an_older_version_rewrote_are_adopted_on_the_next_start() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("notes.sqlite3");
+        let note = {
+            let notes = NoteRepository::new(Database::open(&path).unwrap());
+            let first = notes.create_raw_note("alpha first").unwrap();
+            notes.create_raw_note("bravo second").unwrap();
+            first
+        };
+        {
+            // An older version, run after this one, replaces a search row by
+            // note ID and lets SQLite choose the new rowid. That is past the
+            // last note's row, so it is not the rowid this version recorded.
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM notes_fts WHERE note_id = ?1",
+                    params![note.id.to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO notes_fts (note_id, raw_text) VALUES (?1, ?2)",
+                    params![note.id.to_string(), "charlie older edit"],
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let notes = NoteRepository::new(db.clone());
+        notes.update_raw_text_by_user(note.id, "delta edited").unwrap();
+
+        assert!(notes.search("charlie").unwrap().is_empty());
+        assert_eq!(notes.search("delta").unwrap()[0].id, note.id);
+        assert_eq!(notes.search("bravo").unwrap().len(), 1);
+        let search_rows: i64 = db
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM notes_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(search_rows, 2);
     }
 
     #[test]
@@ -836,6 +915,7 @@ mod tests {
             "parse_jobs",
             "parse_runs",
             "notes_fts",
+            "note_search_rows",
         ] {
             let count: i64 = connection
                 .query_row(

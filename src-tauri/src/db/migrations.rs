@@ -213,6 +213,7 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
          ON notes(completed_at)",
         [],
     )?;
+    ensure_note_search_rows(connection)?;
     connection.execute(
         "UPDATE notes
          SET title = CASE
@@ -225,6 +226,74 @@ pub fn run(connection: &Connection) -> rusqlite::Result<()> {
     )?;
 
     Ok(())
+}
+
+/// Creates `note_search_rows`, the rowid of each note's `notes_fts` row
+/// (see `repositories::search_index`). Search rows written before the
+/// table existed are adopted when it is created.
+///
+/// Versions before this table write search rows without recording them.
+/// If one ran on this database since, its rows sit past the last recorded
+/// rowid, and they are adopted again.
+fn ensure_note_search_rows(connection: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS (
+           SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'note_search_rows'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if exists {
+        if search_rows_are_unrecorded(connection)? {
+            let transaction = connection.unchecked_transaction()?;
+            adopt_search_rows(&transaction)?;
+            transaction.commit()?;
+        }
+        return Ok(());
+    }
+
+    // One transaction, so a crash cannot leave the table without the rows
+    // it should have adopted.
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE note_search_rows (
+          search_rowid INTEGER PRIMARY KEY,
+          note_id TEXT NOT NULL UNIQUE,
+          FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+        ",
+    )?;
+    adopt_search_rows(&transaction)?;
+    transaction.commit()
+}
+
+/// True when `notes_fts` holds a row past the last recorded search rowid.
+/// Both lookups read one end of a rowid index, not the whole table.
+fn search_rows_are_unrecorded(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT COALESCE((SELECT rowid FROM notes_fts ORDER BY rowid DESC LIMIT 1), 0)
+              > COALESCE((SELECT MAX(search_rowid) FROM note_search_rows), 0)",
+        [],
+        |row| row.get(0),
+    )
+}
+
+/// Rebuilds `note_search_rows` from the rows in `notes_fts`. A note with
+/// several search rows keeps its newest one, and rows of missing notes are
+/// dropped, so every note is left with at most one search row.
+fn adopt_search_rows(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "
+        DELETE FROM note_search_rows;
+        INSERT INTO note_search_rows (search_rowid, note_id)
+          SELECT MAX(rowid), note_id FROM notes_fts
+          WHERE note_id IN (SELECT id FROM notes)
+          GROUP BY note_id;
+        DELETE FROM notes_fts
+          WHERE rowid NOT IN (SELECT search_rowid FROM note_search_rows);
+        ",
+    )
 }
 
 fn ensure_column(

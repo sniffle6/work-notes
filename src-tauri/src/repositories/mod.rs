@@ -5,6 +5,7 @@ pub mod jira_cache;
 pub mod nav_summary;
 pub mod notes;
 pub mod parse_jobs;
+pub(crate) mod search_index;
 pub mod tags;
 
 use chrono::{DateTime, SecondsFormat, Utc};
