@@ -124,6 +124,7 @@ Confidence values must be numbers from `0` through `1`. Additional properties ar
 - Capture creates the raw note and queued parse job through the capture persistence path.
 - Active queued/parsing jobs for the same note should be reused instead of duplicated.
 - The v1 worker processes one parse job at a time.
+- The worker reports each job it starts and finishes, including failures, requeues, and cancellations. The app forwards each report to the windows as `work-notes:parse-activity`.
 - Successful parse application should be transactional.
 - A failed job stores `last_error` and can be retried.
 - Reparse feedback is stored with the parse job/run so prompt iteration is auditable.

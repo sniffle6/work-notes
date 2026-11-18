@@ -12,6 +12,7 @@ import type {
   NoteDetail,
   NoteListItem,
 } from "$lib/types";
+import { EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
 import { createWorkNotesStore } from "./inbox";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
 
@@ -126,6 +127,91 @@ describe("createWorkNotesStore", () => {
     expect(api.listInbox).not.toHaveBeenCalled();
   });
 
+  it("keeps the newest inbox results when an older request answers last", async () => {
+    const older = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValueOnce([note({ id: "deploy-note" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    store.filters.set(createInboxFilters({ search: "de" }));
+    const slow = store.loadInbox();
+    store.filters.set(createInboxFilters({ search: "deploy" }));
+    await store.loadInbox();
+    older.resolve([note({ id: "older-note" })]);
+    await slow;
+
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["deploy-note"]);
+    expect(get(store.loadingInbox)).toBe(false);
+  });
+
+  it("ignores a failure from an inbox request that a newer one replaced", async () => {
+    const older = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValueOnce([note({ id: "newer-note" })]),
+    });
+    const store = createWorkNotesStore(api);
+
+    const slow = store.loadInbox();
+    await store.loadInbox();
+    older.reject(new Error("database is locked"));
+    await slow;
+
+    expect(get(store.inbox).map((item) => item.id)).toEqual(["newer-note"]);
+    expect(get(store.error)).toBeNull();
+  });
+
+  it("searches the backend once typing pauses, filtering on screen meanwhile", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = testApi();
+      const store = createWorkNotesStore(api);
+
+      const typed = [
+        store.updateFilters({ search: "d" }),
+        store.updateFilters({ search: "de" }),
+        store.updateFilters({ search: "deploy" }),
+      ];
+
+      expect(get(store.filters).search).toBe("deploy");
+      expect(api.listInbox).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.all(typed);
+
+      expect(api.listInbox).toHaveBeenCalledTimes(1);
+      expect(api.listInbox).toHaveBeenCalledWith(expect.objectContaining({ search: "deploy" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies other filter changes at once and drops a pending search load", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = testApi();
+      const store = createWorkNotesStore(api);
+
+      const typing = store.updateFilters({ search: "de" });
+      await store.updateFilters({ parseStatuses: ["failed"] });
+      await vi.advanceTimersByTimeAsync(1000);
+      await typing;
+
+      expect(api.listInbox).toHaveBeenCalledTimes(1);
+      expect(api.listInbox).toHaveBeenCalledWith(
+        expect.objectContaining({ search: "de", parseStatuses: ["failed"] }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reloads the inbox from the API when filters change", async () => {
     const api = testApi({
       listInbox: vi
@@ -225,6 +311,32 @@ describe("createWorkNotesStore", () => {
 
     expect(get(store.inbox)[0].parseStatus).toBe("parsed");
     expect(get(store.selectedNote)?.parseStatus).toBe("parsed");
+  });
+
+  it("merges parser refreshes that arrive while one runs into one follow-up", async () => {
+    const inFlight = deferred<NoteListItem[]>();
+    const api = testApi({
+      listInbox: vi
+        .fn()
+        .mockResolvedValueOnce([note({ parseStatus: "parsing" })])
+        .mockReturnValueOnce(inFlight.promise)
+        .mockResolvedValue([note({ parseStatus: "parsed" })]),
+    });
+    const store = createWorkNotesStore(api);
+    await store.loadInbox();
+
+    const refreshes = [
+      store.refreshParserActivity(),
+      store.refreshParserActivity(),
+      store.refreshParserActivity(),
+    ];
+    expect(api.listInbox).toHaveBeenCalledTimes(2);
+
+    inFlight.resolve([note({ parseStatus: "parsing" })]);
+    await Promise.all(refreshes);
+
+    expect(api.listInbox).toHaveBeenCalledTimes(3);
+    expect(get(store.inbox)[0].parseStatus).toBe("parsed");
   });
 
   it("notifies when active parser work completes", async () => {
@@ -896,7 +1008,8 @@ describe("createWorkNotesStore", () => {
     await store.dropFollowups(["stale-1", "stale-2"]);
 
     expect(vi.mocked(api.dropFollowup).mock.calls).toEqual([["stale-1"], ["stale-2"]]);
-    expect(api.listFollowups).toHaveBeenCalledTimes(2);
+    expect(api.listFollowups).toHaveBeenCalledTimes(1);
+    expect(api.getNavSummary).toHaveBeenCalledTimes(1);
     expect(get(store.followups)).toEqual([kept]);
     expect(get(store.error)).toBeNull();
   });
@@ -933,36 +1046,40 @@ describe("createWorkNotesStore", () => {
 });
 
 describe("nav summary", () => {
-  it("builds view-independent counts from canonical, high-limit data", async () => {
-    const api = testApi({
-      listInbox: vi.fn().mockResolvedValue([
-        note({ id: "a", isArchived: false, parseStatus: "failed" }),
-        note({ id: "b", isArchived: false, parseStatus: "queued" }),
-        note({ id: "c", isArchived: true }),
-      ]),
-      listSuggestedActions: vi
-        .fn()
-        .mockResolvedValue([reviewItem({ id: "r1" }), reviewItem({ id: "r2" })]),
-      listFollowups: vi.fn().mockResolvedValue([
-        followup({ id: "f1", status: "accepted" }),
-        followup({ id: "f2", status: "done" }),
-      ]),
-    });
-    const store = createWorkNotesStore(api);
-
-    await store.refreshNavSummary();
-
-    expect(get(store.navSummary)).toEqual({
+  it("loads view-independent counts from the backend summary without listing rows", async () => {
+    const summary = {
       inbox: 2,
       needsReview: 2,
       followups: 1,
       parseFailed: 1,
       parseQueue: 1,
       tags: ["Finance"],
+    };
+    const api = testApi({ getNavSummary: vi.fn().mockResolvedValue(summary) });
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+
+    expect(get(store.navSummary)).toEqual(summary);
+    expect(api.listInbox).not.toHaveBeenCalled();
+    expect(api.listSuggestedActions).not.toHaveBeenCalled();
+    expect(api.listFollowups).not.toHaveBeenCalled();
+  });
+
+  it("keeps the last counts when the summary cannot be loaded", async () => {
+    const api = testApi({
+      getNavSummary: vi
+        .fn()
+        .mockResolvedValueOnce(navSummary({ inbox: 3 }))
+        .mockRejectedValueOnce(new Error("database is locked")),
     });
-    expect(api.listInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ includeArchived: false, limit: 1000 }),
-    );
+    const store = createWorkNotesStore(api);
+
+    await store.refreshNavSummary();
+    await store.refreshNavSummary();
+
+    expect(get(store.navSummary).inbox).toBe(3);
+    expect(get(store.error)).toBeNull();
   });
 
   it("keeps nav counts stable when navigating to the archive", async () => {
@@ -976,6 +1093,7 @@ describe("nav summary", () => {
       listInbox: vi.fn(async (filters: InboxFilters) =>
         filters.includeArchived ? [active, ...archived] : [active],
       ),
+      getNavSummary: vi.fn().mockResolvedValue(navSummary({ inbox: 1 })),
     });
     const store = createWorkNotesStore(api);
 
@@ -988,6 +1106,7 @@ describe("nav summary", () => {
     expect(get(store.inbox).map((item) => item.id)).toEqual(["arch-1", "arch-2", "arch-3"]);
     // ...but the sidebar's Inbox count must not follow it.
     expect(get(store.navSummary).inbox).toBe(1);
+    expect(api.getNavSummary).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes nav counts after archiving the selected note", async () => {
@@ -1000,6 +1119,7 @@ describe("nav summary", () => {
         archivedOne = true;
       }),
       getNote: vi.fn(async (id: string) => ({ ...note({ id }), actionItems: [] })),
+      getNavSummary: vi.fn(async () => navSummary({ inbox: archivedOne ? 1 : 2 })),
     });
     const store = createWorkNotesStore(api);
 
@@ -1013,6 +1133,10 @@ describe("nav summary", () => {
     expect(get(store.navSummary).inbox).toBe(1);
   });
 });
+
+function navSummary(overrides: Partial<NavSummary> = {}): NavSummary {
+  return { ...EMPTY_NAV_SUMMARY, ...overrides };
+}
 
 type TestApi = NonNullable<Parameters<typeof createWorkNotesStore>[0]>;
 
@@ -1054,6 +1178,7 @@ function testApi(overrides: Partial<TestApi> = {}): TestApi {
       .fn<(actionItemId: string, lane?: string | null) => Promise<void>>()
       .mockResolvedValue(undefined),
     listSuggestedActions: vi.fn<(limit?: number) => Promise<ActionReviewItem[]>>().mockResolvedValue([]),
+    getNavSummary: vi.fn<() => Promise<NavSummary>>().mockResolvedValue(EMPTY_NAV_SUMMARY),
     getSettings: vi.fn<() => Promise<AppSettings>>().mockResolvedValue(settings()),
     saveSettings: vi.fn<(settings: AppSettings) => Promise<AppSettings>>().mockResolvedValue(settings()),
     ...overrides,
@@ -1126,4 +1251,14 @@ function settings(): AppSettings {
     linkedWorkspacePaths: [],
     selectedTheme: "dark-compact",
   };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
 }

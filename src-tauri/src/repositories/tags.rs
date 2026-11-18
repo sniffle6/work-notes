@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, OptionalExtension, Row};
 
 use crate::db::Database;
@@ -76,6 +78,47 @@ impl TagRepository {
             .into_iter()
             .map(TagAssignmentRecord::into_assignment)
             .collect()
+    }
+
+    /// Lists the tag assignments of several notes with one query, each in the
+    /// order `list_for_note` returns. Notes without tags have no entry.
+    pub fn list_for_notes(
+        &self,
+        note_ids: &[NoteId],
+    ) -> RepositoryResult<HashMap<NoteId, Vec<TagAssignment>>> {
+        if note_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // The IDs travel as one JSON array, so no list length can reach
+        // SQLite's limit on bound parameters.
+        let ids =
+            serde_json::Value::from(note_ids.iter().map(NoteId::to_string).collect::<Vec<_>>());
+        let connection = self.db.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT t.id, t.name, t.kind, t.created_at, nt.source, nt.confidence, nt.note_id
+             FROM note_tags nt
+             JOIN tags t ON t.id = nt.tag_id
+             WHERE nt.note_id IN (SELECT value FROM json_each(?1))
+             ORDER BY nt.note_id, t.kind, t.name",
+        )?;
+        let records = statement
+            .query_map([ids], |row| {
+                Ok((
+                    row.get::<_, String>(6)?,
+                    TagAssignmentRecord::from_row(row)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut by_note: HashMap<NoteId, Vec<TagAssignment>> = HashMap::new();
+        for (note_id, record) in records {
+            by_note
+                .entry(NoteId::parse(&note_id)?)
+                .or_default()
+                .push(record.into_assignment()?);
+        }
+        Ok(by_note)
     }
 
     pub fn remove_from_note(

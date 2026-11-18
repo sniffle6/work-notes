@@ -1,6 +1,7 @@
 use crate::app_state::AppRepositories;
 use crate::domain::{
-    ActionItem, CardNote, InboxFilters, Note, NoteId, NoteListItem, ParseStatus, TagAssignment,
+    ActionItem, CardNote, InboxFilters, NavSummary, Note, NoteId, NoteListItem, ParseStatus,
+    TagAssignment,
 };
 
 use super::{ServiceError, ServiceResult};
@@ -31,6 +32,10 @@ impl SearchService {
             .notes
             .list_inbox(filters)
             .map_err(Into::into)
+    }
+
+    pub fn nav_summary(&self) -> ServiceResult<NavSummary> {
+        self.repositories.nav_summary.load().map_err(Into::into)
     }
 
     pub fn search(&self, query: &str) -> ServiceResult<Vec<NoteListItem>> {

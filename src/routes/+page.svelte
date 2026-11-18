@@ -20,6 +20,7 @@
   import {
     NOTE_CAPTURED_EVENT,
     CHECK_FOR_UPDATES_EVENT,
+    PARSE_ACTIVITY_EVENT,
     JIRA_CHAT_UPDATED_EVENT,
     JIRA_VIEW_ACTION_EVENT,
     type JiraChatUpdatedPayload,
@@ -33,6 +34,10 @@
   import { draftThemeDefinition, resolveTheme } from "$lib/theme/custom";
   import { createThemeBuilderStore } from "$lib/stores/theme-builder";
   import packageMetadata from "../../package.json";
+
+  // Parser progress arrives as PARSE_ACTIVITY_EVENT. This slow poll only
+  // catches an event missed while the listener was not yet registered.
+  const PARSER_FALLBACK_REFRESH_MS = 30_000;
 
   const workNotes = createWorkNotesStore();
   const jira = createJiraStore();
@@ -135,9 +140,13 @@
     }).then(registerUnlisten);
 
     if (currentWindowLabel !== "quick-capture") {
+      void listen(PARSE_ACTIVITY_EVENT, () => {
+        void workNotes.refreshParserActivity();
+      }).then(registerUnlisten);
+
       const parserRefreshTimer = window.setInterval(() => {
         void workNotes.refreshParserActivity();
-      }, 5000);
+      }, PARSER_FALLBACK_REFRESH_MS);
       registerUnlisten(() => window.clearInterval(parserRefreshTimer));
 
       void runUpdateCheck(createTauriUpdaterPort(), { silent: true });

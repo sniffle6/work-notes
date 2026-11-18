@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { jiraFallbackCommand } from "$lib/jira-fallback";
 import { sniffMediaType, type MediaType } from "$lib/media-type";
+import { buildNavSummary, type NavSummary } from "$lib/nav-summary";
 import { withRetry } from "$lib/retry";
 import { parseBackgroundGradient } from "$lib/theme/custom";
 import type {
@@ -261,6 +262,7 @@ function isTauriRuntime(): boolean {
 // a manual restart. Writes are never retried — they could apply twice.
 const RETRYABLE_READ_COMMANDS = new Set([
   "list_inbox",
+  "get_nav_summary",
   "list_suggested_actions",
   "get_settings",
   "list_followups",
@@ -289,6 +291,14 @@ export async function saveCaptureNote(rawText: string): Promise<NoteDetail> {
 export async function listInbox(filters: InboxFilters): Promise<NoteListItem[]> {
   const notes = await invokeCommand<unknown[]>("list_inbox", { filters: toBackendFilters(filters) });
   return notes.map(normalizeNoteListItem);
+}
+
+/**
+ * Reads the counts behind the navigation badges for the whole workspace.
+ * Tag names come back sorted for display.
+ */
+export async function getNavSummary(): Promise<NavSummary> {
+  return normalizeNavSummary(await invokeCommand<unknown>("get_nav_summary"));
 }
 
 export async function getNote(noteId: string): Promise<NoteDetail> {
@@ -980,6 +990,20 @@ function normalizeActionItem(value: unknown): ActionItem {
   };
 }
 
+function normalizeNavSummary(value: unknown): NavSummary {
+  const record = asRecord(value);
+  return {
+    inbox: getNumber(record, "inbox") ?? 0,
+    needsReview: getNumber(record, "needsReview") ?? 0,
+    followups: getNumber(record, "followups") ?? 0,
+    parseFailed: getNumber(record, "parseFailed") ?? 0,
+    parseQueue: getNumber(record, "parseQueue") ?? 0,
+    tags: getArray(record, "tags")
+      .filter((tag): tag is string => typeof tag === "string")
+      .sort((left, right) => left.localeCompare(right)),
+  };
+}
+
 function normalizeActionReviewItem(value: unknown): ActionReviewItem {
   const record = asRecord(value);
   const noteTitle = getString(record, "noteTitle", "note_title") ?? "Untitled note";
@@ -1182,6 +1206,15 @@ async function fallbackCommand<T>(command: string, args?: UnknownRecord): Promis
         )
         .slice(0, Number((args?.filters as UnknownRecord | undefined)?.limit ?? 200))
         .map(normalizeNoteListItem) as T;
+    case "get_nav_summary": {
+      // The preview counts the same lists it shows, so badges match them.
+      const [notes, actions, followups] = await Promise.all([
+        fallbackCommand<NoteListItem[]>("list_inbox", { filters: { limit: 1000 } }),
+        fallbackCommand<ActionReviewItem[]>("list_suggested_actions", { limit: 1000 }),
+        fallbackCommand<FollowupItem[]>("list_followups", { limit: 1000 }),
+      ]);
+      return buildNavSummary(notes, actions, followups) as T;
+    }
     case "get_note": {
       const note = fallbackNotes.find((item) => item.id === args?.id) ?? fallbackNotes[0];
       return normalizeNoteDetail(note) as T;

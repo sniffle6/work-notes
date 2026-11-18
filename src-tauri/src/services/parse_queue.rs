@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{thread, time::Duration};
 
 use crate::app_state::AppRepositories;
@@ -75,10 +76,14 @@ impl ParserProviderConfig {
     }
 }
 
+/// Called with the note's ID when the worker starts or finishes a parse job.
+type ParseActivityListener = Arc<dyn Fn(NoteId) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ParseQueue {
     repositories: AppRepositories,
     settings: Option<SettingsService>,
+    activity_listener: Option<ParseActivityListener>,
     pub config: ParseQueueConfig,
     pub parser_provider_config: ParserProviderConfig,
 }
@@ -100,6 +105,7 @@ impl ParseQueue {
         Self {
             repositories,
             settings: None,
+            activity_listener: None,
             config,
             parser_provider_config,
         }
@@ -114,9 +120,18 @@ impl ParseQueue {
         Self {
             repositories,
             settings: Some(settings),
+            activity_listener: None,
             config,
             parser_provider_config,
         }
+    }
+
+    /// Reports each parse job the queue starts and each one it finishes,
+    /// whether it parsed, failed, was requeued, or was cancelled. The
+    /// listener runs on the worker thread, so it must return quickly.
+    pub fn on_activity(mut self, listener: impl Fn(NoteId) + Send + Sync + 'static) -> Self {
+        self.activity_listener = Some(Arc::new(listener));
+        self
     }
 
     pub fn enqueue_note(&self, note_id: NoteId) -> ServiceResult<ParseJob> {
@@ -196,7 +211,10 @@ impl ParseQueue {
             return Ok(false);
         };
 
-        self.process_claimed_job(&job, provider)?;
+        self.report_activity(job.note_id);
+        let processed = self.process_claimed_job(&job, provider);
+        self.report_activity(job.note_id);
+        processed?;
         Ok(true)
     }
 
@@ -212,6 +230,24 @@ impl ParseQueue {
             return Ok(false);
         };
 
+        self.report_activity(job.note_id);
+        let processed = self.process_claimed_job_with_codex(&job, &provider);
+        self.report_activity(job.note_id);
+        processed?;
+        Ok(true)
+    }
+
+    fn report_activity(&self, note_id: NoteId) {
+        if let Some(listener) = &self.activity_listener {
+            listener(note_id);
+        }
+    }
+
+    fn process_claimed_job_with_codex(
+        &self,
+        job: &ParseJob,
+        provider: &CodexParserProvider,
+    ) -> ServiceResult<()> {
         let note = self.repositories.notes.get(job.note_id)?.ok_or_else(|| {
             super::ServiceError::NotFound {
                 entity: "note",
@@ -227,11 +263,9 @@ impl ParseQueue {
 
         match provider.parse_output_cancellable(&note.raw_text, job.feedback.as_deref(), &cancelled)
         {
-            Ok(output) => self.apply_successful_parse(&job, &output),
-            Err(error) => self.handle_parse_failure(&job, &error.to_string()),
-        }?;
-
-        Ok(true)
+            Ok(output) => self.apply_successful_parse(job, &output),
+            Err(error) => self.handle_parse_failure(job, &error.to_string()),
+        }
     }
 
     pub fn start_background_worker(self) -> std::io::Result<()> {
@@ -617,6 +651,7 @@ fn to_review_status(value: &'static str) -> ServiceResult<ReviewStatus> {
 mod tests {
     use crate::app_state::AppRepositories;
     use crate::db::Database;
+    use crate::domain::NoteId;
     use crate::domain::{ActionStatus, ParseStatus, ReviewStatus, TagKind};
     use crate::parser::{
         ParsedActionItem, ParsedTag, ParserError, ParserOutput, ParserProvider, ParserResult,
@@ -624,9 +659,55 @@ mod tests {
     };
     use crate::services::parse_queue::{ParseQueue, ParseQueueConfig, ParserProviderConfig};
     use crate::services::settings::AppSettings;
+    use std::sync::{Arc, Mutex};
 
     fn test_repositories() -> AppRepositories {
         AppRepositories::new(Database::in_memory().unwrap())
+    }
+
+    fn recording_queue(repositories: &AppRepositories) -> (ParseQueue, Arc<Mutex<Vec<NoteId>>>) {
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&reported);
+        let queue = ParseQueue::new(repositories.clone())
+            .on_activity(move |note_id| sink.lock().unwrap().push(note_id));
+        (queue, reported)
+    }
+
+    #[test]
+    fn parse_activity_is_reported_when_a_job_starts_and_when_it_ends() {
+        let repositories = test_repositories();
+        let note = repositories
+            .notes
+            .create_raw_note("sam said fix qa flag")
+            .unwrap();
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        let (queue, reported) = recording_queue(&repositories);
+
+        assert!(queue.process_next_with_provider(&StaticProvider).unwrap());
+
+        assert_eq!(*reported.lock().unwrap(), vec![note.id, note.id]);
+    }
+
+    #[test]
+    fn parse_activity_is_reported_when_a_job_fails() {
+        let repositories = test_repositories();
+        let note = repositories.notes.create_raw_note("raw note").unwrap();
+        repositories.parse_jobs.enqueue(note.id).unwrap();
+        let (queue, reported) = recording_queue(&repositories);
+
+        assert!(queue.process_next_with_provider(&FailingProvider).unwrap());
+
+        assert_eq!(*reported.lock().unwrap(), vec![note.id, note.id]);
+    }
+
+    #[test]
+    fn parse_activity_is_not_reported_while_the_queue_is_empty() {
+        let repositories = test_repositories();
+        let (queue, reported) = recording_queue(&repositories);
+
+        assert!(!queue.process_next_with_provider(&StaticProvider).unwrap());
+
+        assert!(reported.lock().unwrap().is_empty());
     }
 
     #[test]

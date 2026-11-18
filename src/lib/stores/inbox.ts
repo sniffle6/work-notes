@@ -8,6 +8,7 @@ import {
   createManualFollowup,
   dismissActionItem,
   dropFollowup,
+  getNavSummary,
   getNote,
   getSettings,
   listFollowups,
@@ -42,7 +43,11 @@ import type {
 } from "$lib/types";
 export { createInboxFilters, matchesNoteFilters } from "./filters";
 import { createInboxFilters, matchesNoteFilters } from "./filters";
-import { buildNavSummary, EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
+import { EMPTY_NAV_SUMMARY, type NavSummary } from "$lib/nav-summary";
+
+// A typed search waits this long for a pause before asking the backend. The
+// on-screen list filters the notes already loaded in the meantime.
+const SEARCH_DEBOUNCE_MS = 150;
 
 export type InboxViewMode =
   | "inbox"
@@ -61,10 +66,6 @@ export type ParserNotification = {
   title: string;
   message: string;
 };
-
-// Upper bound for the canonical count queries. Matches the backend clamp for
-// the inbox list; suggested actions and follow-ups clamp lower server-side.
-const NAV_SUMMARY_LIMIT = 1000;
 
 type WorkNotesApi = {
   saveCaptureNote: typeof saveCaptureNote;
@@ -91,6 +92,7 @@ type WorkNotesApi = {
   updateFollowupState: typeof updateFollowupStateApi;
   updateFollowupLane: typeof updateFollowupLaneApi;
   listSuggestedActions: typeof listSuggestedActions;
+  getNavSummary: typeof getNavSummary;
   getSettings: typeof getSettings;
   saveSettings: typeof saveSettings;
 };
@@ -120,6 +122,7 @@ const defaultApi: WorkNotesApi = {
   updateFollowupState: updateFollowupStateApi,
   updateFollowupLane: updateFollowupLaneApi,
   listSuggestedActions,
+  getNavSummary,
   getSettings,
   saveSettings,
 };
@@ -165,7 +168,14 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     limit?: number;
   };
 
+  // Only the newest inbox load may change the store, so a slow answer cannot
+  // replace the results of a later search, filter, or view.
+  let inboxRequestSequence = 0;
+
   async function loadInbox(options: LoadInboxOptions = {}): Promise<void> {
+    // Every load reads the current filters, so a pending search load is redundant.
+    cancelPendingSearch();
+    const request = ++inboxRequestSequence;
     loadingInbox.set(true);
     error.set(null);
 
@@ -179,6 +189,9 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
         limit: options.limit,
       });
       const items = await api.listInbox(backendFilters);
+      if (request !== inboxRequestSequence) {
+        return;
+      }
       const visibleItems = mode === "archive"
         ? items.filter((note) => note.isArchived)
         : mode === "done"
@@ -188,9 +201,13 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
       inbox.set(visibleItems);
       await ensureSelectionAfterLoad(visibleItems, options.preferredSelectionIndex);
     } catch (unknownError) {
-      error.set(errorMessage(unknownError, "Could not load inbox."));
+      if (request === inboxRequestSequence) {
+        error.set(errorMessage(unknownError, "Could not load inbox."));
+      }
     } finally {
-      loadingInbox.set(false);
+      if (request === inboxRequestSequence) {
+        loadingInbox.set(false);
+      }
     }
   }
 
@@ -261,12 +278,7 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
 
   async function refreshNavSummary(): Promise<void> {
     try {
-      const [notes, actions, followupItems] = await Promise.all([
-        api.listInbox(createInboxFilters({ includeArchived: false, includeCompleted: false, limit: NAV_SUMMARY_LIMIT })),
-        api.listSuggestedActions(NAV_SUMMARY_LIMIT),
-        api.listFollowups(NAV_SUMMARY_LIMIT),
-      ]);
-      navSummary.set(buildNavSummary(notes ?? [], actions ?? [], followupItems ?? []));
+      navSummary.set(await api.getNavSummary());
     } catch {
       // Nav counts are ancillary chrome. On a refresh failure keep the
       // last-known summary rather than surfacing an error banner or masking a
@@ -707,9 +719,37 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
+  let pendingSearch: { timer: ReturnType<typeof setTimeout>; settle: () => void } | null = null;
+
+  /** Drops a scheduled search load. Its caller's promise resolves at once. */
+  function cancelPendingSearch(): void {
+    if (!pendingSearch) {
+      return;
+    }
+    clearTimeout(pendingSearch.timer);
+    pendingSearch.settle();
+    pendingSearch = null;
+  }
+
+  /**
+   * Applies filter changes. A change to the search text alone is loaded once
+   * typing pauses; any other change loads at once.
+   */
   async function updateFilters(nextFilters: Partial<InboxFilters>): Promise<void> {
     filters.update((current) => createInboxFilters({ ...current, ...nextFilters }));
-    await loadInbox();
+    if (!isSearchOnlyChange(nextFilters)) {
+      await loadInbox();
+      return;
+    }
+
+    cancelPendingSearch();
+    await new Promise<void>((settle) => {
+      const timer = setTimeout(() => {
+        pendingSearch = null;
+        void loadInbox().finally(settle);
+      }, SEARCH_DEBOUNCE_MS);
+      pendingSearch = { timer, settle };
+    });
   }
 
   async function showCapturedNote(noteId: string): Promise<void> {
@@ -780,7 +820,34 @@ export function createWorkNotesStore(api: WorkNotesApi = defaultApi) {
     }
   }
 
-  async function refreshParserActivity(): Promise<void> {
+  let parserRefresh: Promise<void> | null = null;
+  let parserRefreshRequested = false;
+
+  /**
+   * Reloads what parser work changes while any is queued or running. A call
+   * made while a refresh runs is merged into one follow-up refresh, which the
+   * returned promise includes.
+   */
+  function refreshParserActivity(): Promise<void> {
+    if (parserRefresh) {
+      parserRefreshRequested = true;
+      return parserRefresh;
+    }
+
+    parserRefresh = (async () => {
+      try {
+        do {
+          parserRefreshRequested = false;
+          await refreshParserActivityOnce();
+        } while (parserRefreshRequested);
+      } finally {
+        parserRefresh = null;
+      }
+    })();
+    return parserRefresh;
+  }
+
+  async function refreshParserActivityOnce(): Promise<void> {
     if (!hasParserActivity()) {
       return;
     }
@@ -1060,6 +1127,11 @@ function errorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function isSearchOnlyChange(nextFilters: Partial<InboxFilters>): boolean {
+  const keys = Object.keys(nextFilters);
+  return keys.length === 1 && keys[0] === "search";
 }
 
 function normalizeLane(lane?: string | null): string | null {
